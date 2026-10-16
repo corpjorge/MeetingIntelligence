@@ -1,0 +1,18 @@
+#!/bin/zsh
+# Swift wrapper that picks a compatible SDK.
+#
+# With only Command Line Tools installed (no Xcode), the macOS 27 SDK declares
+# SwiftUI's @State/@Entry as macros whose compiler plugin (SwiftUIMacros) ships
+# only with Xcode. In that case we build against the newest bundled SDK whose
+# SwiftUI does not require that plugin (macOS 26.5). With Xcode selected, the
+# default SDK is used unchanged.
+DEV_DIR="$(xcode-select -p 2>/dev/null)"
+if [[ "$DEV_DIR" == *CommandLineTools* && -z "$SDKROOT" ]]; then
+  for candidate in MacOSX26.5.sdk MacOSX26.sdk; do
+    if [[ -d "/Library/Developer/CommandLineTools/SDKs/$candidate" ]]; then
+      export SDKROOT="/Library/Developer/CommandLineTools/SDKs/$candidate"
+      break
+    fi
+  done
+fi
+exec swift "$@"

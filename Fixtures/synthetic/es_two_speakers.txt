@@ -1,0 +1,4 @@
+Buenos días. Hoy vamos a revisar los requerimientos del módulo de crédito.
+Perfecto. Yo me encargo de documentar los campos del response y las validaciones.
+Necesitamos que el campo de ingresos validados quede expuesto antes del quince de noviembre.
+De acuerdo, lo dejo listo en el sprint actual y aviso al equipo de QA.

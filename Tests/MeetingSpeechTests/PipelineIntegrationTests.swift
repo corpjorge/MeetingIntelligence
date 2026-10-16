@@ -1,0 +1,135 @@
+import AVFoundation
+import Foundation
+import Testing
+@testable import MeetingCore
+@testable import MeetingSpeech
+
+/// End-to-end tests with the real Parakeet Ultra and diarization models on
+/// SYNTHETIC fixtures (see Fixtures/synthetic/README.md).
+///
+/// They run only when the models are already cached (they never download in
+/// CI) and the fixtures exist: `scripts/generate-fixtures.sh` + one app/CLI run.
+enum IntegrationEnvironment {
+    static let fixtures = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("Fixtures/synthetic")
+
+    static var available: Bool {
+        FileManager.default.fileExists(atPath: fixtures.appendingPathComponent("es_two_speakers.wav").path)
+            && AsrCacheProbe.ultraCached && AsrCacheProbe.diarizerCached
+    }
+}
+
+enum AsrCacheProbe {
+    static var ultraCached: Bool {
+        let dir = ParakeetUltraProvider().cacheDirectory
+        return ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).contains { $0.hasSuffix(".mlmodelc") }
+    }
+    static var diarizerCached: Bool {
+        let dir = DiarizationService().cacheDirectory
+        return ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).contains { $0.hasSuffix(".mlmodelc") }
+    }
+}
+
+@Suite("Integración: Ultra + diarización", .enabled(if: IntegrationEnvironment.available), .serialized)
+struct PipelineIntegrationTests {
+    @Test func importTranscribeDiarizeAndPersist() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("mi-it-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = AppPaths(root: root)
+        let db = try AppDatabase.open(paths: paths)
+        try db.save(term: VocabularyTerm(canonical: "QA", variants: ["Cuba"]))
+
+        let meeting = try await MeetingImportService(database: db, paths: paths)
+            .importAudio(at: IntegrationEnvironment.fixtures.appendingPathComponent("es_two_speakers.wav"),
+                         title: "FIXTURE")
+        let diarizer = DiarizationService()
+        let processor = MeetingProcessor(
+            database: db, paths: paths, asr: ParakeetUltraProvider(), diarizer: diarizer,
+            recognizer: SpeakerRecognitionService(database: db, vault: BiometricVault(keyProvider: EphemeralBiometricKeyProvider()),
+                                                  diarizer: diarizer))
+        let summary = try await processor.process(meetingId: meeting.id) { _ in }
+        let detail = try #require(try db.meetingDetail(id: meeting.id))
+
+        #expect(detail.meeting.status == .ready)
+        #expect(summary.tracks.first?.speakers == 2)
+        #expect(detail.speakers.count == 2)
+        // Speakers alternate A B A B in the fixture.
+        let labels = detail.segments.map { detail.speakerName(for: $0) }
+        #expect(labels.count >= 4)
+        #expect(Set(labels).count == 2)
+        // No identity was invented.
+        #expect(detail.segments.allSatisfy { $0.participantId == nil })
+        // Timestamps are monotonic and inside the audio.
+        #expect(zip(detail.segments, detail.segments.dropFirst()).allSatisfy { $0.startTime <= $1.startTime })
+        #expect((detail.segments.last?.endTime ?? 0) <= detail.tracks[0].durationSeconds + 0.5)
+        // Every stage was recorded with timings.
+        #expect(detail.jobs.contains { $0.stage == .transcription && $0.status == .succeeded && ($0.wallSeconds ?? 0) > 0 })
+
+        // WER against the reference (synthetic speech → optimistic bound).
+        let reference = try String(contentsOf: IntegrationEnvironment.fixtures.appendingPathComponent("es_two_speakers.txt"), encoding: .utf8)
+        let hypothesis = detail.segments.map(\.displayText).joined(separator: " ")
+        let wer = Metrics.wordErrorRate(reference: reference, hypothesis: hypothesis)
+        #expect(wer.wer < 0.15, "WER \(wer.wer)")
+        // Custom vocabulary applied without losing the raw ASR text.
+        if let fixed = detail.segments.first(where: { $0.asrText.contains("Cuba") }) {
+            #expect(fixed.vocabularyText?.contains("QA") == true)
+        }
+    }
+
+    @Test func silenceProducesNoText() async throws {
+        let asr = ParakeetUltraProvider()
+        let result = try await asr.transcribe(
+            fileURL: IntegrationEnvironment.fixtures.appendingPathComponent("silence.wav"), languageHint: "es-CO") { _ in }
+        #expect(result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        #expect(result.words.isEmpty)
+    }
+
+    @Test func spanishWithEnglishTermsIsAccurate() async throws {
+        let asr = ParakeetUltraProvider()
+        let url = IntegrationEnvironment.fixtures.appendingPathComponent("es_single_speaker.wav")
+        let result = try await asr.transcribe(fileURL: url, languageHint: "es-CO") { _ in }
+        let reference = try String(contentsOf: url.deletingPathExtension().appendingPathExtension("txt"), encoding: .utf8)
+        let wer = Metrics.wordErrorRate(reference: reference, hypothesis: result.text)
+        #expect(wer.wer < 0.08, "WER \(wer.wer): \(result.text)")
+        for term in ["endpoint", "pull", "request", "kubernetes", "backend", "api"] {
+            #expect(TextNormalization.tokens(result.text).contains(term), "falta \(term)")
+        }
+        // Word timings are monotonic and within the file.
+        #expect(zip(result.words, result.words.dropFirst()).allSatisfy { $0.start <= $1.start })
+        #expect((result.words.last?.end ?? 0) <= result.audioDurationSeconds + 0.1)
+    }
+}
+
+@Suite("Integración: transcripción provisional en vivo", .enabled(if: IntegrationEnvironment.available))
+struct LiveTranscriptionTests {
+    @Test func slidingWindowUltraProducesProvisionalText() async throws {
+        let url = IntegrationEnvironment.fixtures.appendingPathComponent("es_single_speaker.wav")
+        let file = try AVAudioFile(forReading: url)
+        let format = try #require(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false))
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(file.length)))
+        try file.read(into: buffer)
+        let samples = Array(UnsafeBufferPointer(start: buffer.floatChannelData![0], count: Int(buffer.frameLength)))
+
+        let live = try await ParakeetUltraProvider().makeLiveTranscriber(sources: [.remoteSystemAudio], languageHint: "es-CO")
+        let updates = live.updates
+        let collector = Task { () -> Int in
+            var count = 0
+            for await _ in updates { count += 1 }
+            return count
+        }
+        // 100 ms blocks, as delivered by the recorder.
+        for start in stride(from: 0, to: samples.count, by: 1600) {
+            live.feed(Array(samples[start..<min(start + 1600, samples.count)]), source: .remoteSystemAudio)
+        }
+        let final = await live.finish()[.remoteSystemAudio] ?? ""
+        await live.stop() // finishes the update stream
+        let received = await collector.value
+
+        let reference = try String(contentsOf: url.deletingPathExtension().appendingPathExtension("txt"), encoding: .utf8)
+        let wer = Metrics.wordErrorRate(reference: reference, hypothesis: final)
+        #expect(!final.isEmpty)
+        #expect(wer.wer < 0.35, "WER provisional \(wer.wer): \(final)")
+        #expect(received > 0)
+    }
+}

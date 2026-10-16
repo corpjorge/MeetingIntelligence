@@ -1,0 +1,195 @@
+import MeetingCore
+import SwiftUI
+
+struct ChatMessage: Identifiable {
+    let id = UUID()
+    let question: String
+    var answer: MeetingChatService.Answer?
+    var isLoading = true
+}
+
+/// Question answering over one meeting or many (local retrieval + optional AI).
+struct ChatPanel: View {
+    let scope: SearchScope
+    var onOpen: (String, Double) -> Void
+    @Environment(AppEnvironment.self) private var env
+    @State private var messages: [ChatMessage] = []
+    @State private var draft = ""
+    @State private var useAI = true
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: DS.Space.l) {
+                        if messages.isEmpty {
+                            EmptyStateView(systemImage: "bubble.left.and.text.bubble.right", title: "Pregunta sobre tus reuniones",
+                                           message: "La búsqueda es local (FTS5). Si activas la IA, solo se le envían los extractos encontrados y debe citarlos.")
+                        }
+                        ForEach(messages) { message in
+                            messageView(message).id(message.id)
+                        }
+                    }
+                    .padding(DS.Space.xxl)
+                    .frame(maxWidth: DS.Layout.readingMaxWidth + 120, alignment: .leading)
+                    .frame(maxWidth: .infinity)
+                }
+                .onChange(of: messages.count) { if let last = messages.last { proxy.scrollTo(last.id, anchor: .bottom) } }
+            }
+            HStack(spacing: DS.Space.m) {
+                Toggle(isOn: $useAI) { Label("IA", systemImage: "sparkles") }
+                    .toggleStyle(.switch).controlSize(.small)
+                    .help("Desactívalo para ver solo los resultados de la búsqueda local")
+                TextField("Ej.: ¿Qué compromisos asumió Carlos?", text: $draft)
+                    .textFieldStyle(.plain).font(DS.Font.body)
+                    .onSubmit(send)
+                Button("Preguntar", action: send).buttonStyle(.dsPrimary)
+                    .disabled(draft.trimmingCharacters(in: .whitespaces).count < 3)
+            }
+            .padding(.horizontal, DS.Space.xl)
+            .padding(.vertical, DS.Space.m)
+            .background(DS.Color.surface)
+            .overlay(alignment: .top) { Rectangle().fill(DS.Color.border).frame(height: DS.Layout.hairline) }
+        }
+        .sheet(item: Binding(get: { env.ai.pendingConsent }, set: { if $0 == nil { env.ai.declineConsent() } })) { request in
+            RemoteConsentSheet(request: request)
+        }
+    }
+
+    private func send() {
+        let question = draft.trimmingCharacters(in: .whitespaces)
+        guard question.count >= 3 else { return }
+        draft = ""
+        let message = ChatMessage(question: question)
+        messages.append(message)
+        Task {
+            let answer = await env.ai.ask(question: question, scope: scope, useAI: useAI)
+            if let i = messages.firstIndex(where: { $0.id == message.id }) {
+                messages[i].answer = answer
+                messages[i].isLoading = false
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func messageView(_ message: ChatMessage) -> some View {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
+            HStack {
+                Spacer()
+                Text(message.question).font(DS.Font.body)
+                    .padding(DS.Space.m)
+                    .background(DS.Color.accentSoft, in: RoundedRectangle(cornerRadius: DS.Radius.m))
+            }
+            if message.isLoading {
+                HStack { ProgressView().controlSize(.small); Text("Buscando…").font(DS.Font.callout) }
+            } else if let answer = message.answer {
+                VStack(alignment: .leading, spacing: DS.Space.s) {
+                    if let text = answer.text {
+                        HStack(spacing: DS.Space.s) {
+                            StatusPill(text: "Respuesta de IA", tone: .ai, systemImage: "sparkles")
+                            if let provider = answer.provider {
+                                Text("\(provider.displayName)\(answer.model.map { " · \($0)" } ?? "")")
+                                    .font(DS.Font.caption).foregroundStyle(DS.Color.textTertiary)
+                            }
+                        }
+                        Text(text).font(DS.Font.reading).textSelection(.enabled)
+                        if !answer.citations.isEmpty {
+                            Text("Fuentes").font(DS.Font.captionEmphasis).foregroundStyle(DS.Color.textSecondary)
+                            ForEach(answer.citations) { citation($0) }
+                        } else if !answer.notFound {
+                            Label("La respuesta no citó extractos verificables: trátala como no confirmada.", systemImage: "exclamationmark.triangle")
+                                .font(DS.Font.caption).foregroundStyle(DS.Color.warning)
+                        }
+                    } else if answer.excerpts.isEmpty {
+                        Text("No encontré información sobre esto en las reuniones seleccionadas.").font(DS.Font.body)
+                    } else {
+                        Text("Resultados de búsqueda local (\(answer.excerpts.count))").font(DS.Font.captionEmphasis)
+                            .foregroundStyle(DS.Color.textSecondary)
+                        ForEach(answer.excerpts.prefix(12)) { citation($0) }
+                    }
+                }
+            }
+        }
+    }
+
+    private func citation(_ c: MeetingChatService.Citation) -> some View {
+        Button { onOpen(c.meetingId, c.startTime) } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(c.reference) · \(c.meetingTitle) · \(Timecode.hms(c.startTime)) · \(c.speakerName)")
+                    .font(DS.Font.mono).foregroundStyle(DS.Color.accent)
+                Text(c.text).font(DS.Font.callout).foregroundStyle(DS.Color.textSecondary).lineLimit(3)
+            }
+            .padding(DS.Space.s)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .hoverHighlight()
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct MeetingChatTab: View {
+    let meetingId: String
+    let model: MeetingDetailModel
+
+    var body: some View {
+        ChatPanel(scope: .meetings([meetingId])) { _, time in model.player.seek(to: time, play: true) }
+    }
+}
+
+struct AudioTab: View {
+    let model: MeetingDetailModel
+
+    var body: some View {
+        @Bindable var player = model.player
+        ScrollView {
+            VStack(alignment: .leading, spacing: DS.Space.xl) {
+                if let error = model.player.loadError {
+                    InlineBanner(tone: .warning, systemImage: "speaker.slash", title: "Audio", message: error)
+                }
+                if model.player.isLoaded {
+                    SurfaceCard {
+                        VStack(alignment: .leading, spacing: DS.Space.l) {
+                            Text(Timecode.compact(model.player.currentTime)).font(DS.Font.timer)
+                            PlayerBar(player: model.player).background(.clear)
+                        }
+                    }
+                }
+                SectionHeader(title: "Pistas", subtitle: "Las pistas se graban por separado y sincronizadas")
+                ForEach(model.detail?.tracks ?? []) { track in
+                    SurfaceCard {
+                        HStack(alignment: .top, spacing: DS.Space.m) {
+                            Image(systemName: track.source == .localMicrophone ? "mic.fill" : (track.source == .remoteSystemAudio ? "person.3.fill" : "doc.fill"))
+                                .frame(width: 28, height: 28)
+                                .background(DS.Color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.Radius.s))
+                            VStack(alignment: .leading, spacing: DS.Space.xs) {
+                                HStack(spacing: DS.Space.s) {
+                                    Text(track.source == .localMicrophone ? "Micrófono local" : (track.source == .remoteSystemAudio ? "Audio remoto" : "Audio importado"))
+                                        .font(DS.Font.bodyEmphasis)
+                                    Text(track.source.rawValue).font(DS.Font.mono).foregroundStyle(DS.Color.textTertiary)
+                                }
+                                Text(track.captureDetail ?? "").font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
+                                HStack(spacing: DS.Space.m) {
+                                    Text(Timecode.humanDuration(track.durationSeconds))
+                                    Text("\(Int(track.sampleRate)) Hz · \(track.channelCount) canal(es)")
+                                    Text(ByteCountFormatter.string(fromByteCount: track.fileSizeBytes, countStyle: .file))
+                                    if let device = track.deviceName { Text(device) }
+                                }
+                                .font(DS.Font.caption).foregroundStyle(DS.Color.textTertiary)
+                            }
+                            Spacer()
+                            if model.player.availableSources.contains(track.source) {
+                                Toggle("Silenciar", isOn: Binding(
+                                    get: { player.mutedSources.contains(track.source) },
+                                    set: { if $0 { player.mutedSources.insert(track.source) } else { player.mutedSources.remove(track.source) } }))
+                                    .toggleStyle(.switch).controlSize(.small)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(DS.Space.xxl)
+            .frame(maxWidth: DS.Layout.contentMaxWidth, alignment: .leading)
+            .frame(maxWidth: .infinity)
+        }
+    }
+}

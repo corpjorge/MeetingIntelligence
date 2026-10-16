@@ -1,0 +1,1 @@
+El servicio de viabilidad inicial debe exponer el indicador de ingresos validados en el response del endpoint. También necesitamos revisar el pull request del microservicio de onboarding antes del viernes. El equipo de backend va a desplegar en Kubernetes y medir la latencia del API.

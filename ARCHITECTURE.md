@@ -1,0 +1,120 @@
+# Arquitectura
+
+## Módulos (SwiftPM)
+
+```
+MeetingCore              Dominio, persistencia (GRDB/SQLite WAL + FTS5), búsqueda, exportación,
+                         proveedores de IA, servidor MCP (núcleo), seguridad. Sin audio, ML ni UI.
+  ├─ Domain/             Meeting, AudioTrack, Transcript, TranscriptSegment, Participant, SpeakerProfile,
+  │                      VoiceSample, MeetingSpeaker, SpeakerAssignment, AIAnalysis, AnalysisItem,
+  │                      AIProviderConfiguration, ProcessingJob, CorrectionEvent, VocabularyTerm
+  ├─ Persistence/        AppDatabase, migraciones, repositorios (biblioteca, hablantes)
+  ├─ Search/             SearchService (FTS5, BM25, prefijos, plurales)
+  ├─ Speakers/           SpeakerMatcher + SpeakerCalibration (puro, testeable)
+  ├─ Export/             TXT, Markdown, JSON (documento completo), SRT, PDF (Core Text)
+  ├─ AI/                 ProcessRunner, ToolEnvironment, AIProvider (+4 proveedores),
+  │                      MeetingAnalysisService, MeetingChatService
+  ├─ MCP/                MCPServerCore (JSON-RPC dual-era), MCPTools, MCPAccessPolicy
+  ├─ Security/           KeychainStore, BiometricVault (AES-GCM)
+  ├─ Storage/            AppIdentity, AppPaths
+  └─ Utilities/          Timecode, TextNormalization, VocabularyCorrector, Metrics (WER/DER)
+
+MeetingAudio             Captura y DSP. Depende de MeetingCore.
+  ├─ Capture/            RecordingSession, ProcessTapSource (Core Audio taps), MicrophoneSource
+  │                      (AVAudioEngine), TrackRecorder, CaptureClock, catálogo HAL de procesos/dispositivos
+  ├─ Processing/         CrashSafeWAVWriter + WAVRepair, MonoResampler, Downmix, TimelineAligner, LevelMeter
+  └─ Import/             AudioImporter (copia WAV/M4A/MP3; extrae audio de MP4/MOV)
+
+MeetingSpeech            FluidAudio. Depende de MeetingCore y MeetingAudio.
+  ├─ Transcription/      ASRProvider, ParakeetUltraProvider, WordGrouping, SegmentBuilder, LiveTranscriber
+  ├─ Diarization/        DiarizationService (OfflineDiarizerManager), SpeakerAlignment, EchoDetector
+  ├─ SpeakerRecognition/ SpeakerRecognitionService (enrolamiento, muestras validadas, reconocimiento)
+  ├─ Pipeline/           MeetingProcessor (etapas + ProcessingJob), MeetingImportService
+  └─ Models/             SerialGate, ExclusiveBox
+
+MeetingIntelligenceApp   SwiftUI (aislamiento por defecto MainActor).
+  ├─ App/                App, AppEnvironment (raíz de composición), AppRouter, AppSettings, RootView,
+  │                      MenuBarExtra, SnapshotDriver (verificación de UI)
+  ├─ DesignSystem/       Tokens (tipografía, color, espaciado, radios, elevación, movimiento) + componentes
+  ├─ Services/           ProcessingCoordinator, RecordingController, ModelStatusModel, AIController,
+  │                      MeetingAudioPlayer
+  └─ Features/           Dashboard, Meetings, MeetingDetail (7 pestañas), Recording, Participants,
+                         Intelligence, Settings, Onboarding
+
+MeetingMCPServer         Ejecutable `meeting-intelligence-mcp` (stdio, solo lectura).
+MeetingIntelligenceCLI   Ejecutable `mi` (diagnóstico, importación, evaluación, IA, exportación).
+```
+
+Regla: las capas inferiores nunca importan a las superiores. La UI no importa FluidAudio.
+
+## Captura (Teams + micrófono)
+
+```
+Teams (procesos com.microsoft.teams2* y helpers WebView2 dentro de Microsoft Teams.app)
+   │  CATapDescription(monoMixdownOfProcesses:)  → tap privado → aggregate device privado
+   ▼
+IOProc (cola de tiempo real) ── copia + mezcla a mono ──► TrackRecorder(remote_system_audio)
+                                                             │ cola serial: remuestreo → alineación → WAV
+AVAudioEngine.inputNode (dispositivo por defecto) ─────────► TrackRecorder(local_microphone)
+```
+
+- **Reloj común** (`CaptureClock`): origen en host time; las pausas desplazan el origen para ambas pistas.
+- **Alineación** (`TimelineAligner`): cada buffer trae el host time de su primera muestra; se insertan silencios
+  ante huecos (cambios de dispositivo, inicio tardío de Teams) y se descartan muestras ante deriva > 40 ms.
+- **Formato**: 16 kHz, mono, PCM 16 bits — el formato que consumen Parakeet y la diarización.
+- **Resiliencia**: cabecera WAV reescrita + `fsync` cada 2 s; al iniciar, las reuniones en estado `recording`
+  pasan a `interrupted` y `WAVRepair` recupera el audio escrito.
+- **Cambios de dispositivo**: `AVAudioEngineConfigurationChange` reinstala el tap del micrófono; listeners del HAL
+  reconstruyen el tap de procesos cuando cambian los procesos de Teams o la salida por defecto.
+- **Eco/duplicación**: Teams no reproduce tu propia voz, así que no hay doble captura de ti en la pista remota. El eco
+  (altavoces → micrófono) se mitiga con (1) advertencia de altavoces, (2) Voice Processing opcional y
+  (3) `EchoDetector`, que marca como `probableEcho` los segmentos del micrófono que repiten el habla remota.
+
+## Procesamiento offline (por reunión)
+
+```
+modelPreparation ─► por pista: transcription (Ultra) ─► diarization (VBx) ─► alignment ─► persistencia
+                                                                                  │
+                                                     speakerRecognition (perfiles con consentimiento)
+```
+
+Cada etapa es un `ProcessingJob` con tiempos reales, RTFx y memoria pico. `ProcessingCoordinator` ejecuta una
+reunión a la vez, con progreso real (FluidAudio) y cancelación cooperativa (`Task.checkCancellation`).
+
+- **Micrófono**: si la diarización detecta ≤ 1 hablante con ≥ 4 s de voz (excluyendo eco), se atribuye al usuario
+  local; si detecta varios, se crean "Local 1, Local 2…" y solo el reconocimiento o tú asignan identidades.
+- **Remoto/importado**: clusters "Hablante N" → reconocimiento → nombre solo si supera el umbral calibrado.
+
+## Concurrencia
+
+- Swift 6 (modo estricto). Motores como `actor` (`ParakeetUltraProvider`, `DiarizationService`,
+  `SpeakerRecognitionService`, `MeetingProcessor`, `LiveTranscriber`).
+- Los actores son reentrantes: `SerialGate` garantiza una inferencia a la vez sobre cada instancia de modelo.
+- `OfflineDiarizerManager` (no `Sendable`) vive en `ExclusiveBox`, accedido solo bajo la compuerta.
+- La captura usa colas seriales confinadas (`@unchecked Sendable` documentado); nunca bloquea el hilo principal.
+- La UI observa la base de datos con `ValueObservation` (GRDB) → `AsyncSequence`.
+
+## Persistencia
+
+SQLite (GRDB 7.11.1, WAL). Migración `v1-core`. Relación verificable:
+`AudioTrack → Transcript → TranscriptSegment (startTime/endTime, palabras) → MeetingSpeaker → Participant`.
+
+- `asrText` (inmutable), `vocabularyText` (diccionario), `editedText` (usuario): nunca se sobrescribe el original.
+- Re-transcribir marca el transcript anterior con `supersededAt` (no se borra).
+- `SpeakerAssignment` es un registro inmutable de decisiones (método, similitud, margen, umbral).
+- `diarizedSpeakerId` inmutable permite deshacer fusiones de hablantes.
+- `analysisItem` reúne decisiones, tareas, temas, riesgos… con evidencia (`Decision`, `ActionItem`,
+  `MeetingTopic` son vistas tipadas).
+- FTS5 sincronizado por triggers (`transcriptSegmentFts`, `analysisItemFts`), `unicode61` sin diacríticos.
+
+## IA
+
+`AIProvider` común; `ToolEnvironment` resuelve el PATH del shell de inicio de sesión (los GUI no lo heredan).
+Las CLIs se ejecutan en un directorio temporal vacío, con timeout y cancelación; nunca con flags que omitan
+permisos. El análisis valida localmente cada cita contra el segmento citado.
+
+## MCP
+
+`MCPServerCore` implementa JSON-RPC 2.0 sobre stdio (mensajes por línea), dual-era: `server/discover` y `_meta`
+(2026-07-28) y `initialize` (2025-11-25/06-18/03-26). Abre la biblioteca **solo lectura** y relee la política de
+acceso (`mcp-access.json`) en cada llamada.
