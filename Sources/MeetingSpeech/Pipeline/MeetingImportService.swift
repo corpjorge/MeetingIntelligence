@@ -32,9 +32,11 @@ public struct MeetingImportService: Sendable {
     }
 
     /// Inserts the meeting row at recording start so a crash leaves a recoverable entry.
-    public func beginRecording(title: String, scope: CaptureScope, language: String = "es-CO") throws -> Meeting {
+    public func beginRecording(title: String, scope: CaptureScope, sourceApp: AudioAppSelector? = nil,
+                               language: String = "es-CO") throws -> Meeting {
         let meeting = Meeting(title: title, startedAt: Date(), origin: .recording, captureScope: scope,
-                              status: .recording, language: language)
+                              status: .recording, language: language,
+                              sourceAppBundleID: sourceApp?.bundleIdentifier, sourceAppName: sourceApp?.name)
         try database.insert(meeting: meeting, tracks: [])
         try paths.prepareMeetingDirectory(meeting.id)
         return meeting
@@ -60,14 +62,24 @@ public struct MeetingImportService: Sendable {
                               captureDetail: detail.isEmpty ? nil : detail.joined(separator: " · "),
                               fileSizeBytes: size)
         }
+        let pauses = result.microphonePauses.filter { $0.end > $0.start }.map {
+            RecordingPause(meetingId: meetingId, source: .localMicrophone, startTime: $0.start, endTime: $0.end,
+                           reason: .microphonePausedByUser)
+        }
         try database.writer.write { db in
             for track in tracks { try track.insert(db) }
+            for pause in pauses { try pause.insert(db) }
         }
+        let sourceApp = result.sourceApp
         try database.updateMeeting(id: meetingId) {
             $0.status = .recorded
             $0.endedAt = Date()
             $0.durationSeconds = result.durationSeconds
             $0.captureScope = result.captureScope
+            if let sourceApp {
+                $0.sourceAppBundleID = sourceApp.bundleIdentifier
+                $0.sourceAppName = sourceApp.name
+            }
         }
     }
 

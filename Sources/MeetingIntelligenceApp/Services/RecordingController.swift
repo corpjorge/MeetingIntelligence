@@ -28,6 +28,9 @@ final class RecordingController {
     private(set) var scope: CaptureScope?
     private(set) var lastFinishedMeetingId: String?
     private(set) var capturesMicrophone = false
+    private(set) var microphonePaused = false
+    /// App being recorded on the remote track (nil = system-wide / microphone only).
+    private(set) var recordingApp: AudioAppSelector?
     /// Provisional live text per source (never persisted as the transcript).
     private(set) var liveText: [AudioSource: LiveTranscriptUpdate] = [:]
     private(set) var liveStatus: String?
@@ -64,6 +67,8 @@ final class RecordingController {
         guard !isActive else { return }
         state = .starting
         capturesMicrophone = captureMicrophone
+        microphonePaused = false
+        if case .application(let selector) = target { recordingApp = selector } else { recordingApp = nil }
         warnings = []
         remoteProcesses = []
         if captureMicrophone, !RecordingSession.microphonePermissionGranted() {
@@ -73,12 +78,13 @@ final class RecordingController {
             }
         }
         let scope: CaptureScope = switch target {
-        case .teams: .teamsProcesses
+        case .application: .applicationProcesses
         case .systemWide: .systemWide
         case .none: .microphoneOnly
         }
         do {
-            let meeting = try importer.beginRecording(title: title, scope: scope, language: settings.language)
+            let meeting = try importer.beginRecording(title: title, scope: scope, sourceApp: recordingApp,
+                                                      language: settings.language)
             let config = RecordingConfiguration(
                 directory: paths.meetingDirectory(meeting.id), remoteTarget: target,
                 captureMicrophone: captureMicrophone, microphoneVoiceProcessing: settings.microphoneVoiceProcessing)
@@ -104,6 +110,13 @@ final class RecordingController {
             meeting = nil
             state = .failed(error.localizedDescription)
         }
+    }
+
+    /// Pauses only my microphone (silence is written; the remote track keeps recording).
+    func toggleMicrophonePause() {
+        guard isActive, capturesMicrophone, let session else { return }
+        microphonePaused.toggle()
+        session.setMicrophonePaused(microphonePaused)
     }
 
     func pause() {
@@ -135,6 +148,8 @@ final class RecordingController {
         }
         self.session = nil
         self.meeting = nil
+        recordingApp = nil
+        microphonePaused = false
         micLevel = .silence
         remoteLevel = .silence
     }
@@ -180,6 +195,8 @@ final class RecordingController {
                     self.remoteProcesses = processes
                 case .remoteScope(let scope):
                     self.scope = scope
+                case .microphonePaused(let paused):
+                    self.microphonePaused = paused
                 }
             }
         }

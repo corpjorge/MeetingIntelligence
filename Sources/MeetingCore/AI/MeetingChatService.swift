@@ -44,8 +44,8 @@ public struct MeetingChatService: Sendable {
     }
 
     /// Local retrieval. Speaker names mentioned in the question boost that speaker's excerpts.
-    public func retrieve(question: String, scope: SearchScope, model: String?, timeout: Double,
-                         limit: Int = 30) throws -> Retrieval {
+    public func retrieve(question: String, scope: SearchScope, model: String?, effort: String? = nil,
+                         timeout: Double, limit: Int = 30) throws -> Retrieval {
         let search = SearchService(reader: database.reader)
         var hits = try search.search(question, scope: scope, limit: limit * 2)
         let names = try database.participants().map(\.displayName)
@@ -78,7 +78,8 @@ public struct MeetingChatService: Sendable {
         let summary = "Se compartirán la pregunta y \(excerpts.count) extractos de transcripción de \(meetings) reunión(es) " +
             "(texto, hablante y marca de tiempo). No se comparte audio ni perfiles de voz."
         let request = AIRequest(instructions: Self.instructions, input: input, jsonSchema: Self.schema,
-                                requiredKeys: ["answer", "citations", "found"], model: model, timeoutSeconds: timeout)
+                                requiredKeys: ["answer", "citations", "found"], model: model, effort: effort,
+                                timeoutSeconds: timeout)
         return Retrieval(excerpts: Array(excerpts), sharedSummary: summary, request: request)
     }
 

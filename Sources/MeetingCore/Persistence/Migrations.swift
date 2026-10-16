@@ -252,6 +252,29 @@ extension AppDatabase {
             }
         }
 
+        // v2: any conversation app as source; intentional microphone pauses.
+        migrator.registerMigration("v2-conversation-apps") { db in
+            try db.alter(table: "meeting") { t in
+                t.add(column: "sourceAppBundleID", .text)
+                t.add(column: "sourceAppName", .text)
+            }
+            try db.execute(sql: """
+                UPDATE meeting SET sourceAppBundleID = 'com.microsoft.teams2', sourceAppName = 'Microsoft Teams'
+                WHERE captureScope = 'teamsProcesses'
+                """)
+            // Reasoning effort per provider and as provenance of each analysis.
+            try db.alter(table: "aiProviderConfiguration") { t in t.add(column: "effort", .text) }
+            try db.alter(table: "aiAnalysis") { t in t.add(column: "effort", .text) }
+            try db.create(table: "recordingPause") { t in
+                t.primaryKey("id", .text)
+                t.belongsTo("meeting", onDelete: .cascade).notNull()
+                t.column("source", .text).notNull()
+                t.column("startTime", .double).notNull()
+                t.column("endTime", .double).notNull()
+                t.column("reason", .text).notNull()
+            }
+        }
+
         return migrator
     }
 }

@@ -30,6 +30,7 @@ public final class RecordingSession: @unchecked Sendable {
     private var warnings: [RecordingWarning] = []
     private var started = false
     private var stopped = false
+    private var microphonePaused = false
 
     public init(configuration: RecordingConfiguration) {
         self.configuration = configuration
@@ -119,7 +120,12 @@ public final class RecordingSession: @unchecked Sendable {
             microphone?.stop()
             tap?.stop()
             var stats: [TrackStatistics] = []
-            if let micRecorder { stats.append(micRecorder.finish(atTimelineSeconds: end)) }
+            var micPauses: [PauseInterval] = []
+            if let micRecorder {
+                let micStats = micRecorder.finish(atTimelineSeconds: end)
+                micPauses = micStats.pauses
+                stats.append(micStats)
+            }
             if let remoteRecorder { stats.append(remoteRecorder.finish(atTimelineSeconds: end)) }
             stopped = true
             continuation.finish()
@@ -127,7 +133,9 @@ public final class RecordingSession: @unchecked Sendable {
                 durationSeconds: end, tracks: stats, captureScope: scope,
                 remoteProcessDescription: describe(tappedProcesses),
                 inputDeviceName: AudioDevices.defaultInput()?.name,
-                warnings: warnings)
+                warnings: warnings,
+                sourceApp: { if case .application(let selector) = configuration.remoteTarget { selector } else { nil } }(),
+                microphonePauses: micPauses)
         }
     }
 
@@ -137,22 +145,42 @@ public final class RecordingSession: @unchecked Sendable {
         remoteRecorder?.flush()
     }
 
+    // MARK: Microphone pause
+
+    /// Pauses/resumes only the local microphone. Silence is written meanwhile so
+    /// both tracks keep the same timeline; the span is reported as a pause.
+    public func setMicrophonePaused(_ paused: Bool) {
+        control.async { [self] in
+            guard let micRecorder, !stopped, paused != microphonePaused else { return }
+            microphonePaused = paused
+            micRecorder.setMuted(paused, atTimelineSeconds: clock.elapsed)
+            continuation.yield(.microphonePaused(paused))
+        }
+    }
+
+    public var isMicrophonePaused: Bool { control.sync { microphonePaused } }
+
     // MARK: Remote capture
+
+    private func appProcesses(for selector: AudioAppSelector) -> (app: AudioApplication?, processes: [AudioProcessInfo]) {
+        let app = AudioApplicationResolver.currentApplications().first(where: selector.matches)
+        return (app, app?.processes ?? [])
+    }
 
     private func startRemoteLocked() throws {
         guard let tap else { return }
         switch configuration.remoteTarget {
-        case .teams:
-            let teams = AudioProcessCatalog.teamsProcesses()
-            tappedProcesses = teams
-            if teams.isEmpty {
-                scope = .teamsProcesses
-                report(.waitingForTeamsAudio)
+        case .application(let selector):
+            let (app, processes) = appProcesses(for: selector)
+            tappedProcesses = processes
+            scope = .applicationProcesses
+            if processes.isEmpty {
+                report(.waitingForAppAudio(selector.name))
             } else {
-                try tap.start(target: .processes(teams.map(\.objectID)))
-                scope = .teamsProcesses
+                try tap.start(target: .processes(processes.map(\.objectID)))
             }
-            continuation.yield(.remoteProcesses(teams))
+            if app?.isolation == .shared { report(.sharedProcessCapture(app?.name ?? selector.name)) }
+            continuation.yield(.remoteProcesses(processes))
         case .systemWide:
             let own = AudioProcessCatalog.currentProcessObjectID().map { [$0] } ?? []
             try tap.start(target: .systemWideExcluding(own))
@@ -177,20 +205,21 @@ public final class RecordingSession: @unchecked Sendable {
         listeners = [processList, output]
     }
 
+    /// The chosen app started/stopped helper processes (e.g. Teams ModuleHost on
+    /// joining a call): rebuild the tap; the recorder pads the short gap.
     private func processListChanged() {
-        guard !stopped, configuration.remoteTarget == .teams, let tap else { return }
-        let teams = AudioProcessCatalog.teamsProcesses()
-        let newIDs = Set(teams.map(\.objectID))
-        guard newIDs != Set(tappedProcesses.map(\.objectID)) else { return }
-        tappedProcesses = teams
-        continuation.yield(.remoteProcesses(teams))
+        guard !stopped, case .application(let selector) = configuration.remoteTarget, let tap else { return }
+        let (_, processes) = appProcesses(for: selector)
+        guard Set(processes.map(\.objectID)) != Set(tappedProcesses.map(\.objectID)) else { return }
+        tappedProcesses = processes
+        continuation.yield(.remoteProcesses(processes))
         do {
-            if teams.isEmpty {
+            if processes.isEmpty {
                 tap.stop()
-                report(.waitingForTeamsAudio)
+                report(.waitingForAppAudio(selector.name))
             } else {
-                try tap.rebuild(target: .processes(teams.map(\.objectID)))
-                report(.remoteTapRebuilt("procesos de Teams actualizados (\(teams.count))"))
+                try tap.rebuild(target: .processes(processes.map(\.objectID)))
+                report(.remoteTapRebuilt("procesos de \(selector.name) actualizados (\(processes.count))"))
             }
         } catch {
             report(.sourceFailed(.remoteSystemAudio, error.localizedDescription))
@@ -224,10 +253,10 @@ public final class RecordingSession: @unchecked Sendable {
         switch configuration.remoteTarget {
         case .none: return nil
         case .systemWide: return "Todo el audio del sistema excepto Meeting Intelligence"
-        case .teams:
-            guard !processes.isEmpty else { return "Microsoft Teams (sin procesos de audio detectados)" }
+        case .application(let selector):
+            guard !processes.isEmpty else { return "\(selector.name) (sin procesos de audio detectados)" }
             let names = Set(processes.map { $0.bundleID ?? $0.displayName }).sorted()
-            return "Microsoft Teams: " + names.joined(separator: ", ")
+            return "\(selector.name): " + names.joined(separator: ", ")
         }
     }
 }

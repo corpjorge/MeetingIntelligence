@@ -9,7 +9,7 @@ scripts/generate-fixtures.sh    # regenera fixtures sintéticos (necesario para 
 Framework: **Swift Testing** (XCTest no está disponible con Command Line Tools). Las pruebas de integración con
 modelos reales se ejecutan solo si Parakeet Ultra y la diarización ya están en caché (nunca descargan en CI).
 
-## Inventario (61 pruebas, todas pasan al 16-oct-2026)
+## Inventario (73 pruebas, todas pasan al 16-oct-2026)
 
 | Suite | Cubre |
 |---|---|
@@ -21,6 +21,10 @@ modelos reales se ejecutan solo si Parakeet Ultra y la diarización ya están en
 | Servidor MCP | `initialize` legacy, `server/discover` moderno, versión no soportada (-32022), errores JSON-RPC, acceso deshabilitado por defecto, herramientas con timestamps, validación de parámetros, política por reunión |
 | Escritura WAV / Alineación / Conversión | WAV legible, recuperación tras cierre, huecos, deriva, pausas, remuestreo 48→16 kHz (duración, tono, nivel), mezcla a mono |
 | Detección de Teams | bundle IDs, helpers WebView2 dentro de Teams, rechazo de Outlook, catálogo HAL real |
+| Apps de conversación | agrupación por `.app` (Teams, Zoom, Chrome, WebKit, app desconocida), exclusión de esta app, orden por actividad, HAL real |
+| Detección de llamadas | inicio tras 3 s, prueba breve ignorada, dictado (solo micrófono) ignorado, cambio a AirPods sin falso fin, fin tras 25 s, app cerrada, apps ignoradas, FaceTime |
+| Pausa del micrófono | silencio escrito, línea de tiempo intacta, intervalo registrado |
+| Migración v2 y esfuerzo de IA | columnas/tabla nuevas, app de origen, flags de esfuerzo por CLI, sin flags que omitan permisos, esfuerzo registrado en el análisis |
 | Segmentación y alineación | tokens→palabras, pausas/oraciones, cambio de hablante, suavizado, solapamiento, eco |
 | Identidades manuales al reprocesar | re-mapeo por solapamiento, empate/poca evidencia → no se aplica, clusters divididos heredan, sin doble conteo, solo asignaciones manuales vigentes |
 | Reconocimiento | sin calibrar → solo sugerencia, calibrado acepta/rechaza, voz ambigua no aceptada, poca voz → sugerencia |
@@ -57,8 +61,15 @@ una **cota optimista**. No se declara precisión sobre reuniones reales sin medi
 4. Identificación: registra ≥ 2 muestras de ≥ 2 personas; mide aceptaciones correctas y **falsos reconocimientos**
    en reuniones donde participan y no participan.
 
+## Verificación en vivo realizada
+
+- `mi doctor` lista en tiempo real las apps registradas en el audio del sistema: con `afplay` reproduciendo, aparece
+  como "reproduce audio"; Teams se agrupa con sus 5 procesos; Chrome, Edge y Safari/WebKit aparecen como audio compartido.
+
 ## Pruebas manuales pendientes (requieren permisos o condiciones del usuario)
 
+- Detección de llamadas: unirse a una llamada en Teams, Zoom y Meet (Chrome) y comprobar la sugerencia de grabar y,
+  al colgar, la sugerencia de detener; registrar qué procesos usan el micrófono en cada app.
 - Grabación real de una llamada de Teams: concesión de "Micrófono" y "Grabación de audio del sistema", niveles en
   vivo, pausa/reanudación, cambio a AirPods durante la llamada, cerrar la app grabando (debe recuperarse).
 - Análisis con Claude Code CLI (iniciar sesión con `claude` en una terminal) y con Ollama (instalar y `ollama pull`).

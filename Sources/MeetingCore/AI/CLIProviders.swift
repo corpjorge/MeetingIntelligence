@@ -29,7 +29,19 @@ enum CLISupport {
 /// private directory. Prompts are sent to Anthropic's cloud models.
 public struct ClaudeCodeProvider: AIProvider {
     public let kind = AIProviderKind.claudeCode
+    /// `claude --effort` values (verified in `claude --help`, v2.1.286).
+    public static let effortLevels = ["low", "medium", "high", "xhigh", "max"]
     public init() {}
+
+    /// Never includes flags that bypass permissions; tools are disabled entirely.
+    static func arguments(for request: AIRequest) -> [String] {
+        var args = ["-p", "--output-format", "json", "--json-schema", request.jsonSchema,
+                    "--tools", "", "--strict-mcp-config", "--no-session-persistence",
+                    "--permission-mode", "dontAsk", "--system-prompt", request.instructions]
+        if let model = request.model, !model.isEmpty { args += ["--model", model] }
+        if let effort = request.effort, effortLevels.contains(effort) { args += ["--effort", effort] }
+        return args
+    }
 
     public func detect(configuration: AIProviderConfiguration) async -> ProviderStatus {
         guard let exe = await ToolEnvironment.shared.locate("claude", configuredPath: configuration.executablePath) else {
@@ -40,6 +52,7 @@ public struct ClaudeCodeProvider: AIProvider {
                                     version: await CLISupport.version(exe, env: env),
                                     models: ["sonnet", "opus", "haiku"],
                                     notes: ["Se ejecuta localmente, pero el modelo de Anthropic procesa los datos en la nube."])
+        status.effortLevels = Self.effortLevels
         if let result = try? await ProcessRunner.run(executable: exe, arguments: ["auth", "status", "--json"],
                                                      environment: env, timeout: 20),
            let json = try? JSONSerialization.jsonObject(with: result.stdout) as? [String: Any] {
@@ -57,10 +70,7 @@ public struct ClaudeCodeProvider: AIProvider {
         }
         let workdir = try CLISupport.makeSandboxDirectory()
         defer { try? FileManager.default.removeItem(at: workdir) }
-        var args = ["-p", "--output-format", "json", "--json-schema", request.jsonSchema,
-                    "--tools", "", "--strict-mcp-config", "--no-session-persistence",
-                    "--permission-mode", "dontAsk", "--system-prompt", request.instructions]
-        if let model = request.model, !model.isEmpty { args += ["--model", model] }
+        let args = Self.arguments(for: request)
         let result = try await ProcessRunner.run(executable: exe, arguments: args, stdin: Data(request.input.utf8),
                                                  environment: await ToolEnvironment.shared.environment(),
                                                  workingDirectory: workdir, timeout: request.timeoutSeconds)
@@ -96,7 +106,21 @@ public struct ClaudeCodeProvider: AIProvider {
 /// an empty working directory. Prompts are sent to OpenAI's cloud models.
 public struct CodexProvider: AIProvider {
     public let kind = AIProviderKind.codex
+    /// Passed as `-c model_reasoning_effort=…` (config key verified in the Codex 0.160.1 binary
+    /// and the user's config.toml). Accepted values depend on the model; Codex reports them on error.
+    public static let effortLevels = ["low", "medium", "high", "xhigh"]
     public init() {}
+
+    static func arguments(for request: AIRequest, schemaPath: String, outputPath: String, workingDirectory: String) -> [String] {
+        var args = ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--ephemeral", "--color", "never",
+                    "--output-schema", schemaPath, "-o", outputPath, "-C", workingDirectory]
+        if let model = request.model, !model.isEmpty { args += ["-m", model] }
+        if let effort = request.effort, effortLevels.contains(effort) {
+            args += ["-c", "model_reasoning_effort=\"\(effort)\""]
+        }
+        args.append("-")
+        return args
+    }
 
     public func detect(configuration: AIProviderConfiguration) async -> ProviderStatus {
         guard let exe = await ToolEnvironment.shared.locate("codex", configuredPath: configuration.executablePath) else {
@@ -106,7 +130,8 @@ public struct CodexProvider: AIProvider {
         var status = ProviderStatus(kind: kind, installed: true, executablePath: exe.path,
                                     version: await CLISupport.version(exe, env: env),
                                     notes: ["Se ejecuta localmente, pero el modelo de OpenAI procesa los datos en la nube.",
-                                            "Modelo vacío = el configurado en ~/.codex/config.toml."])
+                                            "Modelo y esfuerzo vacíos = los de ~/.codex/config.toml."])
+        status.effortLevels = Self.effortLevels
         if let result = try? await ProcessRunner.run(executable: exe, arguments: ["login", "status"], environment: env, timeout: 20) {
             let text = (result.stdoutText + result.stderrText).trimmingCharacters(in: .whitespacesAndNewlines)
             status.authenticated = result.exitCode == 0 && text.localizedCaseInsensitiveContains("logged in")
@@ -127,10 +152,7 @@ public struct CodexProvider: AIProvider {
         // The sandbox dir also holds the schema; the agent sees an otherwise empty folder.
         let runDir = workdir.appendingPathComponent("work", isDirectory: true)
         try FileManager.default.createDirectory(at: runDir, withIntermediateDirectories: true)
-        var args = ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--ephemeral", "--color", "never",
-                    "--output-schema", schemaURL.path, "-o", outURL.path, "-C", runDir.path]
-        if let model = request.model, !model.isEmpty { args += ["-m", model] }
-        args.append("-")
+        let args = Self.arguments(for: request, schemaPath: schemaURL.path, outputPath: outURL.path, workingDirectory: runDir.path)
         let prompt = request.instructions + "\n\n" + request.input
         let result = try await ProcessRunner.run(executable: exe, arguments: args, stdin: Data(prompt.utf8),
                                                  environment: await ToolEnvironment.shared.environment(),
@@ -159,8 +181,18 @@ public struct CodexProvider: AIProvider {
 /// than one JSON object, so the one with the expected keys is extracted.
 public struct AntigravityProvider: AIProvider {
     public let kind = AIProviderKind.antigravity
+    /// `agy --effort` values (verified in `agy --help`).
+    public static let effortLevels = ["low", "medium", "high", "max"]
     public init() {}
     static let maxArgumentBytes = 700_000
+
+    static func arguments(for request: AIRequest, prompt: String) -> [String] {
+        var args = ["-p", prompt, "--output-format", "json", "--json-schema", request.jsonSchema,
+                    "--print-timeout", "\(Int(request.timeoutSeconds))s", "--sandbox", "--disable-slash-commands"]
+        if let model = request.model, !model.isEmpty { args += ["--model", model] }
+        if let effort = request.effort, effortLevels.contains(effort) { args += ["--effort", effort] }
+        return args
+    }
 
     public func detect(configuration: AIProviderConfiguration) async -> ProviderStatus {
         guard let exe = await ToolEnvironment.shared.locate("agy", configuredPath: configuration.executablePath) else {
@@ -171,6 +203,7 @@ public struct AntigravityProvider: AIProvider {
                                     version: await CLISupport.version(exe, env: env),
                                     notes: ["Se ejecuta localmente, pero los modelos procesan los datos en la nube de Google.",
                                             "Las herramientas del agente quedan denegadas en modo headless."])
+        status.effortLevels = Self.effortLevels
         if let result = try? await ProcessRunner.run(executable: exe, arguments: ["models"], environment: env, timeout: 40) {
             let models = result.stdoutText.split(separator: "\n").compactMap { line -> String? in
                 let id = line.split(separator: "\t").first.map(String.init) ?? ""
@@ -194,9 +227,7 @@ public struct AntigravityProvider: AIProvider {
         }
         let workdir = try CLISupport.makeSandboxDirectory()
         defer { try? FileManager.default.removeItem(at: workdir) }
-        var args = ["-p", prompt, "--output-format", "json", "--json-schema", request.jsonSchema,
-                    "--print-timeout", "\(Int(request.timeoutSeconds))s", "--sandbox", "--disable-slash-commands"]
-        if let model = request.model, !model.isEmpty { args += ["--model", model] }
+        let args = Self.arguments(for: request, prompt: prompt)
         let result = try await ProcessRunner.run(executable: exe, arguments: args,
                                                  environment: await ToolEnvironment.shared.environment(),
                                                  workingDirectory: workdir, timeout: request.timeoutSeconds + 15)

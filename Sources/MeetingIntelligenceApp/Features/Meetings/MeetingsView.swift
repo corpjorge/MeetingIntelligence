@@ -194,7 +194,7 @@ struct MeetingsView: View {
                 LoadingStateView(message: "Cargando reuniones…")
             } else if model.rows.isEmpty {
                 EmptyStateView(systemImage: "rectangle.stack.badge.plus", title: "Tu biblioteca está vacía",
-                               message: "Importa una grabación (WAV, M4A, MP3 o MP4) o arrástrala aquí. También puedes grabar una llamada de Teams.") {
+                               message: "Importa una grabación (WAV, M4A, MP3 o MP4) o arrástrala aquí. También puedes grabar una llamada de cualquier app.") {
                     Button("Importar audio") { router.isImporting = true }.buttonStyle(.dsPrimary)
                 }
             } else if rows.isEmpty {

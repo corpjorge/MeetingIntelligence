@@ -5,6 +5,7 @@ import SwiftUI
 /// Always-visible recording indicator in the menu bar.
 struct MenuBarLabel: View {
     let recording: RecordingController
+    var callDetected = false
 
     var body: some View {
         if recording.isActive {
@@ -12,6 +13,9 @@ struct MenuBarLabel: View {
                 .symbolRenderingMode(.palette)
                 .foregroundStyle(.red, .primary)
                 .accessibilityLabel(recording.state == .paused ? "Grabación en pausa" : "Grabando")
+        } else if callDetected {
+            Image(systemName: "phone.connection")
+                .accessibilityLabel("Llamada detectada")
         } else {
             Image(systemName: "waveform")
                 .accessibilityLabel(AppIdentity.displayName)
@@ -44,6 +48,16 @@ struct MenuBarContent: View {
                         Label("Remoto", systemImage: "speaker.wave.2.fill").font(DS.Font.caption).frame(width: 52, alignment: .leading)
                         LevelMeterView(level: env.recording.remoteLevel.normalized, tint: DS.Color.info)
                     }
+                    if env.recording.capturesMicrophone {
+                        Button(env.recording.microphonePaused ? "Reactivar mi micrófono" : "Pausar mi micrófono") {
+                            env.recording.toggleMicrophonePause()
+                        }
+                        .buttonStyle(.ds(.ghost, size: .small))
+                    }
+                    if let ended = env.calls.endSuggestion {
+                        Text("Parece que la llamada de \(ended.name) terminó.").font(DS.Font.caption)
+                            .foregroundStyle(DS.Color.warning)
+                    }
                     HStack {
                         Button(env.recording.state == .paused ? "Reanudar" : "Pausar") {
                             env.recording.state == .paused ? env.recording.resume() : env.recording.pause()
@@ -54,6 +68,16 @@ struct MenuBarContent: View {
                     }
                 }
             } else {
+                if let call = env.calls.activeCalls.first {
+                    Label("\(call.app.name) está en una llamada", systemImage: "phone.connection")
+                        .font(DS.Font.callout).foregroundStyle(DS.Color.recording)
+                    Button("Preparar grabación de \(call.app.name)…") {
+                        router.preselectedRecordingApp = call.app
+                        router.section = .recording
+                        showMainWindow()
+                    }
+                    .buttonStyle(.ds(.recording, size: .small))
+                }
                 Text("No se está grabando.").font(DS.Font.callout).foregroundStyle(DS.Color.textSecondary)
                 Button {
                     router.section = .recording

@@ -10,15 +10,18 @@ public struct AIRequest: Sendable {
     /// Top-level keys that identify the expected object in noisy outputs.
     public var requiredKeys: [String]
     public var model: String?
+    /// Provider-specific reasoning effort (nil = provider default).
+    public var effort: String?
     public var timeoutSeconds: Double
 
     public init(instructions: String, input: String, jsonSchema: String, requiredKeys: [String],
-                model: String?, timeoutSeconds: Double) {
+                model: String?, effort: String? = nil, timeoutSeconds: Double) {
         self.instructions = instructions
         self.input = input
         self.jsonSchema = jsonSchema
         self.requiredKeys = requiredKeys
         self.model = model
+        self.effort = effort
         self.timeoutSeconds = timeoutSeconds
     }
 }
@@ -42,6 +45,8 @@ public struct ProviderStatus: Sendable, Hashable {
     public var models: [String]
     public var supportsStructuredOutput: Bool
     public var notes: [String]
+    /// Reasoning effort levels the provider accepts (empty = not configurable).
+    public var effortLevels: [String] = []
 
     public init(kind: AIProviderKind, installed: Bool, executablePath: String? = nil, version: String? = nil,
                 authenticated: Bool? = nil, authDetail: String? = nil, models: [String] = [],

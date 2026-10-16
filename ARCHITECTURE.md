@@ -21,7 +21,9 @@ MeetingCore              Dominio, persistencia (GRDB/SQLite WAL + FTS5), búsque
 
 MeetingAudio             Captura y DSP. Depende de MeetingCore.
   ├─ Capture/            RecordingSession, ProcessTapSource (Core Audio taps), MicrophoneSource
-  │                      (AVAudioEngine), TrackRecorder, CaptureClock, catálogo HAL de procesos/dispositivos
+  │                      (AVAudioEngine), TrackRecorder, CaptureClock, catálogo HAL de procesos/dispositivos,
+  │                      ConversationApps (agrupación de procesos por app + catálogo descriptivo),
+  │                      CallMonitor/CallDetector (detección de llamadas de cualquier app)
   ├─ Processing/         CrashSafeWAVWriter + WAVRepair, MonoResampler, Downmix, TimelineAligner, LevelMeter
   └─ Import/             AudioImporter (copia WAV/M4A/MP3; extrae audio de MP4/MOV)
 
@@ -47,10 +49,11 @@ MeetingIntelligenceCLI   Ejecutable `mi` (diagnóstico, importación, evaluació
 
 Regla: las capas inferiores nunca importan a las superiores. La UI no importa FluidAudio.
 
-## Captura (Teams + micrófono)
+## Captura (cualquier app + micrófono)
 
 ```
-Teams (procesos com.microsoft.teams2* y helpers WebView2 dentro de Microsoft Teams.app)
+App elegida (todos sus procesos: los del bundle .app que los contiene, p. ej. Teams + helpers WebView2;
+             o un proceso compartido: servicio de audio de Chrome/Edge, WebKit GPU de Safari)
    │  CATapDescription(monoMixdownOfProcesses:)  → tap privado → aggregate device privado
    ▼
 IOProc (cola de tiempo real) ── copia + mezcla a mono ──► TrackRecorder(remote_system_audio)
@@ -66,9 +69,21 @@ AVAudioEngine.inputNode (dispositivo por defecto) ─────────►
   pasan a `interrupted` y `WAVRepair` recupera el audio escrito.
 - **Cambios de dispositivo**: `AVAudioEngineConfigurationChange` reinstala el tap del micrófono; listeners del HAL
   reconstruyen el tap de procesos cuando cambian los procesos de Teams o la salida por defecto.
+- **Cualquier app**: `AudioApplicationResolver` agrupa los procesos de audio por el `.app` más externo que los
+  contiene (o por bundle ID si no hay bundle). El catálogo solo describe (nombre, tipo, aislamiento); nunca limita.
+- **Pausa del micrófono**: el `TrackRecorder` del micrófono escribe silencio mientras está en pausa (la línea de
+  tiempo se conserva) y registra el intervalo (`recordingPause`).
 - **Eco/duplicación**: Teams no reproduce tu propia voz, así que no hay doble captura de ti en la pista remota. El eco
   (altavoces → micrófono) se mitiga con (1) advertencia de altavoces, (2) Voice Processing opcional y
   (3) `EchoDetector`, que marca como `probableEcho` los segmentos del micrófono que repiten el habla remota.
+
+## Detección de llamadas
+
+`CallMonitor` consulta el HAL cada segundo (y ante cambios en la lista de procesos) y alimenta `CallDetector`, una
+máquina de estados pura: **llamada** = la misma app usa micrófono y reproduce audio ≥ 3 s; **fin** = libera el
+micrófono ≥ 25 s o se cierra (≥ 3 s). Procesos del sistema y apps ignoradas no cuentan (salvo FaceTime).
+`CallSuggestionController` convierte los eventos en sugerencias (banner, barra de menús y notificación opcional);
+nunca inicia ni detiene una grabación por sí solo.
 
 ## Procesamiento offline (por reunión)
 

@@ -18,8 +18,11 @@ No se registran tokens, credenciales ni texto de transcripciones en los logs del
 
 - Nunca empieza sola: requiere una acción explícita y (por defecto) confirmar que informaste a los participantes.
 - Indicador rojo en la barra de menús y en la app mientras se graba.
-- Por defecto solo se captura **Microsoft Teams**; "todo el sistema" se elige explícitamente y queda registrado.
-- No se agregan bots a Teams, no se modifica ni inyecta nada en Teams y no existe ningún mecanismo para ocultar la
+- Se captura solo la **app que elijas** (o la app detectada en llamada); "todo el sistema" se elige explícitamente y
+  queda registrado. En navegadores se graba todo lo que suene en el navegador (se advierte).
+- La detección de llamadas solo lee qué apps usan micrófono y audio (sin permisos ni contenido) y únicamente sugiere.
+- "Pausar mi micrófono" deja de grabar tu voz sin detener la grabación; el intervalo queda registrado.
+- No se agregan bots, no se modifica ni inyecta nada en las apps de videollamada y no existe ningún mecanismo para ocultar la
   grabación a herramientas de supervisión.
 
 ## Datos biométricos (perfiles de voz)

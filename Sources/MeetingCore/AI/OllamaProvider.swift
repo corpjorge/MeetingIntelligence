@@ -34,16 +34,40 @@ public struct OllamaProvider: AIProvider {
                                                         : "Ollama está instalado pero el servidor no responde. Ejecuta `ollama serve`."])
         }
         let version = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["version"] as? String
+        let effortLevels = await thinkingLevels(base: base, model: configuration.model)
         var models: [String] = []
         if let (tags, _) = try? await session.data(from: base.appendingPathComponent("api/tags")),
            let json = try? JSONSerialization.jsonObject(with: tags) as? [String: Any],
            let list = json["models"] as? [[String: Any]] {
             models = list.compactMap { $0["name"] as? String }.sorted()
         }
-        return ProviderStatus(kind: kind, installed: true, executablePath: base.absoluteString, version: version,
-                              authenticated: true, authDetail: "Servidor local", models: models,
-                              notes: models.isEmpty ? ["No hay modelos descargados. Ejecuta `ollama pull <modelo>`."]
-                                                    : ["Todo se procesa en este Mac."])
+        var status = ProviderStatus(kind: kind, installed: true, executablePath: base.absoluteString, version: version,
+                                    authenticated: true, authDetail: "Servidor local", models: models,
+                                    notes: models.isEmpty ? ["No hay modelos descargados. Ejecuta `ollama pull <modelo>`."]
+                                                          : ["Todo se procesa en este Mac."])
+        status.effortLevels = effortLevels
+        return status
+    }
+
+    /// Thinking levels a model declares in `/api/show` (`thinking.values`): model-defined
+    /// strings (e.g. gpt-oss: low/medium/high) or on/off booleans. Empty when unsupported.
+    func thinkingLevels(base: URL, model: String?) async -> [String] {
+        guard let model, !model.isEmpty else { return [] }
+        var request = URLRequest(url: base.appendingPathComponent("api/show"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["model": model])
+        request.timeoutInterval = 5
+        guard let (data, _) = try? await session.data(for: request),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let thinking = json["thinking"] as? [String: Any],
+              let values = thinking["values"] as? [Any] else { return [] }
+        var levels: [String] = []
+        for value in values {
+            if let s = value as? String { levels.append(s) }
+            else if let b = value as? Bool { levels.append(b ? "on" : "off") }
+        }
+        return levels == ["off"] ? [] : levels
     }
 
     public func complete(_ request: AIRequest, configuration: AIProviderConfiguration) async throws -> AIResponse {
@@ -52,7 +76,7 @@ public struct OllamaProvider: AIProvider {
             throw AIProviderError.failed(kind, "Selecciona un modelo de Ollama.")
         }
         let schema = try JSONSerialization.jsonObject(with: Data(request.jsonSchema.utf8))
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": model,
             "stream": false,
             "format": schema,
@@ -62,6 +86,12 @@ public struct OllamaProvider: AIProvider {
                 ["role": "user", "content": request.input],
             ],
         ]
+        switch request.effort {
+        case nil, "": break
+        case "on": body["think"] = true
+        case "off": body["think"] = false
+        case let level?: body["think"] = level
+        }
         var urlRequest = URLRequest(url: base.appendingPathComponent("api/chat"))
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")

@@ -7,13 +7,23 @@ public enum HostClock {
 }
 
 /// What the remote track should capture.
-public enum RemoteCaptureTarget: String, Sendable, Codable, CaseIterable {
-    /// Only Microsoft Teams processes (default).
-    case teams
+public enum RemoteCaptureTarget: Sendable, Hashable {
+    /// Only the processes of one app (any conversation app: Teams, Zoom, a browser…).
+    case application(AudioAppSelector)
     /// Every process except this app — chosen explicitly by the user.
     case systemWide
     /// No remote track (microphone only).
     case none
+}
+
+/// One span of a track that was paused on purpose (timeline seconds).
+public struct PauseInterval: Sendable, Hashable, Codable {
+    public var start: Double
+    public var end: Double
+    public init(start: Double, end: Double) {
+        self.start = start
+        self.end = end
+    }
 }
 
 public struct RecordingConfiguration: Sendable {
@@ -24,7 +34,7 @@ public struct RecordingConfiguration: Sendable {
     public var microphoneVoiceProcessing: Bool
     public var outputSampleRate: Double
 
-    public init(directory: URL, remoteTarget: RemoteCaptureTarget = .teams, captureMicrophone: Bool = true,
+    public init(directory: URL, remoteTarget: RemoteCaptureTarget = .systemWide, captureMicrophone: Bool = true,
                 microphoneVoiceProcessing: Bool = false, outputSampleRate: Double = 16_000) {
         self.directory = directory
         self.remoteTarget = remoteTarget
@@ -39,9 +49,11 @@ public enum RecordingWarning: Sendable, Equatable, Hashable {
     case speakerEchoRisk(String)
     /// Bluetooth microphone (narrowband HFP profile likely).
     case bluetoothMicrophone(String)
-    /// Teams has no audio process yet; the remote track starts when it appears.
-    case waitingForTeamsAudio
-    /// Capture scope is the whole system (not limited to Teams).
+    /// The chosen app has no audio process yet; the remote track starts when it appears.
+    case waitingForAppAudio(String)
+    /// The app's audio comes from a shared process (browser tabs, WebKit, system daemon).
+    case sharedProcessCapture(String)
+    /// Capture scope is the whole system (not limited to one app).
     case systemWideCapture
     /// Long run of exact digital silence (often a missing permission).
     case prolongedDigitalSilence(AudioSource)
@@ -57,10 +69,12 @@ public enum RecordingWarning: Sendable, Equatable, Hashable {
             "El audio sale por \(device). El micrófono puede captar las voces remotas (eco). Se recomiendan audífonos."
         case .bluetoothMicrophone(let device):
             "Micrófono Bluetooth (\(device)): la calidad puede ser de banda estrecha."
-        case .waitingForTeamsAudio:
-            "Esperando audio de Microsoft Teams. La pista remota comenzará cuando Teams reproduzca audio."
+        case .waitingForAppAudio(let app):
+            "Esperando audio de \(app). La pista remota comenzará cuando \(app) reproduzca audio (se mantiene sincronizada)."
+        case .sharedProcessCapture(let app):
+            "\(app) reproduce el audio desde un proceso compartido: se grabará todo lo que suene en \(app) (por ejemplo, otras pestañas)."
         case .systemWideCapture:
-            "Se está capturando el audio de TODO el sistema (excepto esta app), no solo de Teams."
+            "Se está capturando el audio de TODO el sistema (excepto esta app), no solo de una aplicación."
         case .prolongedDigitalSilence(let source):
             source == .remoteSystemAudio
                 ? "La pista remota está en silencio digital. Verifica el permiso 'Grabación de audio del sistema' y que la llamada esté activa."
@@ -86,6 +100,7 @@ public enum RecordingEvent: Sendable {
     case warning(RecordingWarning)
     /// Processes currently included in the remote tap (empty for system-wide/none).
     case remoteProcesses([AudioProcessInfo])
+    case microphonePaused(Bool)
     case remoteScope(CaptureScope)
 }
 
@@ -96,4 +111,8 @@ public struct RecordingResult: Sendable {
     public var remoteProcessDescription: String?
     public var inputDeviceName: String?
     public var warnings: [RecordingWarning]
+    /// App recorded on the remote track (nil for system-wide / microphone only).
+    public var sourceApp: AudioAppSelector?
+    /// Spans where the user paused their microphone (silence written, timeline kept).
+    public var microphonePauses: [PauseInterval]
 }

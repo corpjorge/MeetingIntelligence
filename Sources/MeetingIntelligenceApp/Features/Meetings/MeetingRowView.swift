@@ -31,7 +31,7 @@ struct MeetingRowView: View {
             }
             .layoutPriority(1)
             Spacer(minLength: DS.Space.m)
-            if !compact { ScopeBadge(scope: row.meeting.captureScope) }
+            if !compact { ScopeBadge(meeting: row.meeting) }
             MeetingStatusPill(meeting: row.meeting, busy: env.processing.isBusy(row.id))
         }
         .padding(.horizontal, DS.Space.m)
@@ -79,10 +79,21 @@ struct MeetingStatusPill: View {
 
 struct ScopeBadge: View {
     let scope: CaptureScope
+    var appName: String?
+
+    init(scope: CaptureScope, appName: String? = nil) {
+        self.scope = scope
+        self.appName = appName
+    }
+
+    init(meeting: Meeting) {
+        self.init(scope: meeting.captureScope, appName: meeting.sourceAppName)
+    }
 
     var body: some View {
         switch scope {
         case .teamsProcesses: StatusPill(text: "Teams", tone: .info, systemImage: "person.3")
+        case .applicationProcesses: StatusPill(text: appName ?? "Aplicación", tone: .info, systemImage: "person.3")
         case .systemWide: StatusPill(text: "Todo el sistema", tone: .warning, systemImage: "speaker.wave.3")
         case .microphoneOnly: StatusPill(text: "Solo micrófono", tone: .neutral, systemImage: "mic")
         case .importedFile: StatusPill(text: "Importada", tone: .neutral, systemImage: "doc")

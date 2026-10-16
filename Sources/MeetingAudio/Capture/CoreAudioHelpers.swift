@@ -63,6 +63,17 @@ public struct AudioProcessInfo: Sendable, Hashable, Identifiable {
     public let bundleID: String?
     public let executablePath: String?
     public let isRunningOutput: Bool
+    public let isRunningInput: Bool
+
+    public init(objectID: AudioObjectID, pid: pid_t, bundleID: String?, executablePath: String?,
+                isRunningOutput: Bool, isRunningInput: Bool = false) {
+        self.objectID = objectID
+        self.pid = pid
+        self.bundleID = bundleID
+        self.executablePath = executablePath
+        self.isRunningOutput = isRunningOutput
+        self.isRunningInput = isRunningInput
+    }
 
     public var displayName: String {
         if let executablePath { return (executablePath as NSString).lastPathComponent }
@@ -75,11 +86,12 @@ public enum AudioProcessCatalog {
     public static func allProcesses() -> [AudioProcessInfo] {
         HAL.array(HAL.systemObject, kAudioHardwarePropertyProcessObjectList, element: AudioObjectID(0)).compactMap { obj in
             guard let pid: pid_t = HAL.scalar(obj, kAudioProcessPropertyPID, default: 0) else { return nil }
-            let running: UInt32 = HAL.scalar(obj, kAudioProcessPropertyIsRunningOutput, default: 0) ?? 0
+            let output: UInt32 = HAL.scalar(obj, kAudioProcessPropertyIsRunningOutput, default: 0) ?? 0
+            let input: UInt32 = HAL.scalar(obj, kAudioProcessPropertyIsRunningInput, default: 0) ?? 0
             return AudioProcessInfo(objectID: obj, pid: pid,
                                     bundleID: HAL.string(obj, kAudioProcessPropertyBundleID),
-                                    executablePath: executablePath(of: pid),
-                                    isRunningOutput: running != 0)
+                                    executablePath: PathCache.shared.path(pid: pid, objectID: obj),
+                                    isRunningOutput: output != 0, isRunningInput: input != 0)
         }
     }
 
@@ -112,11 +124,31 @@ public enum AudioProcessCatalog {
         return status == noErr && object != kAudioObjectUnknown ? object : nil
     }
 
-    static func executablePath(of pid: pid_t) -> String? {
+    public static func executablePath(of pid: pid_t) -> String? {
         var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
         let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
         guard length > 0 else { return nil }
         return String(decoding: buffer.prefix(Int(length)).map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
+}
+
+/// Executable paths per audio process (stable for a process lifetime; avoids
+/// `proc_pidpath` on every poll of the call monitor). Keyed by HAL object + PID
+/// so a reused PID never returns a stale path.
+final class PathCache: @unchecked Sendable {
+    static let shared = PathCache()
+    private let lock = NSLock()
+    private var paths: [UInt64: String] = [:]
+
+    func path(pid: pid_t, objectID: AudioObjectID) -> String? {
+        let key = UInt64(objectID) << 32 | UInt64(UInt32(bitPattern: pid))
+        if let cached = lock.withLock({ paths[key] }) { return cached }
+        guard let path = AudioProcessCatalog.executablePath(of: pid) else { return nil }
+        lock.withLock {
+            if paths.count > 1024 { paths.removeAll() }
+            paths[key] = path
+        }
+        return path
     }
 }
 

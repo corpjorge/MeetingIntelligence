@@ -1,9 +1,11 @@
 # Meeting Intelligence
 
 Aplicación **nativa de macOS** (Swift 6 + SwiftUI) para grabar, transcribir, identificar participantes y analizar
-reuniones de **Microsoft Teams** — sin bots, sin modificar Teams y **local por defecto**.
+conversaciones de **cualquier app de videollamada** (Teams, Zoom, Meet, Slack, Webex…) — sin bots, sin modificar las
+apps y **local por defecto**.
 
-- Captura el **micrófono** y el **audio remoto de Teams** en pistas separadas y sincronizadas (Core Audio Process Taps).
+- Captura el **micrófono** y el **audio de la app elegida** en pistas separadas y sincronizadas (Core Audio Process Taps).
+- **Detecta llamadas** de cualquier app (micrófono + audio a la vez) y **sugiere** grabar y detener; nunca lo hace sola.
 - Transcribe localmente con **Parakeet Ultra** (FluidAudio + Core ML, Apple Neural Engine).
 - Separa hablantes con **diarización offline** (pyannote community + WeSpeaker + VBx) y reconoce participantes
   registrados **solo con consentimiento** y umbrales **calibrados con tus propios datos**.
@@ -24,7 +26,10 @@ reuniones de **Microsoft Teams** — sin bots, sin modificar Teams y **local por
 | Transcripción provisional en vivo (ventanas deslizantes Ultra) | ✅ | Prueba de integración real |
 | Diarización offline + alineación palabra→hablante | ✅ | DER 6,2 % en fixture de 2 voces; 2/2 hablantes en reunión de 17,5 min |
 | Reconocimiento persistente de participantes (cifrado, calibrado) | ✅ Implementado | Pruebas unitarias con embeddings sintéticos; **pendiente** validar con voces reales autorizadas |
-| Captura de Teams (process tap) + micrófono, pausa, recuperación | ✅ Implementado | Pruebas de escritura WAV, alineación, remuestreo y detección real de procesos de Teams; **pendiente** prueba con llamada real (requiere tus permisos de macOS) |
+| Captura de cualquier app (process tap por app) + micrófono, pausa, recuperación | ✅ Implementado | Pruebas de WAV, alineación, remuestreo y agrupación de procesos reales (Teams, Zoom, Chrome, Edge, Safari); **pendiente** prueba con llamada real (requiere tus permisos de macOS) |
+| Detección de llamadas y sugerencias de inicio/fin | ✅ Implementado | Máquina de estados probada (inicio, prueba breve, cambio a AirPods, fin, cierre de app); lectura en vivo del HAL verificada con `afplay`; **pendiente** validar con llamada real |
+| Pausar mi micrófono (sin perder sincronía) | ✅ | Prueba: silencio escrito, línea de tiempo intacta, pausa registrada |
+| Esfuerzo de IA por proveedor | ✅ | Flags verificados (`--effort` Claude/agy, `model_reasoning_effort` Codex, `think` Ollama por modelo) y probados |
 | Edición de transcripción con historial | ✅ | Pruebas de persistencia |
 | Identidades manuales conservadas al reprocesar | ✅ | Integración real: asignar → reprocesar → identidad conservada |
 | Diccionario personalizado | ✅ | Pruebas + integración |
@@ -34,7 +39,7 @@ reuniones de **Microsoft Teams** — sin bots, sin modificar Teams y **local por
 | Servidor MCP (stdio, 2026-07-28 + 2025-11-25) | ✅ | Prueba stdio con el binario empaquetado |
 | Exportación TXT/MD/JSON/SRT/PDF | ✅ | Pruebas |
 
-61 pruebas automatizadas pasan (`scripts/test.sh`), incluidas 5 de integración con los modelos reales.
+73 pruebas automatizadas pasan (`scripts/test.sh`), incluidas 5 de integración con los modelos reales.
 
 ## Requisitos
 
@@ -73,7 +78,7 @@ mi show <meetingId>                         # transcripción con hablantes y tim
 mi search "indicador de ingresos"           # búsqueda local FTS5
 mi export <meetingId> --format pdf
 mi ai-providers                             # detecta Claude / Codex / Antigravity / Ollama
-mi analyze <meetingId> --provider codex --share
+mi analyze <meetingId> --provider codex --effort high --share
 mi ask "¿Qué compromisos asumió Carlos?" --provider ollama
 mi evaluate audio.wav --reference ref.txt --rttm ref.rttm   # WER / DER / RTFx reproducibles
 ```

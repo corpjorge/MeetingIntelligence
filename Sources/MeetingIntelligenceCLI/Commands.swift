@@ -47,11 +47,12 @@ enum Commands {
             print("Salida: \(output.name) [\(output.transport.rawValue)] fuente=\(output.dataSourceName ?? "-") riesgo de eco=\(output.isLikelySpeakers ? "sí" : "no")")
         }
         print("Permiso de micrófono: \(RecordingSession.microphonePermissionGranted() ? "concedido" : "no concedido (se solicitará en la app)")")
-        let all = AudioProcessCatalog.allProcesses()
-        let teams = AudioProcessCatalog.teamsProcesses(in: all)
-        print("Procesos de audio: \(all.count); de Microsoft Teams: \(teams.count)")
-        for p in teams {
-            print("  · pid \(p.pid) \(p.bundleID ?? "?") salida activa=\(p.isRunningOutput ? "sí" : "no") — \(p.displayName)")
+        let apps = AudioApplicationResolver.currentApplications()
+        print("Apps registradas en el audio del sistema: \(apps.count)")
+        for app in apps {
+            let state = app.isUsingInput && app.isUsingOutput ? "posible llamada"
+                : (app.isUsingOutput ? "reproduce audio" : (app.isUsingInput ? "usa el micrófono" : "inactiva"))
+            print("  · \(app.name) [\(app.kind.rawValue)\(app.isolation == .shared ? ", audio compartido" : "")] \(state) · \(app.processes.count) proceso(s)")
         }
     }
 
@@ -172,6 +173,7 @@ enum Commands {
                   + (s.version.map { " · \($0)" } ?? "")
                   + (s.authenticated.map { $0 ? " · sesión activa" : " · SIN sesión" } ?? "")
                   + (s.models.isEmpty ? "" : " · modelos: \(s.models.prefix(6).joined(separator: ", "))")
+                  + (s.effortLevels.isEmpty ? "" : " · esfuerzo: \(s.effortLevels.joined(separator: "/"))")
                   + (kind.sendsDataToRemoteService ? " · NUBE" : " · LOCAL"))
             if let detail = s.authDetail { print("   \(detail)") }
             if let path = s.executablePath { print("   \(path)") }
@@ -184,8 +186,9 @@ enum Commands {
         let db = try openDatabase(paths)
         var config = try db.providerConfiguration(kind)
         if let model = args.options["model"] { config.model = model }
+        if let effort = args.options["effort"] { config.effort = effort }
         let service = MeetingAnalysisService(database: db)
-        let prepared = try service.prepare(meetingId: id, model: config.model, timeout: config.timeoutSeconds)
+        let prepared = try service.prepare(meetingId: id, model: config.model, effort: config.effort, timeout: config.timeoutSeconds)
         print("Proveedor: \(kind.displayName) (\(kind.sendsDataToRemoteService ? "nube" : "local"))")
         print(prepared.sharedSummary)
         if kind.sendsDataToRemoteService && !args.flags.contains("share") {
@@ -193,8 +196,8 @@ enum Commands {
         }
         let analysis = try await service.run(meetingId: id, provider: AIProviders.provider(for: kind), configuration: config,
                                              prepared: prepared, consentGiven: args.flags.contains("share"))
-        print(String(format: "\nAnálisis %@ · modelo %@ · %.1f s", analysis.status.rawValue, analysis.model ?? "?",
-                     analysis.durationSeconds ?? 0))
+        print(String(format: "\nAnálisis %@ · modelo %@ · esfuerzo %@ · %.1f s", analysis.status.rawValue,
+                     analysis.model ?? "?", analysis.effort ?? "predeterminado", analysis.durationSeconds ?? 0))
         print("\nResumen ejecutivo (IA): \(analysis.executiveSummary ?? "")")
         let items = try await db.reader.read { db in
             try AnalysisItem.filter(Column("analysisId") == analysis.id).order(Column("orderIndex")).fetchAll(db)

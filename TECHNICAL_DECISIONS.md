@@ -107,7 +107,34 @@ nuevo hereda una identidad solo si ≥ 50 % de su voz cae dentro de los tramos d
 participante empata; varios clusters pueden heredar la misma identidad (diarizador que divide a una persona). Cada
 re-aplicación queda auditada en `speakerAssignment` ("Re-aplicada tras reprocesar"). Verificado con los modelos reales.
 
+## TD-17 · Cualquier app de videollamada, sin lista cerrada
+La fuente remota es una **app arbitraria**: sus procesos se agrupan por el `.app` más externo que contiene cada
+ejecutable (patrón comprobado con Teams/WebView2, Zoom/CptHost, Chrome y Edge). El catálogo
+(`ConversationAppCatalog`) solo aporta nombre, tipo y nivel de aislamiento; una app desconocida se puede grabar igual.
+Navegadores y Safari reproducen desde procesos compartidos (servicio de audio de Chromium, `com.apple.WebKit.GPU`):
+se graba todo lo que suene en ellos y la UI lo advierte. Safari se mapea al grupo WebKit GPU.
+
+## TD-18 · Detección de llamadas por Core Audio, solo sugerencias
+Señal: la misma app con `kAudioProcessPropertyIsRunningInput` **y** `…IsRunningOutput` durante ≥ 3 s. Fin: micrófono
+liberado ≥ 25 s (los cambios a AirPods lo liberan brevemente) o app cerrada. No requiere permisos. No se usan títulos
+de ventana (exigirían Grabación de pantalla) ni Accessibility. Nunca se inicia ni se detiene una grabación
+automáticamente (requisito M); las notificaciones de macOS son opcionales.
+
+## TD-19 · "Pausar mi micrófono" sin manejador de silencio del sistema
+`AVAudioApplication.setInputMuteStateChangeHandler` es para "el proceso que hace la E/S de audio de la llamada"
+(documentación del SDK); registrarlo podría quitarle a Teams/Zoom el gesto de silencio de los AirPods. La pausa es
+un control propio: se escribe silencio en la pista del micrófono y se registra el intervalo.
+
+## TD-20 · Esfuerzo de razonamiento por proveedor (comprobado)
+- Claude Code: `--effort low|medium|high|xhigh|max` (`claude --help`, v2.1.286).
+- Codex: `-c model_reasoning_effort="…"` (clave verificada en el binario 0.160.1 y en `~/.codex/config.toml`);
+  los niveles admitidos dependen del modelo y Codex los informa si no corresponde.
+- Antigravity: `--effort low|medium|high|max` (`agy --help`).
+- Ollama: `think` con los valores que cada modelo declara en `/api/show` (`thinking.values`); sin valores, no se ofrece.
+El esfuerzo usado queda registrado en cada análisis (`aiAnalysis.effort`).
+
 ## Limitaciones comprobadas
 - ASR monocanal pierde palabras en habla **superpuesta** (fixture: 2 de 16 palabras).
 - Los fixtures son TTS: WER/DER medidos son una cota optimista.
 - Bluetooth en llamadas usa perfil de banda estrecha (se advierte en UI).
+- Apps en navegador: no se puede aislar una pestaña; se graba todo el audio del navegador.

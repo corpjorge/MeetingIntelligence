@@ -75,13 +75,32 @@ struct AudioSettings: View {
         @Bindable var settings = env.settings
         SettingsPage {
             Section("Captura remota") {
-                Picker("Fuente predeterminada", selection: $settings.defaultRemoteTarget) {
-                    Text("Solo Microsoft Teams").tag(RemoteCaptureTarget.teams)
-                    Text("Todo el sistema").tag(RemoteCaptureTarget.systemWide)
-                    Text("Ninguna (solo micrófono)").tag(RemoteCaptureTarget.none)
+                Picker("Fuente predeterminada", selection: $settings.defaultCaptureMode) {
+                    ForEach(DefaultCaptureMode.allCases) { Text($0.title).tag($0) }
                 }
-                Text("Teams se captura con Core Audio Process Taps (macOS 14.2+) sin bots ni modificar Teams. Requiere el permiso “Grabación de audio del sistema”.")
+                Text("Cualquier app de videollamada (Teams, Zoom, Meet, Slack, Webex…) se captura con Core Audio Process Taps, sin bots ni modificar la app. Requiere el permiso “Grabación de audio del sistema”.")
                     .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
+            }
+            Section("Detección de llamadas") {
+                Toggle("Sugerir grabar cuando una app empieza una llamada", isOn: $settings.suggestRecording)
+                Toggle("Sugerir detener cuando la llamada termina", isOn: $settings.suggestStop)
+                Toggle("Mostrar también como notificación de macOS", isOn: Binding(
+                    get: { settings.systemNotifications }, set: { env.calls.setNotificationsEnabled($0) }))
+                Text("Una llamada se detecta cuando una app usa el micrófono y reproduce audio a la vez (sin permisos adicionales). La app nunca empieza ni detiene una grabación por sí sola.")
+                    .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
+                if !env.calls.activeCalls.isEmpty {
+                    LabeledContent("En llamada ahora", value: env.calls.activeCalls.map(\.app.name).joined(separator: ", "))
+                }
+                if !settings.ignoredCallApps.isEmpty {
+                    ForEach(settings.ignoredCallApps, id: \.self) { key in
+                        HStack {
+                            Text("No sugerir: \(((key as NSString).lastPathComponent as NSString).deletingPathExtension)")
+                                .font(DS.Font.callout)
+                            Spacer()
+                            Button("Quitar") { env.calls.unignoreApp(key) }.buttonStyle(.borderless)
+                        }
+                    }
+                }
             }
             Section("Micrófono") {
                 Toggle("Cancelación de eco de Apple (Voice Processing)", isOn: $settings.microphoneVoiceProcessing)

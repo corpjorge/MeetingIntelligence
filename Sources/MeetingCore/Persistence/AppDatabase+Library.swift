@@ -10,6 +10,7 @@ public struct MeetingDetail: Sendable, Hashable {
     public var speakers: [MeetingSpeaker]
     public var participants: [String: Participant]
     public var jobs: [ProcessingJob]
+    public var pauses: [RecordingPause] = []
 
     /// Name for a segment's speaker. Never invents a name: unresolved clusters
     /// use their neutral label and unknown identities say so explicitly.
@@ -68,11 +69,13 @@ extension AppDatabase {
         let participantIDs = Set(segments.compactMap(\.participantId) + speakers.compactMap(\.participantId))
         let participants = try Participant.filter(participantIDs.contains(Column("id"))).fetchAll(db)
         let jobs = try ProcessingJob.filter(Column("meetingId") == id).order(Column("startedAt")).fetchAll(db)
+        let pauses = try RecordingPause.filter(Column("meetingId") == id).order(Column("startTime")).fetchAll(db)
         return MeetingDetail(
             meeting: meeting, tracks: tracks, transcripts: transcripts, segments: segments,
             speakers: speakers,
             participants: Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0) }),
-            jobs: jobs
+            jobs: jobs,
+            pauses: pauses
         )
     }
 

@@ -1,6 +1,8 @@
 # Análisis ejecutivo — Conversaciones multiplataforma, detección de llamadas e identidad
 
-**Rama:** `feature/conversaciones-multiplataforma` · **Fecha:** 16-oct-2026 · **Estado:** propuesta, pendiente de aprobación
+**Rama:** `feature/conversaciones-multiplataforma` · **Fecha:** 16-oct-2026 · **Estado:** F1 y F2 implementadas
+(solo sugerencias, sin autoinicio) + esfuerzo de IA; F3 y F4 pendientes de decisión. Alcance ampliado: cualquier app de
+videollamada, no solo Teams y Zoom.
 
 ## 1. Resumen
 

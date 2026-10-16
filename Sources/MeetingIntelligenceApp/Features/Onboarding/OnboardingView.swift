@@ -12,7 +12,7 @@ struct OnboardingView: View {
                 Image(systemName: "waveform.circle.fill").font(.system(size: 40)).foregroundStyle(DS.Color.accent)
                 VStack(alignment: .leading) {
                     Text("Bienvenido a \(AppIdentity.displayName)").font(DS.Font.title)
-                    Text("Graba, transcribe y analiza reuniones de Teams. Todo local por defecto.")
+                    Text("Graba, transcribe y analiza conversaciones de cualquier app de videollamada. Todo local por defecto.")
                         .font(DS.Font.callout).foregroundStyle(DS.Color.textSecondary)
                 }
             }

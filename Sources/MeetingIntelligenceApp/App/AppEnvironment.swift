@@ -21,6 +21,7 @@ final class AppEnvironment {
     let recording: RecordingController
     let models: ModelStatusModel
     let ai: AIController
+    let calls: CallSuggestionController
 
     private(set) var startupError: String?
     private(set) var recoveredMeetings: [String] = []
@@ -54,6 +55,9 @@ final class AppEnvironment {
         recording = RecordingController(importer: importer, paths: paths, settings: settings, asr: asr)
         models = ModelStatusModel(asr: asr, diarizer: diarizer)
         ai = AIController(database: database)
+        calls = CallSuggestionController(settings: settings, recording: recording)
+        // The call monitor needs no permission; snapshot runs skip notifications.
+        calls.start(requestNotifications: SnapshotDriver.directory == nil)
         recording.onFinished = { [processing, settings] meetingId in
             if settings.autoProcessAfterRecording { processing.enqueue(meetingId) }
         }

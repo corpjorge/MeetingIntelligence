@@ -12,11 +12,14 @@
 | 7 | Análisis con evidencia, búsqueda FTS5, chat | ✅ |
 | 8 | Servidor MCP local | ✅ verificado por stdio |
 | 9 | Testing integral, rendimiento, pulido | 🔄 en curso |
+| 10 | Cualquier app de videollamada (F1) + detección de llamadas y pausa de micrófono (F2) + esfuerzo de IA | ✅ implementada · ⏳ validación con llamadas reales |
+| 11 | Calendario e identidad con correo (F3) | ⏸ pendiente de tu decisión |
+| 12 | Experimento Accessibility (F4) | ⏸ pendiente de tu decisión |
 
 ## Próximas tareas (priorizadas)
 
-1. **Validación en vivo con Teams**: grabar una llamada real autorizada; revisar niveles, sincronía mic/remoto,
-   cambios a AirPods y recuperación tras cerrar la app.
+1. **Validación con llamadas reales** (Teams, Zoom, Meet en Chrome, Safari, FaceTime): confirmar la detección de
+   inicio/fin, qué procesos emiten el audio, niveles, sincronía mic/remoto, cambio a AirPods y recuperación.
 2. **Firma estable** (identidad propia o Developer ID) para que macOS conserve los permisos entre compilaciones.
 3. **Medición con grabaciones reales autorizadas** (WER/DER/identificación) y ajuste de `stepRatio` y del umbral de
    hablantes locales con datos medidos.

@@ -1,4 +1,5 @@
 import AppKit
+import MeetingAudio
 import MeetingCore
 import SwiftUI
 
@@ -32,7 +33,7 @@ struct MeetingIntelligenceApp: App {
                 .environment(environment)
                 .environment(router)
         } label: {
-            MenuBarLabel(recording: environment.recording)
+            MenuBarLabel(recording: environment.recording, callDetected: !environment.calls.activeCalls.isEmpty)
         }
         .menuBarExtraStyle(.window)
     }
@@ -77,6 +78,8 @@ final class AppRouter {
 
     var section: Section = .dashboard
     var meetingPath: [String] = []
+    /// App proposed as source when the user accepts a "call detected" suggestion.
+    var preselectedRecordingApp: AudioAppSelector?
     var isImporting = false
     var pendingSearch: String?
 
@@ -101,6 +104,11 @@ struct AppCommands: Commands {
                 .keyboardShortcut("i", modifiers: .command)
         }
         CommandMenu("Grabación") {
+            Button(environment.recording.microphonePaused ? "Reactivar mi micrófono" : "Pausar mi micrófono") {
+                environment.recording.toggleMicrophonePause()
+            }
+            .keyboardShortcut("m", modifiers: [.command, .control])
+            .disabled(!environment.recording.isActive || !environment.recording.capturesMicrophone)
             Button(environment.recording.state == .paused ? "Reanudar" : "Pausar") {
                 if environment.recording.state == .paused { environment.recording.resume() } else { environment.recording.pause() }
             }

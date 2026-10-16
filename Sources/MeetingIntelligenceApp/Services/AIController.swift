@@ -32,11 +32,20 @@ final class AIController {
     }
 
     func configuration(for kind: AIProviderKind) -> AIProviderConfiguration {
-        (try? database.providerConfiguration(kind)) ?? AIProviderConfiguration(provider: kind)
+        _ = configurationRevision // observation dependency
+        return (try? database.providerConfiguration(kind)) ?? AIProviderConfiguration(provider: kind)
     }
+
+    /// Bumped on every save so views reading `configuration(for:)` refresh.
+    private(set) var configurationRevision = 0
 
     func save(_ configuration: AIProviderConfiguration) {
         try? database.save(providerConfiguration: configuration)
+        configurationRevision += 1
+        // Ollama's levels depend on the selected model.
+        if configuration.provider == .ollama {
+            Task { statuses[.ollama] = await AIProviders.provider(for: .ollama).detect(configuration: configuration) }
+        }
     }
 
     func refreshStatuses() async {
@@ -72,7 +81,7 @@ final class AIController {
         let prepared: MeetingAnalysisService.PreparedPrompt
         do {
             prepared = try service.prepare(meetingId: meetingId, previousMeetingIds: previousMeetingIds,
-                                           model: config.model, timeout: config.timeoutSeconds)
+                                           model: config.model, effort: config.effort, timeout: config.timeoutSeconds)
         } catch {
             lastError = error.localizedDescription
             return
@@ -117,7 +126,7 @@ final class AIController {
         let kind = selectedProvider
         let config = configuration(for: kind)
         guard let retrieval = try? chat.retrieve(question: question, scope: scope, model: config.model,
-                                                 timeout: config.timeoutSeconds) else { return nil }
+                                                 effort: config.effort, timeout: config.timeoutSeconds) else { return nil }
         guard useAI else { return chat.localAnswer(question: question, retrieval: retrieval) }
         if kind.sendsDataToRemoteService {
             let confirmed = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in

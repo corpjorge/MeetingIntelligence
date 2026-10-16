@@ -7,39 +7,16 @@ struct AnalysisRunBar: View {
     let meetingId: String
     let hasTranscript: Bool
     @Environment(AppEnvironment.self) private var env
-    @State private var comparePrevious: Set<String> = []
-    @State private var showCompare = false
+    @State var comparePrevious: Set<String> = []
+    @State var showCompare = false
 
     var body: some View {
-        @Bindable var ai = env.ai
-        HStack(spacing: DS.Space.m) {
-            Picker("Proveedor", selection: $ai.selectedProvider) {
-                ForEach(AIProviderKind.allCases) { kind in
-                    Text(kind.displayName + (kind.sendsDataToRemoteService ? " · nube" : " · local")).tag(kind)
-                }
-            }
-            .frame(width: 280)
-            if let status = env.ai.statuses[env.ai.selectedProvider] {
-                ProviderStatusPill(status: status)
-            }
-            Button { showCompare = true } label: {
-                Label(comparePrevious.isEmpty ? "Comparar con…" : "\(comparePrevious.count) reunión(es) previas", systemImage: "arrow.left.arrow.right")
-            }
-            .buttonStyle(.ds(.ghost, size: .small))
-            .help("Incluir decisiones verificadas de reuniones anteriores para detectar cambios")
-            Spacer()
-            if env.ai.isAnalyzing(meetingId) {
-                ProgressView().controlSize(.small)
-                Text("Analizando…").font(DS.Font.callout).foregroundStyle(DS.Color.textSecondary)
-                Button("Cancelar") { env.ai.cancelAnalysis(meetingId) }.buttonStyle(.ds(.ghost, size: .small))
-            } else {
-                Button {
-                    env.ai.analyze(meetingId: meetingId, previousMeetingIds: Array(comparePrevious))
-                } label: {
-                    Label("Analizar reunión", systemImage: "sparkles")
-                }
-                .buttonStyle(.dsPrimary)
-                .disabled(!hasTranscript)
+        // One row when it fits; otherwise provider settings above, actions below.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: DS.Space.m) { providerControls; Spacer(minLength: DS.Space.m); actions }
+            VStack(alignment: .leading, spacing: DS.Space.s) {
+                HStack(spacing: DS.Space.m) { providerControls }
+                HStack(spacing: DS.Space.m) { Spacer(minLength: 0); actions }
             }
         }
         .task { if env.ai.statuses.isEmpty { await env.ai.refreshStatuses() } }
@@ -49,8 +26,66 @@ struct AnalysisRunBar: View {
     }
 }
 
+extension AnalysisRunBar {
+    @ViewBuilder
+    var providerControls: some View {
+        @Bindable var ai = env.ai
+        Picker("Proveedor", selection: $ai.selectedProvider) {
+            ForEach(AIProviderKind.allCases) { kind in
+                Text(kind.displayName + (kind.sendsDataToRemoteService ? " · nube" : " · local")).tag(kind)
+            }
+        }
+        .frame(width: 260)
+        if let status = env.ai.statuses[env.ai.selectedProvider] {
+            ProviderStatusPill(status: status)
+            if !status.effortLevels.isEmpty {
+                Picker("Esfuerzo", selection: Binding(
+                    get: { env.ai.configuration(for: env.ai.selectedProvider).effort ?? "" },
+                    set: { value in
+                        var config = env.ai.configuration(for: env.ai.selectedProvider)
+                        config.effort = value.isEmpty ? nil : value
+                        env.ai.save(config)
+                    })) {
+                    Text("Esfuerzo predeterminado").tag("")
+                    ForEach(status.effortLevels, id: \.self) { Text("Esfuerzo: \(EffortLabel.text($0))").tag($0) }
+                }
+                .labelsHidden()
+                .frame(width: 190)
+                .help("Nivel de razonamiento del modelo. Más esfuerzo = respuesta más profunda, más lenta y con más consumo.")
+            }
+        }
+    }
+
+    @ViewBuilder
+    var actions: some View {
+        Button { showCompare = true } label: {
+            Label(comparePrevious.isEmpty ? "Comparar con…" : "\(comparePrevious.count) reunión(es) previas", systemImage: "arrow.left.arrow.right")
+        }
+        .buttonStyle(.ds(.ghost, size: .small))
+        .help("Incluir decisiones verificadas de reuniones anteriores para detectar cambios")
+        if env.ai.isAnalyzing(meetingId) {
+            ProgressView().controlSize(.small)
+            Text("Analizando…").font(DS.Font.callout).foregroundStyle(DS.Color.textSecondary)
+            Button("Cancelar") { env.ai.cancelAnalysis(meetingId) }.buttonStyle(.ds(.ghost, size: .small))
+        } else {
+            Button {
+                env.ai.analyze(meetingId: meetingId, previousMeetingIds: Array(comparePrevious))
+            } label: {
+                Label("Analizar reunión", systemImage: "sparkles")
+            }
+            .buttonStyle(.dsPrimary)
+            .disabled(!hasTranscript)
+        }
+    }
+}
+
 struct ProviderStatusPill: View {
     let status: ProviderStatus
+
+    /// "codex-cli 0.160.1" → "0.160.1"; "2.1.286 (Claude Code)" → "2.1.286".
+    static func versionNumber(_ raw: String) -> String? {
+        raw.firstMatch(of: /\d+\.\d+(?:\.\d+)?/).map { String($0.output) }
+    }
 
     var body: some View {
         if !status.installed {
@@ -58,7 +93,7 @@ struct ProviderStatusPill: View {
         } else if status.authenticated == false {
             StatusPill(text: "Sin sesión", tone: .warning).help(status.authDetail ?? "")
         } else {
-            StatusPill(text: status.version.map { "v\($0.split(separator: " ").first ?? "")" } ?? "Disponible", tone: .success)
+            StatusPill(text: status.version.flatMap(Self.versionNumber).map { "v\($0)" } ?? "Disponible", tone: .success)
                 .help(status.authDetail ?? "")
         }
     }
@@ -165,7 +200,7 @@ struct AIProvenance: View {
     var body: some View {
         HStack(spacing: DS.Space.s) {
             Image(systemName: "info.circle").foregroundStyle(DS.Color.textTertiary)
-            Text("\(analysis.provider.displayName)\(analysis.model.map { " · \($0)" } ?? "") · \(analysis.startedAt.formatted(date: .abbreviated, time: .shortened))\(analysis.durationSeconds.map { String(format: " · %.0f s", $0) } ?? "") · prompt \(analysis.promptVersion)")
+            Text("\(analysis.provider.displayName)\(analysis.model.map { " · \($0)" } ?? "")\(analysis.effort.map { " · esfuerzo \(EffortLabel.text($0))" } ?? "") · \(analysis.startedAt.formatted(date: .abbreviated, time: .shortened))\(analysis.durationSeconds.map { String(format: " · %.0f s", $0) } ?? "") · prompt \(analysis.promptVersion)")
                 .font(DS.Font.caption).foregroundStyle(DS.Color.textTertiary)
         }
         .help(analysis.sharedContentSummary)

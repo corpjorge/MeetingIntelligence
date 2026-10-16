@@ -29,7 +29,7 @@ public struct MeetingAnalysisService: Sendable {
     }
 
     public func prepare(meetingId: String, previousMeetingIds: [String] = [], model: String?,
-                        timeout: Double) throws -> PreparedPrompt {
+                        effort: String? = nil, timeout: Double) throws -> PreparedPrompt {
         guard let detail = try database.meetingDetail(id: meetingId) else {
             throw AppDatabaseError.notFound("reunión \(meetingId)")
         }
@@ -93,7 +93,7 @@ public struct MeetingAnalysisService: Sendable {
         """
         let request = AIRequest(instructions: Self.instructions, input: input, jsonSchema: Self.schema,
                                 requiredKeys: ["executiveSummary", "technicalSummary", "items"],
-                                model: model, timeoutSeconds: timeout)
+                                model: model, effort: effort, timeoutSeconds: timeout)
         return PreparedPrompt(request: request, references: references, sharedSummary: summary,
                               segmentCount: segments.count, characterCount: input.count)
     }
@@ -172,6 +172,7 @@ public struct MeetingAnalysisService: Sendable {
         let status = await provider.detect(configuration: configuration)
         guard status.installed else { throw AIProviderError.notInstalled(provider.kind) }
         var analysis = AIAnalysis(meetingId: meetingId, provider: provider.kind, model: prepared.request.model,
+                                  effort: prepared.request.effort,
                                   providerVersion: status.version, promptVersion: Self.promptVersion,
                                   sharedContentSummary: prepared.sharedSummary)
         try persist(analysis, insert: true)

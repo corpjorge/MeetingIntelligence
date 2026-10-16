@@ -159,6 +159,15 @@ struct ProviderCard: View {
                                 .textFieldStyle(.roundedBorder).frame(maxWidth: 280)
                                 .onSubmit(save)
                         }
+                        if let levels = status?.effortLevels, !levels.isEmpty {
+                            Picker("Esfuerzo", selection: Binding(get: { binding.wrappedValue.effort ?? "" },
+                                                                  set: { binding.wrappedValue.effort = $0.isEmpty ? nil : $0; save() })) {
+                                Text("Predeterminado").tag("")
+                                ForEach(levels, id: \.self) { Text(EffortLabel.text($0)).tag($0) }
+                            }
+                            .frame(maxWidth: 220)
+                            .help("Más esfuerzo = razonamiento más profundo, pero más lento y con más consumo.")
+                        }
                         Stepper("Tiempo límite: \(Int(binding.wrappedValue.timeoutSeconds)) s",
                                 value: Binding(get: { binding.wrappedValue.timeoutSeconds },
                                                set: { binding.wrappedValue.timeoutSeconds = $0; save() }),
@@ -242,6 +251,22 @@ struct AnalysisHistoryPane: View {
             do {
                 for try await value in observation.values(in: env.database.reader) { rows = value }
             } catch {}
+        }
+    }
+}
+
+enum EffortLabel {
+    static func text(_ level: String) -> String {
+        switch level {
+        case "minimal": "Mínimo"
+        case "low": "Bajo"
+        case "medium": "Medio"
+        case "high": "Alto"
+        case "xhigh": "Muy alto"
+        case "max": "Máximo"
+        case "on": "Activado"
+        case "off": "Desactivado"
+        default: level
         }
     }
 }

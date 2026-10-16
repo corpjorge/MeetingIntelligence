@@ -55,6 +55,7 @@ public struct TrackStatistics: Sendable {
     public var paddedSeconds: Double
     public var droppedSeconds: Double
     public var inputSampleRates: [Double]
+    public var pauses: [PauseInterval]
 }
 
 /// Converts, aligns and writes one source to disk. All work happens on a
@@ -74,6 +75,10 @@ public final class TrackRecorder: @unchecked Sendable {
     private var silenceWarningSent = false
     private var finished = false
     private var tailPaddedFrames = 0
+    /// While muted the recorder writes digital silence instead of the input, so
+    /// the timeline stays aligned with the other track. Queue-confined.
+    private var muted = false
+    private var pauses: [PauseInterval] = []
     private let onLevel: @Sendable (AudioSource, AudioLevel) -> Void
     private let onWarning: @Sendable (RecordingWarning) -> Void
     /// Receives every converted 16 kHz mono block (e.g. live transcription).
@@ -115,8 +120,9 @@ public final class TrackRecorder: @unchecked Sendable {
             }
             trackSilence(mono, sampleRate: sampleRate)
             emitLevel(mono)
-            let converted = try resampler!.process(mono)
+            var converted = try resampler!.process(mono)
             guard !converted.isEmpty else { return }
+            if muted { converted = [Float](repeating: 0, count: converted.count) }
             onSamples?(source, converted)
             let plan = aligner.plan(startSeconds: timelineSeconds, frameCount: converted.count)
             if plan.padFrames > 0 { try writer.appendSilence(frames: plan.padFrames) }
@@ -134,7 +140,20 @@ public final class TrackRecorder: @unchecked Sendable {
         let now = HAL.nowSeconds()
         guard now - lastLevelEmit >= 0.05 else { return }
         lastLevelEmit = now
-        onLevel(source, LevelMeter.measure(mono))
+        onLevel(source, muted ? .silence : LevelMeter.measure(mono))
+    }
+
+    /// Starts/ends an intentional pause at a timeline position.
+    func setMuted(_ value: Bool, atTimelineSeconds time: Double) {
+        queue.async { [self] in
+            guard value != muted, !finished else { return }
+            muted = value
+            if value {
+                pauses.append(PauseInterval(start: time, end: time))
+            } else if let last = pauses.indices.last {
+                pauses[last].end = time
+            }
+        }
     }
 
     /// Exact digital zeros for a long time usually mean a missing system-audio
@@ -155,6 +174,7 @@ public final class TrackRecorder: @unchecked Sendable {
     func finish(atTimelineSeconds end: Double) -> TrackStatistics {
         queue.sync {
             if !finished {
+                if muted, let last = pauses.indices.last { pauses[last].end = end }
                 let target = Int(end * outputSampleRate)
                 let missing = target - aligner.framesWritten
                 if missing > 0 {
@@ -168,7 +188,7 @@ public final class TrackRecorder: @unchecked Sendable {
                                    durationSeconds: writer.durationSeconds,
                                    paddedSeconds: Double(aligner.totalPaddedFrames + tailPaddedFrames) / outputSampleRate,
                                    droppedSeconds: Double(aligner.totalDroppedFrames) / outputSampleRate,
-                                   inputSampleRates: seenRates)
+                                   inputSampleRates: seenRates, pauses: pauses)
         }
     }
 

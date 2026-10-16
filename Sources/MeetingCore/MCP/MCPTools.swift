@@ -164,7 +164,8 @@ public struct MCPTools: Sendable {
     private func meetingSummary(_ m: Meeting) -> [String: Any] {
         ["meeting_id": m.id, "title": m.title, "date": Self.iso.string(from: m.displayDate),
          "duration": Timecode.hms(m.durationSeconds), "duration_seconds": m.durationSeconds,
-         "status": m.status.rawValue, "capture_scope": m.captureScope.rawValue, "language": m.language]
+         "status": m.status.rawValue, "capture_scope": m.captureScope.rawValue, "language": m.language,
+         "source": m.captureSourceDescription]
     }
 
     private func json(_ object: Any) -> String {

@@ -41,7 +41,7 @@ func printErr(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8
 let usage = """
 uso: mi <comando> [opciones]
 
-  doctor                         Diagnóstico del entorno (modelos, Teams, dispositivos, CLIs de IA)
+  doctor                         Diagnóstico del entorno (modelos, apps con audio, dispositivos)
   import <archivo> [--title T] [--no-process] [--no-diarize]
                                  Importa audio y lo procesa con Parakeet Ultra
   process <meetingId> [--no-diarize] [--no-local-diarization]
@@ -50,7 +50,7 @@ uso: mi <comando> [opciones]
   search <consulta> [--meeting ID] [--speaker NOMBRE]
   export <meetingId> --format txt|markdown|json|srt|pdf [--out ruta]
   ai-providers                   Detecta proveedores de IA (versión, sesión, modelos)
-  analyze <meetingId> --provider claude|codex|agy|ollama [--model M] [--share]
+  analyze <meetingId> --provider claude|codex|agy|ollama [--model M] [--effort E] [--share]
                                  Analiza con IA; los proveedores en la nube exigen --share
   ask <pregunta> [--meeting ID] [--provider P] [--share]
                                  Pregunta sobre reuniones (búsqueda local + IA opcional)

@@ -179,7 +179,7 @@ struct MeetingDetailView: View {
         if !detail.speakers.isEmpty {
             Label("\(detail.speakers.count) hablantes", systemImage: "person.2").lineLimit(1).fixedSize()
         }
-        ScopeBadge(scope: detail.meeting.captureScope)
+        ScopeBadge(meeting: detail.meeting)
         if let transcript = detail.transcripts.first(where: { $0.supersededAt == nil }) {
             Label("Parakeet Ultra · local", systemImage: "cpu").lineLimit(1).fixedSize().help(transcript.modelIdentifier)
         }

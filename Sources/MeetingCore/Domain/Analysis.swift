@@ -43,6 +43,8 @@ public struct AIAnalysis: Codable, Sendable, Identifiable, Hashable {
     public var meetingId: String
     public var provider: AIProviderKind
     public var model: String?
+    /// Reasoning effort requested from the provider (nil = provider default).
+    public var effort: String?
     public var providerVersion: String?
     public var promptVersion: String
     /// Human-readable description of exactly what was shared with the provider.
@@ -61,6 +63,7 @@ public struct AIAnalysis: Codable, Sendable, Identifiable, Hashable {
         meetingId: String,
         provider: AIProviderKind,
         model: String?,
+        effort: String? = nil,
         providerVersion: String? = nil,
         promptVersion: String,
         sharedContentSummary: String,
@@ -77,6 +80,7 @@ public struct AIAnalysis: Codable, Sendable, Identifiable, Hashable {
         self.meetingId = meetingId
         self.provider = provider
         self.model = model
+        self.effort = effort
         self.providerVersion = providerVersion
         self.promptVersion = promptVersion
         self.sharedContentSummary = sharedContentSummary
@@ -231,6 +235,8 @@ public struct AIProviderConfiguration: Codable, Sendable, Identifiable, Hashable
     public var isEnabled: Bool
     public var executablePath: String?
     public var model: String?
+    /// Reasoning effort level (provider-specific value; nil = provider default).
+    public var effort: String?
     public var timeoutSeconds: Double
     public var remoteSharingConsentAt: Date?
     public var lastDetectedVersion: String?
@@ -243,6 +249,7 @@ public struct AIProviderConfiguration: Codable, Sendable, Identifiable, Hashable
         isEnabled: Bool = false,
         executablePath: String? = nil,
         model: String? = nil,
+        effort: String? = nil,
         timeoutSeconds: Double = 300,
         remoteSharingConsentAt: Date? = nil,
         lastDetectedVersion: String? = nil,
@@ -253,6 +260,7 @@ public struct AIProviderConfiguration: Codable, Sendable, Identifiable, Hashable
         self.isEnabled = isEnabled
         self.executablePath = executablePath
         self.model = model
+        self.effort = effort
         self.timeoutSeconds = timeoutSeconds
         self.remoteSharingConsentAt = remoteSharingConsentAt
         self.lastDetectedVersion = lastDetectedVersion
@@ -261,7 +269,7 @@ public struct AIProviderConfiguration: Codable, Sendable, Identifiable, Hashable
     }
 
     enum CodingKeys: String, CodingKey {
-        case provider, isEnabled, executablePath, model, timeoutSeconds
+        case provider, isEnabled, executablePath, model, effort, timeoutSeconds
         case remoteSharingConsentAt, lastDetectedVersion, lastCheckedAt, endpoint
     }
 }

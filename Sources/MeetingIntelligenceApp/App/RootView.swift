@@ -31,6 +31,10 @@ struct RootView: View {
             OnboardingView().environment(env)
         }
         .task {
+            env.calls.onAcceptStart = { app in
+                router.preselectedRecordingApp = app
+                router.section = .recording
+            }
             await env.models.refresh()
             SnapshotDriver.runIfRequested(router: router, env: env)
         }

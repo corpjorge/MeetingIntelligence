@@ -154,6 +154,22 @@ struct AudioTab: View {
                         }
                     }
                 }
+                if let pauses = model.detail?.pauses, !pauses.isEmpty {
+                    SurfaceCard {
+                        VStack(alignment: .leading, spacing: DS.Space.xs) {
+                            Label("Micrófono en pausa", systemImage: "mic.slash").font(DS.Font.headline)
+                            ForEach(pauses) { pause in
+                                Button { model.player.seek(to: pause.startTime) } label: {
+                                    Text("\(Timecode.hms(pause.startTime)) – \(Timecode.hms(pause.endTime)) · \(Timecode.humanDuration(pause.endTime - pause.startTime))")
+                                        .font(DS.Font.mono).foregroundStyle(DS.Color.accent)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            Text("Durante estas pausas se grabó silencio en tu micrófono para mantener la sincronía; el audio remoto siguió grabándose.")
+                                .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
+                        }
+                    }
+                }
                 SectionHeader(title: "Pistas", subtitle: "Las pistas se graban por separado y sincronizadas")
                 ForEach(model.detail?.tracks ?? []) { track in
                     SurfaceCard {

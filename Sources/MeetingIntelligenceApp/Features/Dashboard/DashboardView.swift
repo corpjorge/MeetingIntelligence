@@ -62,6 +62,7 @@ struct DashboardView: View {
             }
             .buttonStyle(.ds(.recording))
         } content: {
+            CallSuggestionBanner()
             if !env.models.allReady {
                 ModelSetupBanner()
             }
@@ -120,7 +121,7 @@ struct DashboardView: View {
                     LoadingStateView(message: "Cargando biblioteca…")
                 } else if model.rows.isEmpty {
                     EmptyStateView(systemImage: "waveform.badge.plus", title: "Aún no hay reuniones",
-                                   message: "Graba una llamada de Microsoft Teams o importa un archivo de audio para empezar.") {
+                                   message: "Graba una llamada de cualquier app (Teams, Zoom, Meet…) o importa un archivo de audio para empezar.") {
                         Button("Importar audio") { router.section = .meetings; router.isImporting = true }.buttonStyle(.dsSecondary)
                     }
                 } else {
