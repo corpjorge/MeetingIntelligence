@@ -133,3 +133,40 @@ struct LiveTranscriptionTests {
         #expect(received > 0)
     }
 }
+
+@Suite("Integración: reprocesar conserva identidades manuales", .enabled(if: IntegrationEnvironment.available))
+struct ReprocessIdentityTests {
+    @Test func manualIdentitySurvivesReprocessing() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("mi-it-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = AppPaths(root: root)
+        let db = try AppDatabase.open(paths: paths)
+        let meeting = try await MeetingImportService(database: db, paths: paths)
+            .importAudio(at: IntegrationEnvironment.fixtures.appendingPathComponent("es_two_speakers.wav"), title: "FIXTURE")
+        let diarizer = DiarizationService()
+        let processor = MeetingProcessor(database: db, paths: paths, asr: ParakeetUltraProvider(), diarizer: diarizer,
+                                         recognizer: nil)
+        try await processor.process(meetingId: meeting.id) { _ in }
+
+        // Name the speaker of the first turn manually.
+        let before = try #require(try db.meetingDetail(id: meeting.id))
+        let firstSpeaker = try #require(before.segments.first?.meetingSpeakerId)
+        let katty = Participant(displayName: "FIXTURE Katty")
+        try db.save(participant: katty)
+        try db.assignSpeaker(meetingSpeakerId: firstSpeaker, participantId: katty.id)
+        let kattyTexts = Set(try #require(try db.meetingDetail(id: meeting.id)).segments
+            .filter { $0.participantId == katty.id }.map(\.startTime))
+        #expect(kattyTexts.count == 2) // turns 1 and 3 in the fixture
+
+        // Re-process: clusters are replaced, the manual identity must be re-applied.
+        try await processor.process(meetingId: meeting.id) { _ in }
+        let after = try #require(try db.meetingDetail(id: meeting.id))
+        let kattyAfter = after.segments.filter { $0.participantId == katty.id }
+        #expect(Set(kattyAfter.map(\.startTime)) == kattyTexts)
+        #expect(kattyAfter.allSatisfy { $0.attribution == .manual })
+        // The other speaker stays unknown — nothing invented.
+        #expect(after.segments.filter { $0.participantId == nil }.count == 2)
+        let audit = try db.assignments(meetingId: meeting.id)
+        #expect(audit.contains { $0.method == .manual && ($0.note ?? "").contains("Re-aplicada tras reprocesar") })
+    }
+}

@@ -100,9 +100,14 @@ Embeddings biométricos sellados con AES-GCM (CryptoKit), clave de 256 bits en e
 `cacheDisplay`. Limitación comprobada: el material de la barra lateral no se renderiza fuera de pantalla; su
 contenido se verifica estructuralmente (6 filas presentes en el `NSOutlineView`).
 
+## TD-16 · Identidades manuales al re-procesar
+Re-procesar reemplaza los clusters de diarización. Antes de reemplazarlos se capturan las identidades **manuales**
+vigentes (no las automáticas, que el reconocimiento recalcula) con los tramos de voz de cada hablante. Un cluster
+nuevo hereda una identidad solo si ≥ 50 % de su voz cae dentro de los tramos de ese participante y ningún otro
+participante empata; varios clusters pueden heredar la misma identidad (diarizador que divide a una persona). Cada
+re-aplicación queda auditada en `speakerAssignment` ("Re-aplicada tras reprocesar"). Verificado con los modelos reales.
+
 ## Limitaciones comprobadas
 - ASR monocanal pierde palabras en habla **superpuesta** (fixture: 2 de 16 palabras).
 - Los fixtures son TTS: WER/DER medidos son una cota optimista.
 - Bluetooth en llamadas usa perfil de banda estrecha (se advierte en UI).
-- Las reasignaciones manuales de identidad se recalculan al **re-procesar** una reunión (las correcciones de texto
-  y el historial se conservan).

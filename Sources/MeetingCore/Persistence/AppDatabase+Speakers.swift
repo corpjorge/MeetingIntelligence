@@ -32,6 +32,32 @@ extension AppDatabase {
         }
     }
 
+    /// Identities the user set manually on the current speakers of one source,
+    /// with the speech spans of each speaker (from active transcripts). Captured
+    /// before re-processing so `ManualIdentityRemapper` can carry them over.
+    public func manualIdentities(meetingId: String, source: AudioSource) throws -> [ManualIdentityRemapper.PreviousIdentity] {
+        try reader.read { db in
+            let speakers = try MeetingSpeaker
+                .filter(Column("meetingId") == meetingId && Column("source") == source.rawValue && Column("participantId") != nil)
+                .fetchAll(db)
+            return try speakers.compactMap { speaker -> ManualIdentityRemapper.PreviousIdentity? in
+                guard let participantId = speaker.participantId else { return nil }
+                let latest = try SpeakerAssignment
+                    .filter(Column("meetingSpeakerId") == speaker.id && Column("supersededAt") == nil)
+                    .order(Column("createdAt").desc)
+                    .fetchOne(db)
+                guard latest?.method == .manual, latest?.participantId == participantId else { return nil }
+                let spans = try Row.fetchAll(db, sql: """
+                    SELECT s.startTime, s.endTime FROM transcriptSegment s
+                    JOIN transcript t ON t.id = s.transcriptId AND t.supersededAt IS NULL
+                    WHERE s.meetingSpeakerId = ? AND s.attribution != 'probableEcho'
+                    """, arguments: [speaker.id])
+                    .map { ManualIdentityRemapper.Span(start: $0["startTime"], end: $0["endTime"]) }
+                return spans.isEmpty ? nil : .init(participantId: participantId, spans: spans)
+            }
+        }
+    }
+
     public func meetingSpeakers(meetingId: String) throws -> [MeetingSpeaker] {
         try reader.read { db in
             try MeetingSpeaker.filter(Column("meetingId") == meetingId).order(Column("source"), Column("ordinal")).fetchAll(db)

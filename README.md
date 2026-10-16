@@ -26,6 +26,7 @@ reuniones de **Microsoft Teams** — sin bots, sin modificar Teams y **local por
 | Reconocimiento persistente de participantes (cifrado, calibrado) | ✅ Implementado | Pruebas unitarias con embeddings sintéticos; **pendiente** validar con voces reales autorizadas |
 | Captura de Teams (process tap) + micrófono, pausa, recuperación | ✅ Implementado | Pruebas de escritura WAV, alineación, remuestreo y detección real de procesos de Teams; **pendiente** prueba con llamada real (requiere tus permisos de macOS) |
 | Edición de transcripción con historial | ✅ | Pruebas de persistencia |
+| Identidades manuales conservadas al reprocesar | ✅ | Integración real: asignar → reprocesar → identidad conservada |
 | Diccionario personalizado | ✅ | Pruebas + integración |
 | Análisis IA con evidencia (Codex) | ✅ | Ejecución real con Codex CLI sobre reunión fixture |
 | Análisis IA (Claude Code CLI / Antigravity / Ollama) | ✅ Implementado | Formatos de salida verificados; Claude: sesión OAuth expirada en el entorno de pruebas; Ollama no instalado |
@@ -33,7 +34,7 @@ reuniones de **Microsoft Teams** — sin bots, sin modificar Teams y **local por
 | Servidor MCP (stdio, 2026-07-28 + 2025-11-25) | ✅ | Prueba stdio con el binario empaquetado |
 | Exportación TXT/MD/JSON/SRT/PDF | ✅ | Pruebas |
 
-55 pruebas automatizadas pasan (`scripts/test.sh`), incluidas 4 de integración con los modelos reales.
+61 pruebas automatizadas pasan (`scripts/test.sh`), incluidas 5 de integración con los modelos reales.
 
 ## Requisitos
 

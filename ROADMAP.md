@@ -20,8 +20,7 @@
 2. **Firma estable** (identidad propia o Developer ID) para que macOS conserve los permisos entre compilaciones.
 3. **Medición con grabaciones reales autorizadas** (WER/DER/identificación) y ajuste de `stepRatio` y del umbral de
    hablantes locales con datos medidos.
-4. Conservar asignaciones manuales al re-procesar (re-mapear por solapamiento temporal de clusters).
-5. Búsqueda semántica local (embeddings) como complemento de FTS5.
-6. Historial persistente del chat.
-7. Integración opcional de calendario para "Próximas reuniones" (requiere permiso de Calendario; no implementado).
-8. Vocabulario con *boosting* acústico de FluidAudio (CTC) para nombres propios, evaluando su comportamiento en español.
+4. Búsqueda semántica local (embeddings) como complemento de FTS5.
+5. Historial persistente del chat.
+6. Integración opcional de calendario para "Próximas reuniones" (requiere permiso de Calendario; no implementado).
+7. Vocabulario con *boosting* acústico de FluidAudio (CTC) para nombres propios, evaluando su comportamiento en español.

@@ -192,10 +192,13 @@ public actor MeetingProcessor {
             // 4. Alignment, echo flagging, persistence.
             progress(.init(meetingId: meetingId, stage: .alignment, source: track.source, fraction: nil,
                            message: "Alineando hablantes y transcripción"))
-            let built = try buildRecords(meetingId: meetingId, track: track, transcription: transcription,
+            // Manual identities of the clusters about to be replaced (re-processing).
+            let previousManual = try database.manualIdentities(meetingId: meetingId, source: track.source)
+            var built = try buildRecords(meetingId: meetingId, track: track, transcription: transcription,
                                          words: words, turns: turns, diarization: diarization,
                                          remoteWords: track.source == .localMicrophone ? remoteWords : [],
                                          vocabulary: vocabulary, localUser: localUser, options: options)
+            Self.reapplyManualIdentities(previousManual, to: &built)
             try database.storeProcessedTrack(transcript: built.transcript, segments: built.segments,
                                              speakers: built.speakers, assignments: built.assignments)
 
@@ -332,6 +335,34 @@ public actor MeetingProcessor {
                 attribution: attribution))
         }
         return BuiltTrack(transcript: transcript, segments: segments, speakers: speakers, assignments: assignments)
+    }
+
+    /// Re-applies manual identities to new clusters when the temporal evidence is
+    /// unambiguous (`ManualIdentityRemapper`); each re-application is audited.
+    static func reapplyManualIdentities(_ previous: [ManualIdentityRemapper.PreviousIdentity], to built: inout BuiltTrack) {
+        guard !previous.isEmpty else { return }
+        let clusters = Dictionary(grouping: built.segments.filter { $0.attribution != .probableEcho && $0.meetingSpeakerId != nil },
+                                  by: { $0.meetingSpeakerId! })
+            .mapValues { $0.map { ManualIdentityRemapper.Span(start: $0.startTime, end: $0.endTime) } }
+        let matches = ManualIdentityRemapper().remap(previous: previous, newClusters: clusters)
+        for (speakerId, match) in matches {
+            guard let i = built.speakers.firstIndex(where: { $0.id == speakerId }) else { continue }
+            // Never override an identity the pipeline already set (e.g. the local user on the mic).
+            if built.speakers[i].participantId != nil { continue }
+            built.speakers[i].participantId = match.participantId
+            built.assignments.removeAll { $0.meetingSpeakerId == speakerId }
+            built.assignments.append(SpeakerAssignment(
+                meetingId: built.speakers[i].meetingId, meetingSpeakerId: speakerId, participantId: match.participantId,
+                method: .manual, decision: .accepted, similarity: nil, margin: nil, threshold: nil,
+                note: String(format: "Re-aplicada tras reprocesar (%.0f %% de la voz coincide con la asignación manual previa)",
+                             match.share * 100)))
+            for j in built.segments.indices where built.segments[j].meetingSpeakerId == speakerId
+                && built.segments[j].attribution != .probableEcho {
+                built.segments[j].participantId = match.participantId
+                built.segments[j].attribution = .manual
+                built.segments[j].speakerConfidence = nil
+            }
+        }
     }
 
     // MARK: Job bookkeeping
