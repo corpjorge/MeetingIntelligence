@@ -87,7 +87,7 @@ let package = Package(
         ),
         .testTarget(
             name: "MeetingSpeechTests",
-            dependencies: ["MeetingSpeech", "MeetingAudio", "MeetingCore"],
+            dependencies: ["MeetingSpeech", "MeetingAudio", "MeetingCore", .product(name: "FluidAudio", package: "FluidAudio")],
             swiftSettings: strictConcurrency
         ),
     ]

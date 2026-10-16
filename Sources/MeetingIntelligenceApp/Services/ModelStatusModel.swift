@@ -53,14 +53,14 @@ final class ModelStatusModel {
             }
             asrStatus = .ready
         } catch {
-            asrStatus = .failed(error.localizedDescription)
+            asrStatus = .failed(ProcessingErrorText.describe(error))
         }
         diarizationStatus = .preparing("Descargando y compilando", nil)
         do {
             try await diarizer.prepare()
             diarizationStatus = .ready
         } catch {
-            diarizationStatus = .failed(error.localizedDescription)
+            diarizationStatus = .failed(ProcessingErrorText.describe(error))
         }
     }
 

@@ -10,6 +10,7 @@ They contain no real people and no real meeting content.
 | es_overlap | Two voices overlapping |
 | silence | 12 s of digital silence (expect empty transcript) |
 | es_noisy | Band-limited + pink noise (~telephone quality) |
+| es_short_reply | 1.2 s reply between 8 s of silence (words, but nothing to diarize) |
 
 WER/DER on TTS audio is an optimistic bound. Real accuracy must be measured
 on authorized real recordings (see TESTING.md).

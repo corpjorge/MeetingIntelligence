@@ -67,7 +67,7 @@ final class ProcessingCoordinator {
             } catch is CancellationError {
                 self?.logger.notice("Processing cancelled")
             } catch {
-                self?.lastError = (meetingId, error.localizedDescription)
+                self?.lastError = (meetingId, ProcessingErrorText.describe(error))
             }
             self?.active = nil
             self?.task = nil

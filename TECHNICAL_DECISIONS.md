@@ -133,6 +133,17 @@ un control propio: se escribe silencio en la pista del micrófono y se registra 
 - Ollama: `think` con los valores que cada modelo declara en `/api/show` (`thinking.values`); sin valores, no se ofrece.
 El esfuerzo usado queda registrado en cada análisis (`aiAnalysis.effort`).
 
+## TD-21 · Diarización sin voz suficiente no es un fallo
+FluidAudio lanza `OfflineDiarizationError.noSpeechDetected` cuando no puede extraer ninguna huella de voz, aunque
+Parakeet sí transcriba palabras (respuestas de 1–2 s). Pasó en una llamada real de Teams y dejaba la
+reunión en error. Ahora `DiarizationService` lo trata como resultado vacío (`speechDetected == false`):
+- se conserva la transcripción;
+- en el micrófono, el fragmento se atribuye al usuario local (no se detectaron varios hablantes locales);
+- en otras pistas, los segmentos quedan sin atribuir.
+
+El resto de errores de diarización sigue siendo fatal. Los mensajes de FluidAudio se muestran en español
+(`ProcessingErrorText`). La regresión se prueba con el fixture `es_short_reply`.
+
 ## Limitaciones comprobadas
 - ASR monocanal pierde palabras en habla **superpuesta** (fixture: 2 de 16 palabras).
 - Los fixtures son TTS: WER/DER medidos son una cota optimista.

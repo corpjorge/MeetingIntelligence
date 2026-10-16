@@ -78,6 +78,14 @@ ffmpeg -loglevel error -y -i "$OUT/es_single_speaker.wav" \
   -ar 16000 -ac 1 -c:a pcm_s16le "$OUT/es_noisy.wav"
 cp "$OUT/es_single_speaker.txt" "$OUT/es_noisy.txt"
 
+# 6. Very short reply surrounded by silence: ASR finds words but the diarizer
+#    cannot extract any speaker embedding (reproduces "No speech detected").
+render "$VOICE_A" "Sí, claro." "$WORK/short.wav"
+silence 8 "$WORK/pad.wav"
+ffmpeg -loglevel error -y -i "$WORK/pad.wav" -i "$WORK/short.wav" -i "$WORK/pad.wav" \
+  -filter_complex "[0:a][1:a][2:a]concat=n=3:v=0:a=1" -ar 16000 -ac 1 -c:a pcm_s16le "$OUT/es_short_reply.wav"
+print -r -- "Sí, claro." > "$OUT/es_short_reply.txt"
+
 cat > "$OUT/README.md" <<'EOF'
 # Synthetic fixtures (FIXTURE — not real meetings)
 
@@ -91,6 +99,7 @@ They contain no real people and no real meeting content.
 | es_overlap | Two voices overlapping |
 | silence | 12 s of digital silence (expect empty transcript) |
 | es_noisy | Band-limited + pink noise (~telephone quality) |
+| es_short_reply | 1.2 s reply between 8 s of silence (words, but nothing to diarize) |
 
 WER/DER on TTS audio is an optimistic bound. Real accuracy must be measured
 on authorized real recordings (see TESTING.md).

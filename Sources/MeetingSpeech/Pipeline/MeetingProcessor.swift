@@ -94,7 +94,7 @@ public actor MeetingProcessor {
         } catch {
             try? database.updateMeeting(id: meetingId) {
                 $0.status = .failed
-                $0.lastError = error.localizedDescription
+                $0.lastError = ProcessingErrorText.describe(error)
             }
             throw error
         }
@@ -181,7 +181,10 @@ public actor MeetingProcessor {
                         progress(.init(meetingId: meetingId, stage: .diarization, source: track.source, fraction: f,
                                        message: "Identificando intervenciones en \(Self.label(track.source))"))
                     }
-                    return "\(Set(diarization?.turns.map(\.clusterKey) ?? []).count) hablantes"
+                    guard let diarization, diarization.speechDetected else {
+                        return "Sin voz suficiente para diarizar; se conserva la transcripción"
+                    }
+                    return "\(Set(diarization.turns.map(\.clusterKey)).count) hablantes"
                 }
             }
             let turns = (diarization?.turns ?? []).map {
@@ -295,8 +298,9 @@ public actor MeetingProcessor {
                     assignments.append(SpeakerAssignment(
                         meetingId: meetingId, meetingSpeakerId: localSpeakerID, participantId: localUser.id,
                         method: .localUserTrack, decision: .accepted,
-                        note: turns.isEmpty ? "Pista de micrófono sin diarización (opción del usuario)."
-                                            : "Un único hablante local detectado en el micrófono."))
+                        note: diarization == nil ? "Pista de micrófono sin diarización (opción del usuario)."
+                            : turns.isEmpty ? "La diarización no encontró voz suficiente; se asume el usuario local."
+                            : "Un único hablante local detectado en el micrófono."))
                 }
             }
         }
@@ -383,7 +387,7 @@ public actor MeetingProcessor {
             throw CancellationError()
         } catch {
             job.status = .failed
-            job.errorMessage = error.localizedDescription
+            job.errorMessage = ProcessingErrorText.describe(error)
             finish(&job, started: started)
             throw error
         }

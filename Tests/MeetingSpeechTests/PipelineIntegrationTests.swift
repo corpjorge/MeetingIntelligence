@@ -85,6 +85,56 @@ struct PipelineIntegrationTests {
         #expect(result.words.isEmpty)
     }
 
+    /// Regression (real Teams call): a microphone track with a 1–2 s reply has words
+    /// but nothing the diarizer can embed (`noSpeechDetected`). That must not fail
+    /// the meeting: the reply stays with the local user, the remote track is diarized.
+    @Test func shortMicrophoneReplyDoesNotFailTheMeeting() async throws {
+        let shortReply = IntegrationEnvironment.fixtures.appendingPathComponent("es_short_reply.wav")
+        try #require(FileManager.default.fileExists(atPath: shortReply.path), "scripts/generate-fixtures.sh")
+        let diarizer = DiarizationService()
+        let direct = try await diarizer.diarize(fileURL: shortReply) { _ in }
+        #expect(!direct.speechDetected)
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("mi-it-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = AppPaths(root: root)
+        let db = try AppDatabase.open(paths: paths)
+        let me = try db.setLocalUserName("FIXTURE Yo")
+        let meeting = Meeting(title: "FIXTURE · llamada", startedAt: Date(), origin: .recording,
+                              captureScope: .applicationProcesses, status: .recorded)
+        let dir = try paths.prepareMeetingDirectory(meeting.id)
+        var tracks: [AudioTrack] = []
+        for (source, fixture) in [(AudioSource.remoteSystemAudio, "es_single_speaker.wav"),
+                                  (.localMicrophone, "es_short_reply.wav")] {
+            let dest = dir.appendingPathComponent("\(source.rawValue).wav")
+            try FileManager.default.copyItem(at: IntegrationEnvironment.fixtures.appendingPathComponent(fixture), to: dest)
+            let file = try AVAudioFile(forReading: dest)
+            let seconds = Double(file.length) / file.fileFormat.sampleRate
+            tracks.append(AudioTrack(meetingId: meeting.id, source: source,
+                                     relativePath: try #require(paths.relativePath(for: dest)),
+                                     sampleRate: 16_000, channelCount: 1, durationSeconds: seconds))
+        }
+        try db.insert(meeting: meeting, tracks: tracks)
+
+        let processor = MeetingProcessor(database: db, paths: paths, asr: ParakeetUltraProvider(), diarizer: diarizer,
+                                         recognizer: nil)
+        try await processor.process(meetingId: meeting.id) { _ in }
+
+        let detail = try #require(try db.meetingDetail(id: meeting.id))
+        #expect(detail.meeting.status == .ready)
+        #expect(detail.meeting.lastError == nil)
+        let micTrack = try #require(tracks.first { $0.source == .localMicrophone })
+        let micDiarization = try #require(detail.jobs.last { $0.stage == .diarization && $0.trackId == micTrack.id })
+        #expect(micDiarization.status == .succeeded)
+        #expect(micDiarization.detail?.contains("Sin voz suficiente") == true)
+        let micSegments = detail.segments.filter { $0.source == .localMicrophone }
+        #expect(!micSegments.isEmpty)
+        #expect(micSegments.allSatisfy { $0.attribution == .localUserTrack && $0.participantId == me.id })
+        #expect(detail.segments.contains { $0.source == .remoteSystemAudio && $0.attribution == .diarized })
+        let audit = try db.assignments(meetingId: meeting.id)
+        #expect(audit.contains { $0.method == .localUserTrack && ($0.note ?? "").contains("no encontró voz suficiente") })
+    }
+
     @Test func spanishWithEnglishTermsIsAccurate() async throws {
         let asr = ParakeetUltraProvider()
         let url = IntegrationEnvironment.fixtures.appendingPathComponent("es_single_speaker.wav")

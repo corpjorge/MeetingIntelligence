@@ -69,7 +69,7 @@ public actor ParakeetUltraProvider: ASRProvider {
                     }
                 })
             } catch {
-                throw ASRProviderError.modelUnavailable(error.localizedDescription)
+                throw ASRProviderError.modelUnavailable(ProcessingErrorText.describe(error))
             }
             guard models.version == version else {
                 throw ASRProviderError.modelUnavailable("se cargó \(models.version) en lugar de ultra")
@@ -131,7 +131,7 @@ public actor ParakeetUltraProvider: ASRProvider {
             throw error
         } catch let error as ASRError {
             if case .invalidAudioData = error { throw ASRProviderError.emptyAudio }
-            throw ASRProviderError.failed(error.localizedDescription)
+            throw ASRProviderError.failed(ProcessingErrorText.describe(error))
         }
         progress(1)
         let words = WordGrouping.words(from: result.tokenTimings ?? [])

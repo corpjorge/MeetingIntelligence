@@ -26,6 +26,11 @@ public struct DiarizationOutput: Sendable {
     public var processingSeconds: Double
     public var modelIdentifier: String
 
+    /// False when the diarizer found no speech it could embed (very short or
+    /// faint fragments). The transcript is kept; its segments stay unattributed
+    /// (or go to the local user on a single-speaker microphone track).
+    public var speechDetected: Bool { !turns.isEmpty }
+
     /// Total speech per cluster, largest first.
     public var speechByCluster: [(key: String, seconds: Double)] {
         Dictionary(grouping: turns, by: \.clusterKey)
@@ -95,8 +100,18 @@ public actor DiarizationService {
         defer { gate.leave() }
         let manager = try await loadedManager()
         let started = Date()
-        let result = try await manager.value.process(fileURL) { done, total in
-            progress(total > 0 ? Double(done) / Double(total) : 0)
+        let result: DiarizationResult
+        do {
+            result = try await manager.value.process(fileURL) { done, total in
+                progress(total > 0 ? Double(done) / Double(total) : 0)
+            }
+        } catch OfflineDiarizationError.noSpeechDetected {
+            // Not a failure: ASR may still find a few words the segmentation/embedding
+            // stages consider too short to cluster (e.g. a "sí" on the microphone).
+            let elapsed = Date().timeIntervalSince(started)
+            logger.notice("Diarization: no embeddable speech in \(elapsed, format: .fixed(precision: 2)) s")
+            return DiarizationOutput(turns: [], embeddings: [:], processingSeconds: elapsed,
+                                     modelIdentifier: Self.modelIdentifier)
         }
         let turns = result.segments.map {
             SpeakerTurn(clusterKey: $0.speakerId, start: Double($0.startTimeSeconds),
