@@ -47,8 +47,11 @@ struct ParticipantsView: View {
     @State private var calibrationLoaded = false
 
     var body: some View {
-        HSplitView {
-            list.frame(minWidth: 240, idealWidth: 290, maxWidth: 360)
+        // Plain HStack, not HSplitView: a nested NSSplitView inside the
+        // NavigationSplitView detail shifts the app sidebar and adds a titlebar band.
+        HStack(spacing: 0) {
+            list.frame(width: DS.Layout.listColumnWidth)
+            Rectangle().fill(DS.Color.border).frame(width: DS.Layout.hairline)
             Group {
                 if let id = selection, let participant = model.participants.first(where: { $0.id == id }) {
                     ParticipantDetailView(participant: participant, profile: model.profiles[id],
@@ -61,7 +64,7 @@ struct ParticipantsView: View {
                                    message: "Gestiona nombres, perfiles de voz autorizados y el historial de reuniones.")
                 }
             }
-            .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(DS.Color.background)
         }
         .task { await model.observe(env.database) }

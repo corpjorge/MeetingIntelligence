@@ -34,6 +34,7 @@ enum DS {
         static let contentMaxWidth: CGFloat = 1040
         static let readingMaxWidth: CGFloat = 760
         static let sidebarWidth: CGFloat = 220
+        static let listColumnWidth: CGFloat = 290
         static let rowHeight: CGFloat = 44
         static let avatarSize: CGFloat = 28
         static let iconButton: CGFloat = 28
