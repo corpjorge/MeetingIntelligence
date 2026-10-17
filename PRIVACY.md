@@ -23,6 +23,7 @@ No se registran tokens, credenciales ni texto de transcripciones en los logs del
   queda registrado. En navegadores se graba todo lo que suene en el navegador (se advierte).
 - La detección de llamadas solo lee qué apps usan micrófono y audio (sin permisos ni contenido) y únicamente sugiere.
 - "Pausar mi micrófono" deja de grabar tu voz sin detener la grabación; el intervalo queda registrado.
+  Silenciarte en Teams/Zoom **no** lo pausa y la app no puede detectarlo (TD-23); mientras grabas se muestra un recordatorio.
 - No se agregan bots, no se modifica ni inyecta nada en las apps de videollamada y no existe ningún mecanismo para ocultar la
   grabación a herramientas de supervisión.
 

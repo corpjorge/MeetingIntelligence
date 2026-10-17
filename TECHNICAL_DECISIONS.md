@@ -189,9 +189,43 @@ diarización sigue leyendo el archivo original.
 - Solo se compacta por debajo de −66 dBFS: el ruido de fondo de un micrófono abierto no se toca.
 - Mientras se transcribe hay una copia temporal del audio en el `$TMPDIR` del usuario (directorio 0700).
 
+## TD-23 · El silencio de la app de la llamada no se puede leer (comprobado)
+Silenciarte en Teams/Zoom no detiene la pista del micrófono: la captura es propia (AVAudioEngine) y no depende del
+silencio de la llamada. Se buscó una señal pública para avisar "estás silenciado en X, pero se graba". No la hay:
+- **SDK** (cabeceras de macOS 26.5 y 27): `AVAudioApplication.isInputMuted` / `inputMuteStateChangeNotification`
+  ("per-application input muting"), `kAudioHardwarePropertyProcessInputMute` y `kAudioDevicePropertyProcessMute`
+  describen el silencio **del propio proceso**. Los objetos de proceso del HAL (`kAudioProcessProperty*`) solo exponen
+  PID, bundle ID, dispositivos e `IsRunning`/`IsRunningInput`/`IsRunningOutput`.
+- **Prueba real** (16-oct-2026, macOS 27.0.1, Teams 26261.303.5165.1465, Galaxy Buds Pro): sonda con un
+  `AVAudioEngine` de entrada activo, como la app, muestreando cada 200 ms durante ~5 min mientras el usuario
+  silenciaba y reactivaba Teams 3 veces (~10 s cada vez, hablando). No cambiaron `isInputMuted`, la notificación
+  (0 recibidas), `ProcessInputMute`, `ProcessMute` ni `kAudioDevicePropertyMute`/`VolumeScalar` de entrada. El proceso
+  `com.microsoft.teams2.modulehost` mantuvo `IsRunningInput = 1` todo el tiempo: Teams sigue capturando el micrófono
+  estando silenciado. Hubo un único corte de 126 ms que no se repitió en los otros cambios, así que no indica el
+  estado. El micrófono propio nunca entregó silencio (picos de voz de hasta −10 dBFS).
+- **API de Teams para apps de terceros** (la de Stream Deck): Microsoft documenta la función, pero no el protocolo.
+  Según su artículo "Connect to third-party devices in Microsoft Teams", se activa en Configuración › Privacidad ›
+  Administrar API › Habilitar API. Depende de una política global del administrador de TI, y el emparejamiento se
+  dispara pulsando un botón del dispositivo durante una reunión, es decir, **enviando una orden**. El binario
+  instalado contiene el módulo (`third_party_devices`, servidor WebSocket en 127.0.0.1, `protocol-version`,
+  `meetingUpdate`, `meetingState`, `isMuted`, `canPair`, `tokenRefresh`, `query-state`, `pairingStatus`). En la cuenta
+  de prueba, que es de una organización, la página Privacidad no muestra el apartado y la búsqueda de "API" o
+  "terceros" en Configuración no encuentra nada. Una sonda pasiva, que no envía nada, reintentó cada 2 s durante
+  318 s y Teams nunca abrió el puerto 8124. Conclusión: aquí no se puede activar ni verificar, así que no se
+  implementa un cliente con un protocolo no comprobado. Si TI la habilitara, faltaría además comprobar que
+  `isMuted` llega sin enviar órdenes: Microsoft indica que el emparejamiento se dispara con una orden del
+  dispositivo, y eso choca con el requisito de solo lectura. Tampoco serviría para Zoom ni Meet.
+- **Descartado**: `setInputMuteStateChangeHandler` (TD-19); leer el botón de Teams con Accessibility (permiso
+  intrusivo y frágil, TD-18); atajos de teclado sintéticos hacia Teams.
+
+Decisión: un recordatorio **estático** en la vista de grabación (`CallMuteReminder`) cuando se graba el micrófono junto
+con una app o todo el sistema. Su botón solo **pausa** (`pauseMicrophone()`, que nunca reanuda) y se puede ocultar
+durante esa grabación. Nada se pausa ni se reanuda solo. Zoom no se probó (no había llamada activa).
+
 ## Limitaciones comprobadas
 - ASR monocanal pierde palabras en habla **superpuesta** (fixture: 2 de 16 palabras).
 - Frases muy cortas y aisladas pueden transcribirse en otro idioma; el idioma no se puede forzar (TD-22).
 - Los fixtures son TTS: WER/DER medidos son una cota optimista.
 - Bluetooth en llamadas usa perfil de banda estrecha (se advierte en UI).
 - Apps en navegador: no se puede aislar una pestaña; se graba todo el audio del navegador.
+- Silenciarte en la app de la llamada no pausa tu micrófono aquí, y la app no puede detectarlo (TD-23).

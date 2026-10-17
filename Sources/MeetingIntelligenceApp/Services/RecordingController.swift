@@ -28,7 +28,10 @@ final class RecordingController {
     private(set) var scope: CaptureScope?
     private(set) var lastFinishedMeetingId: String?
     private(set) var capturesMicrophone = false
+    private(set) var capturesRemoteAudio = false
     private(set) var microphonePaused = false
+    /// The user hid the "muted in the call ≠ paused here" reminder for this recording.
+    private(set) var muteReminderDismissed = false
     /// App being recorded on the remote track (nil = system-wide / microphone only).
     private(set) var recordingApp: AudioAppSelector?
     /// Provisional live text per source (never persisted as the transcript).
@@ -67,7 +70,9 @@ final class RecordingController {
         guard !isActive else { return }
         state = .starting
         capturesMicrophone = captureMicrophone
+        capturesRemoteAudio = target != .none
         microphonePaused = false
+        muteReminderDismissed = false
         if case .application(let selector) = target { recordingApp = selector } else { recordingApp = nil }
         warnings = []
         remoteProcesses = []
@@ -118,6 +123,20 @@ final class RecordingController {
         microphonePaused.toggle()
         session.setMicrophonePaused(microphonePaused)
     }
+
+    /// Pause-only entry point (the mute reminder): a stale click can never resume the microphone.
+    func pauseMicrophone() {
+        guard !microphonePaused else { return }
+        toggleMicrophonePause()
+    }
+
+    /// The call app's mute state is not readable (TD-23), so this reminder is static.
+    var showsMuteReminder: Bool {
+        isActive && CallMuteReminder.isRelevant(capturesMicrophone: capturesMicrophone, capturesRemoteAudio: capturesRemoteAudio,
+                                                microphonePaused: microphonePaused, dismissed: muteReminderDismissed)
+    }
+
+    func dismissMuteReminder() { muteReminderDismissed = true }
 
     func pause() {
         guard state == .recording else { return }

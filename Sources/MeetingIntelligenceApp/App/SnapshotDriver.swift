@@ -30,6 +30,13 @@ enum SnapshotDriver {
                     try? await Task.sleep(for: .seconds(1.5))
                     capture("\(section.rawValue)-\(suffix)", in: dir)
                 }
+                // Live-recording banners need a real capture; render the component standalone.
+                captureComponent("recording-mute-reminder-\(suffix)", in: dir) {
+                    VStack(alignment: .leading, spacing: DS.Space.l) {
+                        CallMuteReminderBanner(appName: "Microsoft Teams", onPauseMicrophone: {}, onDismiss: {})
+                        CallMuteReminderBanner(appName: nil, onPauseMicrophone: {}, onDismiss: {})
+                    }
+                }
                 if let first = try? env.database.meetingRows().first(where: { $0.meeting.status == .ready }) {
                     for tab in MeetingDetailTab.allCases {
                         router.openMeeting(first.id, tab: tab)
@@ -66,6 +73,23 @@ enum SnapshotDriver {
         }
         walk(window.contentView?.superview ?? view, depth: 0)
         try? lines.joined(separator: "\n").write(to: dir.appendingPathComponent("\(name).views.txt"), atomically: true, encoding: .utf8)
+    }
+
+    /// Renders one component offscreen at the recording view's reading width (current `NSApp.appearance`).
+    @MainActor
+    static func captureComponent(_ name: String, in dir: URL, @ViewBuilder _ content: () -> some View) {
+        let host = NSHostingView(rootView: content()
+            .padding(DS.Space.xl)
+            .frame(width: DS.Layout.readingMaxWidth, alignment: .leading)
+            .background(DS.Color.background))
+        host.appearance = NSApp.appearance
+        host.frame.size = host.fittingSize
+        host.layoutSubtreeIfNeeded()
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
+        host.cacheDisplay(in: host.bounds, to: rep)
+        if let png = rep.representation(using: .png, properties: [:]) {
+            try? png.write(to: dir.appendingPathComponent("\(name).png"))
+        }
     }
 
     @MainActor

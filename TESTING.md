@@ -9,7 +9,7 @@ scripts/generate-fixtures.sh    # regenera fixtures sintéticos (necesario para 
 Framework: **Swift Testing** (XCTest no está disponible con Command Line Tools). Las pruebas de integración con
 modelos reales se ejecutan solo si Parakeet Ultra y la diarización ya están en caché (nunca descargan en CI).
 
-## Inventario (81 pruebas, todas pasan al 16-oct-2026)
+## Inventario (83 pruebas, todas pasan al 17-oct-2026)
 
 | Suite | Cubre |
 |---|---|
@@ -25,6 +25,7 @@ modelos reales se ejecutan solo si Parakeet Ultra y la diarización ya están en
 | Apps de conversación | agrupación por `.app` (Teams, Zoom, Chrome, WebKit, app desconocida), exclusión de esta app, orden por actividad, HAL real |
 | Detección de llamadas | inicio tras 3 s, prueba breve ignorada, dictado (solo micrófono) ignorado, cambio a AirPods sin falso fin, fin tras 25 s, app cerrada, apps ignoradas, FaceTime |
 | Pausa del micrófono | silencio escrito, línea de tiempo intacta, intervalo registrado |
+| Recordatorio de silencio en la llamada | solo con micrófono + audio de una app/sistema, oculto en pausa o descartado, texto con la app y ⌃⌘M |
 | Migración v2 y esfuerzo de IA | columnas/tabla nuevas, app de origen, flags de esfuerzo por CLI, sin flags que omitan permisos, esfuerzo registrado en el análisis |
 | Segmentación y alineación | tokens→palabras, pausas/oraciones, cambio de hablante, suavizado, solapamiento, eco |
 | Identidades manuales al reprocesar | re-mapeo por solapamiento, empate/poca evidencia → no se aplica, clusters divididos heredan, sin doble conteo, solo asignaciones manuales vigentes |
@@ -84,13 +85,21 @@ grabaciones reales autorizadas con respuestas cortas (no basta un solo caso).
 
 - `mi doctor` lista en tiempo real las apps registradas en el audio del sistema: con `afplay` reproduciendo, aparece
   como "reproduce audio"; Teams se agrupa con sus 5 procesos; Chrome, Edge y Safari/WebKit aparecen como audio compartido.
+- Silencio en Teams (TD-23): con una sonda del HAL y de `AVAudioApplication` durante una llamada real, 3 ciclos de
+  silenciar/activar en Teams no cambiaron ninguna señal legible; Teams mantuvo el micrófono abierto. Por eso el aviso
+  es un recordatorio estático. El componente se verifica con `MI_SNAPSHOT_DIR` (`recording-mute-reminder-light/dark.png`)
+  porque la vista de grabación en vivo necesita una captura real.
+- API de Teams para apps de terceros (TD-23): no aparece en Configuración › Privacidad de la cuenta de prueba, que es
+  de una organización, ni buscando "API" o "terceros". Una sonda pasiva no logró conectar al 127.0.0.1:8124 en 318 s.
 
 ## Pruebas manuales pendientes (requieren permisos o condiciones del usuario)
 
 - Detección de llamadas: unirse a una llamada en Teams, Zoom y Meet (Chrome) y comprobar la sugerencia de grabar y,
   al colgar, la sugerencia de detener; registrar qué procesos usan el micrófono en cada app.
 - Grabación real de una llamada de Teams: concesión de "Micrófono" y "Grabación de audio del sistema", niveles en
-  vivo, pausa/reanudación, cambio a AirPods durante la llamada, cerrar la app grabando (debe recuperarse).
+  vivo, pausa/reanudación, cambio a AirPods durante la llamada, cerrar la app grabando (debe recuperarse); el
+  recordatorio de silencio aparece, "Pausar mi micrófono" pausa y la ✕ lo oculta solo en esa grabación.
+- Silencio en Zoom: repetir la sonda de TD-23 en una llamada de Zoom (no se probó).
 - Análisis con Claude Code CLI (iniciar sesión con `claude` en una terminal) y con Ollama (instalar y `ollama pull`).
 - Configurar el MCP en Claude Code / Codex y consultar reuniones reales.
 

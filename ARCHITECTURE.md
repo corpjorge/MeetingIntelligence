@@ -73,7 +73,8 @@ AVAudioEngine.inputNode (dispositivo por defecto) ─────────►
 - **Cualquier app**: `AudioApplicationResolver` agrupa los procesos de audio por el `.app` más externo que los
   contiene (o por bundle ID si no hay bundle). El catálogo solo describe (nombre, tipo, aislamiento); nunca limita.
 - **Pausa del micrófono**: el `TrackRecorder` del micrófono escribe silencio mientras está en pausa (la línea de
-  tiempo se conserva) y registra el intervalo (`recordingPause`).
+  tiempo se conserva) y registra el intervalo (`recordingPause`). Silenciarse en la app de la llamada no es legible
+  (TD-23): la vista de grabación muestra un recordatorio estático (`CallMuteReminder`) cuyo botón solo pausa.
 - **Eco/duplicación**: Teams no reproduce tu propia voz, así que no hay doble captura de ti en la pista remota. El eco
   (altavoces → micrófono) se mitiga con (1) advertencia de altavoces, (2) Voice Processing opcional y
   (3) `EchoDetector`, que marca como `probableEcho` los segmentos del micrófono que repiten el habla remota.

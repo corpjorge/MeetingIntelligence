@@ -95,6 +95,26 @@ public enum RecordingWarning: Sendable, Equatable, Hashable {
     }
 }
 
+/// Static reminder for a verified limitation (TD-23): muting yourself in the call
+/// app does not pause the local microphone track, and no public API reveals
+/// another app's mute state. It never pauses or resumes anything by itself.
+public enum CallMuteReminder {
+    /// Shown while the microphone is written during a recording that also captures a call.
+    public static func isRelevant(capturesMicrophone: Bool, capturesRemoteAudio: Bool,
+                                  microphonePaused: Bool, dismissed: Bool) -> Bool {
+        capturesMicrophone && capturesRemoteAudio && !microphonePaused && !dismissed
+    }
+
+    public static func title(appName: String?) -> String {
+        "Silenciarte en \(appName ?? "la llamada") no pausa tu micrófono aquí"
+    }
+
+    public static func message(appName: String?) -> String {
+        "Meeting Intelligence no puede saber si estás silenciado en \(appName ?? "la llamada") y sigue grabando tu "
+            + "micrófono. Para que no se grabe lo que digas, usa «Pausar mi micrófono» (⌃⌘M)."
+    }
+}
+
 public enum RecordingEvent: Sendable {
     case level(AudioSource, AudioLevel)
     case warning(RecordingWarning)

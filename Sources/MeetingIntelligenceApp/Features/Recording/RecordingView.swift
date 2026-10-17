@@ -364,13 +364,18 @@ struct RecordingView: View {
                                       systemImage: recording.microphonePaused ? "mic.fill" : "mic.slash")
                             }
                             .buttonStyle(.ds(.secondary, size: .large))
-                            .help("Deja de grabar tu micrófono sin detener la grabación (⌃⌘M). Se guarda como pausa.")
+                            .help("Deja de grabar tu micrófono sin detener la grabación (⌃⌘M). Se guarda como pausa. Silenciarte en la llamada no lo pausa.")
                         }
                         Button { recording.stop() } label: { Label("Detener y guardar", systemImage: "stop.fill") }
                             .buttonStyle(.ds(.recording, size: .large))
                             .disabled(recording.state == .stopping)
                     }
                 }
+            }
+            if recording.showsMuteReminder {
+                CallMuteReminderBanner(appName: recording.recordingApp?.name,
+                                       onPauseMicrophone: { recording.pauseMicrophone() },
+                                       onDismiss: { recording.dismissMuteReminder() })
             }
             if !recording.remoteProcesses.isEmpty {
                 SurfaceCard {
