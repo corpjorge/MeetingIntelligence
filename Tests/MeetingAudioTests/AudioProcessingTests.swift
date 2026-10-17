@@ -162,3 +162,102 @@ struct TeamsProcessTests {
         #expect(teams.count <= all.count)
     }
 }
+
+@Suite("Compactación de silencio antes del ASR")
+struct SilenceCompactorTests {
+    private let dead: Float = 0
+    private let sound: Float = 0.1
+
+    /// RMS per 80 ms frame from (value, frames) runs.
+    private func frames(_ runs: [(Float, Int)]) -> [Float] { runs.flatMap { Array(repeating: $0.0, count: $0.1) } }
+
+    @Test func collapsesLeadingInteriorAndTrailingDeadRuns() throws {
+        let f = SilenceCompactor.frameSamples
+        // 40 dead | 10 sound | 20 dead | 10 sound | 30 dead
+        let rms = frames([(dead, 40), (sound, 10), (dead, 20), (sound, 10), (dead, 30)])
+        let plan = try #require(SilenceCompactor.plan(frameRMS: rms, sampleCount: 110 * f))
+        // 3 dead frames survive next to every side of sound.
+        #expect(plan.spans == [
+            .init(originalStart: 37 * f, compactedStart: 0, length: 16 * f),
+            .init(originalStart: 67 * f, compactedStart: 16 * f, length: 16 * f),
+        ])
+        #expect(plan.compactedSampleCount == 32 * f)
+        #expect(abs(plan.removedSeconds - Double(78 * f) / 16_000) < 1e-9)
+    }
+
+    @Test func leavesShortPausesAndSoundOnlyFilesUntouched() {
+        let f = SilenceCompactor.frameSamples
+        // A 12-frame (0.96 s) pause between words is not a dead run.
+        #expect(SilenceCompactor.plan(frameRMS: frames([(sound, 10), (dead, 12), (sound, 10)]), sampleCount: 32 * f) == nil)
+        #expect(SilenceCompactor.plan(frameRMS: frames([(sound, 50)]), sampleCount: 50 * f) == nil)
+        // All silence: nothing to anchor on, the file is used as is.
+        #expect(SilenceCompactor.plan(frameRMS: frames([(dead, 200)]), sampleCount: 200 * f) == nil)
+        // Quiet but real sound (−60 dBFS) is above the dead floor.
+        #expect(SilenceCompactor.plan(frameRMS: frames([(sound, 5), (0.001, 40), (sound, 5)]), sampleCount: 50 * f) == nil)
+    }
+
+    @Test func handlesPartialLastFrame() throws {
+        let f = SilenceCompactor.frameSamples
+        let total = 30 * f + 100   // 31 frames, the last one partial
+        let plan = try #require(SilenceCompactor.plan(frameRMS: frames([(sound, 10), (dead, 21)]), sampleCount: total))
+        #expect(plan.spans == [.init(originalStart: 0, compactedStart: 0, length: 13 * f)])
+        #expect(plan.originalSampleCount == total)
+    }
+
+    @Test func mapsTimesBackAcrossRemovedGaps() throws {
+        let f = SilenceCompactor.frameSamples
+        let plan = try #require(SilenceCompactor.plan(
+            frameRMS: frames([(dead, 40), (sound, 10), (dead, 20), (sound, 10)]), sampleCount: 80 * f))
+        let frame = 0.08
+        // First kept span starts at original frame 37.
+        #expect(abs(plan.originalTime(0) - 37 * frame) < 1e-9)
+        #expect(abs(plan.originalTime(5 * frame) - 42 * frame) < 1e-9)
+        // Junction (compacted frame 16 = original 53 | 67): a time on it belongs to the next span.
+        #expect(abs(plan.originalTime(16 * frame) - 67 * frame) < 1e-9)
+        // A token ending at the junction ends before the removed gap…
+        let word = plan.originalInterval(start: 14 * frame, end: 16 * frame)
+        #expect(abs(word.start - 51 * frame) < 1e-9 && abs(word.end - 53 * frame) < 1e-9)
+        // …and one whose duration crosses it is clipped instead of stretching over the gap.
+        let crossing = plan.originalInterval(start: 15 * frame, end: 19 * frame)
+        #expect(abs(crossing.start - 52 * frame) < 1e-9 && abs(crossing.end - 53 * frame) < 1e-9)
+        let after = plan.originalInterval(start: 16 * frame, end: 18 * frame)
+        #expect(abs(after.start - 67 * frame) < 1e-9 && abs(after.end - 69 * frame) < 1e-9)
+        #expect(plan.originalInterval(start: 20 * frame, end: 19 * frame).end >= plan.originalInterval(start: 20 * frame, end: 19 * frame).start)
+    }
+
+    @Test func writesKeptSamplesUnchangedAndSkipsFilesWithoutDeadRuns() throws {
+        let source = tempURL("source.wav"), destination = tempURL("compacted.wav")
+        defer { [source, destination].forEach { try? FileManager.default.removeItem(at: $0) } }
+        let writer = try CrashSafeWAVWriter(url: source, sampleRate: 16_000)
+        try writer.appendSilence(frames: 48_000)                                    // 3 s paused mic
+        try writer.append(sine(frequency: 220, sampleRate: 16_000, seconds: 1, amplitude: 0.01))  // −43 dBFS
+        try writer.appendSilence(frames: 64_000)                                    // 4 s
+        try writer.close()
+
+        let plan = try #require(try SilenceCompactor.compact(source, to: destination))
+        let original = try readAll(source), compacted = try readAll(destination)
+        #expect(compacted.count == plan.compactedSampleCount)
+        #expect(compacted.count < original.count / 3)
+        for span in plan.spans {
+            #expect(Array(compacted[span.compactedStart..<span.compactedStart + span.length])
+                == Array(original[span.originalStart..<span.originalStart + span.length]))
+        }
+        // The tone starts ~3 s into the original file and 0.24 s into the compacted one.
+        #expect(abs(plan.originalTime(0.24) - 3.0) < 0.081)
+
+        let continuous = tempURL("continuous.wav"), unused = tempURL("unused.wav")
+        defer { [continuous, unused].forEach { try? FileManager.default.removeItem(at: $0) } }
+        let w2 = try CrashSafeWAVWriter(url: continuous, sampleRate: 16_000)
+        try w2.append(sine(frequency: 300, sampleRate: 16_000, seconds: 3))
+        try w2.close()
+        #expect(try SilenceCompactor.compact(continuous, to: unused) == nil)
+        #expect(!FileManager.default.fileExists(atPath: unused.path))
+    }
+
+    private func readAll(_ url: URL) throws -> [Float] {
+        let file = try AVAudioFile(forReading: url)
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)))
+        try file.read(into: buffer)
+        return Array(UnsafeBufferPointer(start: buffer.floatChannelData![0], count: Int(buffer.frameLength)))
+    }
+}

@@ -11,6 +11,7 @@ Principio: **local primero**. Nada sale del Mac salvo que lo autorices explícit
 | Huellas de voz (embeddings) | `voiceSample`, `meetingSpeaker` | **AES-GCM**; clave de 256 bits en el Llavero (solo este dispositivo) |
 | Preferencias | `UserDefaults` | Sin secretos |
 | Modelos | `~/Library/Application Support/FluidAudio/Models/` | Públicos (Hugging Face, FluidInference) |
+| Copia temporal de una pista sin silencios largos (solo durante su transcripción, TD-22) | `$TMPDIR/mi-asr-<uuid>.wav` | Directorio del usuario 0700; se borra al terminar la transcripción, también si falla |
 
 No se registran tokens, credenciales ni texto de transcripciones en los logs del sistema.
 

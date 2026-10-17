@@ -24,7 +24,8 @@ MeetingAudio             Captura y DSP. Depende de MeetingCore.
   │                      (AVAudioEngine), TrackRecorder, CaptureClock, catálogo HAL de procesos/dispositivos,
   │                      ConversationApps (agrupación de procesos por app + catálogo descriptivo),
   │                      CallMonitor/CallDetector (detección de llamadas de cualquier app)
-  ├─ Processing/         CrashSafeWAVWriter + WAVRepair, MonoResampler, Downmix, TimelineAligner, LevelMeter
+  ├─ Processing/         CrashSafeWAVWriter + WAVRepair, MonoResampler, Downmix, TimelineAligner, LevelMeter,
+  │                      SilenceCompactor
   └─ Import/             AudioImporter (copia WAV/M4A/MP3; extrae audio de MP4/MOV)
 
 MeetingSpeech            FluidAudio. Depende de MeetingCore y MeetingAudio.
@@ -96,6 +97,9 @@ modelPreparation ─► por pista: transcription (Ultra) ─► diarization (VBx
 Cada etapa es un `ProcessingJob` con tiempos reales, RTFx y memoria pico. `ProcessingCoordinator` ejecuta una
 reunión a la vez, con progreso real (FluidAudio) y cancelación cooperativa (`Task.checkCancellation`).
 
+- **Transcripción**: antes de Ultra, `SilenceCompactor` colapsa el silencio muerto (≥ 1 s por debajo de −66 dBFS) en
+  una copia temporal y las marcas vuelven a la línea de tiempo original; evita que frases cortas sin contexto salgan
+  en otro idioma (TD-22). El idioma no se puede forzar: `language:` de FluidAudio solo filtra por alfabeto.
 - **Micrófono**: si la diarización detecta ≤ 1 hablante con ≥ 4 s de voz (excluyendo eco), se atribuye al usuario
   local; si detecta varios, se crean "Local 1, Local 2…" y solo el reconocimiento o tú asignan identidades.
 - **Remoto/importado**: clusters "Hablante N" → reconocimiento → nombre solo si supera el umbral calibrado.

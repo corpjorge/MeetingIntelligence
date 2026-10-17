@@ -144,8 +144,54 @@ reunión en error. Ahora `DiarizationService` lo trata como resultado vacío (`s
 El resto de errores de diarización sigue siendo fatal. Los mensajes de FluidAudio se muestran en español
 (`ProcessingErrorText`). La regresión se prueba con el fixture `es_short_reply`.
 
+## TD-22 · Frases cortas en otro idioma: compactar el silencio muerto antes del ASR
+Caso real (llamada de Teams): la pista remota empezó con "(saludo con la primera palabra en francés)" (se dijo "Aló") y el micrófono
+(≈ 1–2 s de voz) salió como "(frase en inglés)".
+
+**Diagnóstico** (FluidAudio 0.17.7, código leído en `.build/checkouts/FluidAudio`):
+- `language:` solo filtra tokens por **alfabeto** (`TokenLanguageFilter`: latino, cirílico o griego). Ultra usa el
+  decodificador v3 (`TdtDecoderV3`) y no tiene prompt ni token de idioma. Español, inglés, francés, portugués,
+  alemán e italiano usan el mismo alfabeto, así que `es-CO` → `.spanish` no puede impedir la deriva. Medido: la salida
+  con `nil` y con `.spanish` es idéntica en 167 de 169 audios; en los otros 2, un resultado en cirílico pasó a
+  `<unk>`. La lista de bloqueo de palabras inglesas de FluidAudio solo se aplica al francés.
+- **El nivel no es la causa**: frases sintéticas a −40 dBFS aciertan igual o más que a −20 dBFS (26/40 frente a 25/40
+  con silencio largo; 32/40 frente a 29/40 aisladas). Normalizar el micrófono real (`dynaudnorm`, `speechnorm`,
+  ganancia + limitador) da el mismo inglés o texto vacío. No se normaliza el nivel.
+- **La causa es la falta de contexto dentro de la ventana de ~15 s**. FluidAudio documenta que una ventana que termina
+  en silencio muerto se decodifica de forma degenerada (`Documentation/ASR/LongTranscription.md`). La pista remota
+  tenía 12,7 s de silencio muerto (−75 dBFS) y "Aló" quedó al final de la primera ventana: el mismo audio desplazado
+  3 s, o recortado, da "Aló". La pista del micrófono era silencio digital (pausas) salvo 4,7 s.
+
+**Corrección**: `SilenceCompactor` (MeetingAudio) colapsa los tramos de ≥ 1 s de silencio muerto, es decir, tramas de
+80 ms con RMS < 0,0005 (−66 dBFS, el mismo umbral `speechRmsFloor` que usa FluidAudio, por debajo de cualquier voz real),
+y deja 240 ms a cada lado del sonido. `ParakeetUltraProvider` decodifica una copia temporal compactada con la API
+pública `transcribe(_:decoderState:language:)`. La copia se escribe por bloques (memoria constante), en el formato de
+origen (las muestras conservadas llegan intactas), y se borra al terminar. Las marcas de tiempo se devuelven en la línea
+de tiempo original, y un token nunca se estira sobre un hueco eliminado. Si no hay nada que compactar se usa el archivo
+original sin tocar (resultado idéntico al anterior). No cambia el modelo, el idioma ni el audio guardado; la
+diarización sigue leyendo el archivo original.
+
+| Conjunto (verificación local) | Antes | Después |
+|---|---|---|
+| 24 diálogos sintéticos (frases cortas entre silencios; una al final de la 1.ª ventana) | WER 10,7 %, 14/24 exactos | WER 1,9 %, 22/24 |
+| 80 frases aisladas en 22 s de silencio (4 voces × 10 frases × 2 niveles) | WER 26,6 %, 51/80 | WER 20,1 %, 62/80 |
+| Fixtures previos (`es_*`, `silence`) | — | mismo texto (solo `es_short_reply` y `silence` tienen silencio muerto) |
+| Reunión real, pista remota | "(saludo con la primera palabra en francés)…" | "Aló, ¿cómo está?…"; se pierde el "No," de "(respuesta corta)" (confianza 0,52) |
+| Reunión real, micrófono | "(frase en inglés)" | "(palabra en español)" (confianza 0,71; sin referencia, no se puede afirmar que sea correcto) |
+
+**Lo que no resuelve** (documentado, sin solución con la API actual):
+- Una frase muy corta, aislada y sin contexto puede seguir saliendo en otro idioma: después de compactar, 18 de 80
+  siguen sin coincidir (p. ej. "¿Ya está?" → "Wie er ist da?" o "Надежда.", "Listo." → "Visto?",
+  "No, todavía no." → "No, to Gabriano."). Es una propiedad del modelo multilingüe y no hay API para forzar el idioma.
+- Con `language: .spanish`, un resultado en otro alfabeto puede llegar como `<unk>` en vez de cirílico.
+- Marcar segmentos de baja confianza solo detecta una parte: con confianza media < 0,7 se marcan 24 de 59 errores
+  (y 4 de 196 aciertos); "(francés)" tenía 0,87–0,98. La UI aún no muestra `asrConfidence`.
+- Solo se compacta por debajo de −66 dBFS: el ruido de fondo de un micrófono abierto no se toca.
+- Mientras se transcribe hay una copia temporal del audio en el `$TMPDIR` del usuario (directorio 0700).
+
 ## Limitaciones comprobadas
 - ASR monocanal pierde palabras en habla **superpuesta** (fixture: 2 de 16 palabras).
+- Frases muy cortas y aisladas pueden transcribirse en otro idioma; el idioma no se puede forzar (TD-22).
 - Los fixtures son TTS: WER/DER medidos son una cota optimista.
 - Bluetooth en llamadas usa perfil de banda estrecha (se advierte en UI).
 - Apps en navegador: no se puede aislar una pestaña; se graba todo el audio del navegador.

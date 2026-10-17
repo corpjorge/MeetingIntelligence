@@ -1,5 +1,6 @@
 public import Foundation
 @preconcurrency import FluidAudio
+import MeetingAudio
 import MeetingCore
 import OSLog
 
@@ -123,9 +124,25 @@ public actor ParakeetUltraProvider: ASRProvider {
 
         var state = TdtDecoderState.make(decoderLayers: await manager.decoderLayerCount)
         let started = Date()
+
+        // Long dead-silence runs are collapsed before decoding (TD-22); times are mapped back below.
+        let compactedURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mi-asr-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: compactedURL) }
+        let compaction: SilenceCompaction?
+        do {
+            compaction = try SilenceCompactor.compact(fileURL, to: compactedURL)
+        } catch {
+            logger.error("Silence compaction skipped: \(error.localizedDescription)")
+            compaction = nil
+        }
+        if let compaction {
+            logger.info("Collapsed \(compaction.removedSeconds, format: .fixed(precision: 1)) s of dead silence before ASR")
+        }
+
         let result: ASRResult
         do {
-            result = try await manager.transcribe(fileURL, decoderState: &state,
+            result = try await manager.transcribe(compaction == nil ? fileURL : compactedURL, decoderState: &state,
                                                   language: Self.fluidLanguage(for: languageHint))
         } catch let error as CancellationError {
             throw error
@@ -134,18 +151,31 @@ public actor ParakeetUltraProvider: ASRProvider {
             throw ASRProviderError.failed(ProcessingErrorText.describe(error))
         }
         progress(1)
-        let words = WordGrouping.words(from: result.tokenTimings ?? [])
-        let confidences = (result.tokenTimings ?? []).map { Double($0.confidence) }
+        let tokens = Self.tokensOnFileTimeline(result.tokenTimings ?? [], compaction: compaction)
+        let confidences = tokens.map { Double($0.confidence) }
         return ASRTranscription(
             text: result.text,
-            words: words,
+            words: WordGrouping.words(from: tokens),
             meanConfidence: confidences.isEmpty ? nil : confidences.reduce(0, +) / Double(confidences.count),
-            audioDurationSeconds: result.duration,
+            audioDurationSeconds: compaction?.originalDurationSeconds ?? result.duration,
             processingSeconds: Date().timeIntervalSince(started))
     }
 
-    /// FluidAudio's language hint only filters tokens by *script*; Spanish and
-    /// English share the Latin script, so mixed es/en speech is unaffected.
+    /// Token timings mapped from the (possibly compacted) decoded audio back to the file's own timeline.
+    static func tokensOnFileTimeline(_ timings: [TokenTiming], compaction: SilenceCompaction?)
+        -> [(piece: String, start: Double, end: Double, confidence: Float)] {
+        timings.map { token in
+            let interval = compaction?.originalInterval(start: token.startTime, end: token.endTime)
+                ?? (start: token.startTime, end: token.endTime)
+            return (token.token, interval.start, interval.end, token.confidence)
+        }
+    }
+
+    /// FluidAudio's language hint only filters tokens by *script* (Latin /
+    /// Cyrillic / Greek); Ultra has no language prompt. Spanish, English,
+    /// French and Portuguese share the Latin script, so the hint cannot stop a
+    /// short Spanish utterance from drifting to another of them (TD-22); mixed
+    /// es/en speech is likewise unaffected.
     static func fluidLanguage(for tag: String) -> Language? {
         let primary = tag.split(separator: "-").first.map(String.init)?.lowercased() ?? tag
         return Language(rawValue: primary)

@@ -9,7 +9,7 @@ scripts/generate-fixtures.sh    # regenera fixtures sintéticos (necesario para 
 Framework: **Swift Testing** (XCTest no está disponible con Command Line Tools). Las pruebas de integración con
 modelos reales se ejecutan solo si Parakeet Ultra y la diarización ya están en caché (nunca descargan en CI).
 
-## Inventario (73 pruebas, todas pasan al 16-oct-2026)
+## Inventario (81 pruebas, todas pasan al 16-oct-2026)
 
 | Suite | Cubre |
 |---|---|
@@ -20,6 +20,7 @@ modelos reales se ejecutan solo si Parakeet Ultra y la diarización ya están en
 | IA | extracción JSON ruidosa (formato real de `agy`), verificación de citas, cita inventada → no confirmada, consentimiento remoto obligatorio, salida inválida registrada, chat con citas válidas, timeout de procesos, Ollama solo local |
 | Servidor MCP | `initialize` legacy, `server/discover` moderno, versión no soportada (-32022), errores JSON-RPC, acceso deshabilitado por defecto, herramientas con timestamps, validación de parámetros, política por reunión |
 | Escritura WAV / Alineación / Conversión | WAV legible, recuperación tras cierre, huecos, deriva, pausas, remuestreo 48→16 kHz (duración, tono, nivel), mezcla a mono |
+| Compactación de silencio antes del ASR | tramos muertos inicial/intermedio/final, pausas < 1 s y voz baja (−60 dBFS) intactas, última trama parcial, remapeo de tiempos (uniones, tokens recortados), muestras conservadas idénticas, archivo sin silencio → no se copia |
 | Detección de Teams | bundle IDs, helpers WebView2 dentro de Teams, rechazo de Outlook, catálogo HAL real |
 | Apps de conversación | agrupación por `.app` (Teams, Zoom, Chrome, WebKit, app desconocida), exclusión de esta app, orden por actividad, HAL real |
 | Detección de llamadas | inicio tras 3 s, prueba breve ignorada, dictado (solo micrófono) ignorado, cambio a AirPods sin falso fin, fin tras 25 s, app cerrada, apps ignoradas, FaceTime |
@@ -28,13 +29,14 @@ modelos reales se ejecutan solo si Parakeet Ultra y la diarización ya están en
 | Segmentación y alineación | tokens→palabras, pausas/oraciones, cambio de hablante, suavizado, solapamiento, eco |
 | Identidades manuales al reprocesar | re-mapeo por solapamiento, empate/poca evidencia → no se aplica, clusters divididos heredan, sin doble conteo, solo asignaciones manuales vigentes |
 | Reconocimiento | sin calibrar → solo sugerencia, calibrado acepta/rechaza, voz ambigua no aceptada, poca voz → sugerencia |
-| Integración (modelos reales) | importar→Ultra→diarización→persistencia (2 hablantes, sin nombres inventados, WER < 15 %, diccionario), silencio → vacío, español + términos en inglés, transcripción en vivo, reprocesar conserva identidades manuales |
+| Integración (modelos reales) | importar→Ultra→diarización→persistencia (2 hablantes, sin nombres inventados, WER < 15 %, diccionario), silencio → vacío, español + términos en inglés, frases cortas aisladas siguen en español con marcas en la línea de tiempo original (TD-22), transcripción en vivo, reprocesar conserva identidades manuales |
 
 ## Fixtures
 
 `Fixtures/synthetic/` — generados con voces del sistema (`say`), **sin personas ni reuniones reales**:
 un hablante con terminología técnica, dos hablantes alternos (+ RTTM), voces superpuestas, silencio, audio
-degradado (banda telefónica + ruido rosa). Los `.wav` no se versionan (`.gitignore`); se regeneran con el script.
+degradado (banda telefónica + ruido rosa), respuesta corta entre silencios y frases cortas aisladas en silencio digital
+(`es_isolated_greeting`, `es_isolated_word`). Los `.wav` no se versionan (`.gitignore`); se regeneran con el script.
 
 ## Métricas medidas (reproducibles con `mi evaluate`)
 
@@ -52,6 +54,23 @@ Equipo: MacBook Pro M5 Pro, macOS 27.0.1, FluidAudio 0.17.7, Parakeet Ultra (ANE
 WER: distancia de edición sobre palabras normalizadas (minúsculas, sin acentos ni puntuación). DER: por tramas de
 10 ms, sin collar, mapeo óptimo de etiquetas. Los fixtures TTS son más limpios que una reunión real: estas cifras son
 una **cota optimista**. No se declara precisión sobre reuniones reales sin mediciones con grabaciones autorizadas.
+
+## Frases cortas en otro idioma (TD-22)
+
+Medido el 16-oct-2026 (macOS 27.0.1, FluidAudio 0.17.7, Parakeet Ultra), con un arnés temporal que no se versiona:
+
+| Audio | Decodificado tal cual (antes) | Con compactación de silencio (ahora) |
+|---|---|---|
+| `es_isolated_greeting` (Eddy, "Aló, ¿cómo está?") | "Hello, como está?" | "Aló, ¿cómo está?" (inicio en 3,20 s) |
+| `es_isolated_word` (Paulina, "Vale.") | "Valeu, né?" | "Vale." (inicio en 3,36 s) |
+| 24 diálogos sintéticos (frases entre silencios largos) | WER 10,7 % | WER 1,9 % |
+| 80 frases aisladas en 22 s de silencio | WER 26,6 % (51/80 exactas) | WER 20,1 % (62/80) |
+| Fixtures previos | — | mismo texto |
+| Reunión real autorizada (solo verificación local) | remoto "(saludo con la primera palabra en francés)" · micrófono "(frase en inglés)" | remoto "Aló, ¿cómo está?" · micrófono "(palabra en español)" (sin referencia) |
+
+Pasar `language: .spanish` no cambia el texto en español frente a `nil` (167/169 idénticos; los otros 2 pasan de
+cirílico a `<unk>`); bajar el nivel a −40 dBFS no empeora el resultado. Pendiente: medir la tasa de deriva en
+grabaciones reales autorizadas con respuestas cortas (no basta un solo caso).
 
 ## Medir con grabaciones reales (autorizadas)
 

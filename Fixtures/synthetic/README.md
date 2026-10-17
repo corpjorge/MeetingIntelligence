@@ -11,6 +11,8 @@ They contain no real people and no real meeting content.
 | silence | 12 s of digital silence (expect empty transcript) |
 | es_noisy | Band-limited + pink noise (~telephone quality) |
 | es_short_reply | 1.2 s reply between 8 s of silence (words, but nothing to diarize) |
+| es_isolated_greeting | "Aló, ¿cómo está?" after 3.5 s and before 15 s of digital silence (language drift, TD-22) |
+| es_isolated_word | "Vale." isolated the same way (language drift, TD-22) |
 
 WER/DER on TTS audio is an optimistic bound. Real accuracy must be measured
 on authorized real recordings (see TESTING.md).

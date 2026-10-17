@@ -135,6 +135,26 @@ struct PipelineIntegrationTests {
         #expect(audit.contains { $0.method == .localUserTrack && ($0.note ?? "").contains("no encontró voz suficiente") })
     }
 
+    /// Regression (real Teams call: "Aló" → "(francés)"): a short utterance isolated in
+    /// digital silence drifted to another language when decoded as is ("Hello, como
+    /// está?", "Valeu, né?"). Dead silence is collapsed before ASR (TD-22) and the
+    /// timings must still land on the file's own timeline.
+    @Test(arguments: ["es_isolated_greeting", "es_isolated_word"])
+    func isolatedShortUtteranceStaysInSpanish(fixture: String) async throws {
+        let url = IntegrationEnvironment.fixtures.appendingPathComponent("\(fixture).wav")
+        try #require(FileManager.default.fileExists(atPath: url.path), "scripts/generate-fixtures.sh")
+        let result = try await ParakeetUltraProvider().transcribe(fileURL: url, languageHint: "es-CO") { _ in }
+        let reference = try String(contentsOf: url.deletingPathExtension().appendingPathExtension("txt"), encoding: .utf8)
+        #expect(Metrics.wordErrorRate(reference: reference, hypothesis: result.text).wer == 0, "\(result.text)")
+
+        // The utterance starts after 3.5 s of silence in the original file.
+        let file = try AVAudioFile(forReading: url)
+        #expect(abs(result.audioDurationSeconds - Double(file.length) / 16_000) < 0.01)
+        let first = try #require(result.words.first)
+        #expect(first.start > 3.0 && first.start < 4.1, "start \(first.start)")
+        #expect(result.words.allSatisfy { $0.end >= $0.start && $0.end - $0.start < 1.5 && $0.end < 6 })
+    }
+
     @Test func spanishWithEnglishTermsIsAccurate() async throws {
         let asr = ParakeetUltraProvider()
         let url = IntegrationEnvironment.fixtures.appendingPathComponent("es_single_speaker.wav")

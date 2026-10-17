@@ -86,6 +86,20 @@ ffmpeg -loglevel error -y -i "$WORK/pad.wav" -i "$WORK/short.wav" -i "$WORK/pad.
   -filter_complex "[0:a][1:a][2:a]concat=n=3:v=0:a=1" -ar 16000 -ac 1 -c:a pcm_s16le "$OUT/es_short_reply.wav"
 print -r -- "Sí, claro." > "$OUT/es_short_reply.txt"
 
+# 7-8. Short utterance isolated in digital silence (paused mic / silent system
+#      audio). Decoded as is, Parakeet drifts to another language ("Hello, como
+#      está?", "Valeu, né?"); collapsing dead silence before ASR fixes it (TD-22).
+silence 3.5 "$WORK/lead.wav"
+silence 15 "$WORK/tail.wav"
+isolated() { # voice text name
+  render "$1" "$2" "$WORK/isolated.wav"
+  ffmpeg -loglevel error -y -i "$WORK/lead.wav" -i "$WORK/isolated.wav" -i "$WORK/tail.wav" \
+    -filter_complex "[0:a][1:a][2:a]concat=n=3:v=0:a=1" -ar 16000 -ac 1 -c:a pcm_s16le "$OUT/$3.wav"
+  print -r -- "$2" > "$OUT/$3.txt"
+}
+isolated "$VOICE_B" "Aló, ¿cómo está?" es_isolated_greeting
+isolated "$VOICE_A" "Vale." es_isolated_word
+
 cat > "$OUT/README.md" <<'EOF'
 # Synthetic fixtures (FIXTURE — not real meetings)
 
@@ -100,6 +114,8 @@ They contain no real people and no real meeting content.
 | silence | 12 s of digital silence (expect empty transcript) |
 | es_noisy | Band-limited + pink noise (~telephone quality) |
 | es_short_reply | 1.2 s reply between 8 s of silence (words, but nothing to diarize) |
+| es_isolated_greeting | "Aló, ¿cómo está?" after 3.5 s and before 15 s of digital silence (language drift, TD-22) |
+| es_isolated_word | "Vale." isolated the same way (language drift, TD-22) |
 
 WER/DER on TTS audio is an optimistic bound. Real accuracy must be measured
 on authorized real recordings (see TESTING.md).
