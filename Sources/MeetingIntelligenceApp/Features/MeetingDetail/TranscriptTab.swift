@@ -26,26 +26,40 @@ struct TranscriptTab: View {
         return segments.last(where: { $0.startTime <= t + 0.05 })?.id
     }
 
-    var body: some View {
+    private var controls: some View {
         @Bindable var settings = env.settings
-        VStack(spacing: 0) {
-            HStack(spacing: DS.Space.m) {
-                HStack(spacing: DS.Space.s) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(DS.Color.textTertiary)
-                    TextField("Buscar en la transcripción", text: $query).textFieldStyle(.plain)
-                    if !query.isEmpty {
-                        Text("\(matches.count)").font(DS.Font.mono).foregroundStyle(DS.Color.textSecondary)
-                    }
+        return HStack(spacing: DS.Space.m) {
+            HStack(spacing: DS.Space.s) {
+                Image(systemName: "magnifyingglass").foregroundStyle(DS.Color.textTertiary)
+                TextField("Buscar en la transcripción", text: $query).textFieldStyle(.plain)
+                if !query.isEmpty {
+                    Text("\(matches.count)").font(DS.Font.mono).foregroundStyle(DS.Color.textSecondary)
                 }
-                .padding(.horizontal, DS.Space.m)
-                .frame(height: 30)
-                .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: DS.Radius.s))
-                .overlay(RoundedRectangle(cornerRadius: DS.Radius.s).strokeBorder(DS.Color.border))
-                .frame(maxWidth: 360)
-                Toggle("Seguir el audio", isOn: $followPlayback).toggleStyle(.checkbox).font(DS.Font.callout)
-                Toggle("Mostrar eco probable", isOn: $settings.showProbableEcho).toggleStyle(.checkbox).font(DS.Font.callout)
-                Spacer()
-                legend
+            }
+            .padding(.horizontal, DS.Space.m)
+            .frame(height: 30)
+            .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: DS.Radius.s))
+            .overlay(RoundedRectangle(cornerRadius: DS.Radius.s).strokeBorder(DS.Color.border))
+            .frame(minWidth: 240, maxWidth: 360)
+            Toggle("Seguir el audio", isOn: $followPlayback).toggleStyle(.checkbox).font(DS.Font.callout).fixedSize()
+            Toggle("Mostrar eco probable", isOn: $settings.showProbableEcho).toggleStyle(.checkbox).font(DS.Font.callout)
+                .fixedSize()
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Legend drops to its own line when the pills would squeeze the search field.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: DS.Space.m) {
+                    controls
+                    Spacer()
+                    legend.fixedSize()
+                }
+                VStack(alignment: .leading, spacing: DS.Space.s) {
+                    HStack(spacing: DS.Space.m) { controls; Spacer() }
+                    legend.fixedSize()
+                }
             }
             .padding(.horizontal, DS.Space.xxl)
             .padding(.vertical, DS.Space.m)
@@ -104,7 +118,12 @@ struct TranscriptTab: View {
         let edited = detail?.segments.filter { $0.editedText != nil }.count ?? 0
         let uncertain = detail?.segments.filter { $0.attribution == .uncertain }.count ?? 0
         let echo = detail?.segments.filter { $0.attribution == .probableEcho }.count ?? 0
+        let lowConfidence = segments.filter(\.isLowConfidence).count
         return HStack(spacing: DS.Space.s) {
+            if lowConfidence > 0 {
+                StatusPill(text: "\(lowConfidence) por revisar", tone: .warning, systemImage: "exclamationmark.triangle")
+                    .help("Fragmentos en los que el reconocimiento de voz tuvo poca confianza. Edítalos para confirmarlos.")
+            }
             if edited > 0 { StatusPill(text: "\(edited) editados", tone: .accent, systemImage: "pencil") }
             if uncertain > 0 { StatusPill(text: "\(uncertain) atribución incierta", tone: .warning, systemImage: "questionmark") }
             if echo > 0 { StatusPill(text: "\(echo) eco probable", tone: .neutral, systemImage: "speaker.wave.2") }
@@ -129,7 +148,7 @@ struct TranscriptTab: View {
     }
 }
 
-private struct SegmentRow: View {
+struct SegmentRow: View {
     let segment: TranscriptSegment
     let speakerName: String
     let colorIndex: Int?
@@ -215,6 +234,10 @@ private struct SegmentRow: View {
             StatusPill(text: "reconocido", tone: .success)
                 .help(segment.speakerConfidence.map { "Similitud de voz \(String(format: "%.2f", $0))" } ?? "")
         default: EmptyView()
+        }
+        if segment.isLowConfidence, let confidence = segment.asrConfidence {
+            StatusPill(text: "revisar", tone: .warning, systemImage: "exclamationmark.triangle")
+                .help("Confianza del reconocimiento \(String(format: "%.2f", confidence)): puede contener errores o haber salido en otro idioma")
         }
         if segment.editedText != nil {
             StatusPill(text: "editado", tone: .accent, systemImage: "pencil")

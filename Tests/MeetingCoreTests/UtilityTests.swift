@@ -30,6 +30,20 @@ struct UtilityTests {
         // Canonical already correct → untouched.
         #expect(corrector.apply(to: "Katty y Kubernetes") == nil)
     }
+
+    @Test func lowConfidenceFlagClearsOnceReviewed() {
+        func segment(_ confidence: Double?) -> TranscriptSegment {
+            TranscriptSegment(transcriptId: "t", meetingId: "m", trackId: "k", source: .localMicrophone, orderIndex: 0,
+                              startTime: 0, endTime: 1, asrText: "Wie er ist da?", asrConfidence: confidence)
+        }
+        #expect(segment(0.52).isLowConfidence)
+        #expect(!segment(0.7).isLowConfidence)
+        #expect(!segment(0.91).isLowConfidence)
+        #expect(!segment(nil).isLowConfidence)
+        var edited = segment(0.52)
+        edited.editedText = "¿Ya está?"
+        #expect(!edited.isLowConfidence)
+    }
 }
 
 @Suite("Cifrado biométrico")

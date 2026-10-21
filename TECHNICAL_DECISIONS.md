@@ -192,7 +192,9 @@ diarización sigue leyendo el archivo original.
   "No, todavía no." → "No, to Gabriano."). Es una propiedad del modelo multilingüe y no hay API para forzar el idioma.
 - Con `language: .spanish`, un resultado en otro alfabeto puede llegar como `<unk>` en vez de cirílico.
 - Marcar segmentos de baja confianza solo detecta una parte: con confianza media < 0,7 se marcan 24 de 59 errores
-  (y 4 de 196 aciertos); "(francés)" tenía 0,87–0,98. La UI aún no muestra `asrConfidence`.
+  (y 4 de 196 aciertos); "(francés)" tenía 0,87–0,98. La transcripción marca esos fragmentos con "revisar" y la
+  leyenda los cuenta (`TranscriptSegment.isLowConfidence`; la marca desaparece al editar el texto). Una frase sin marca
+  no está garantizada como correcta.
 - Solo se compacta por debajo de −66 dBFS: el ruido de fondo de un micrófono abierto no se toca.
 - Mientras se transcribe hay una copia temporal del audio en el `$TMPDIR` del usuario (directorio 0700).
 

@@ -89,6 +89,8 @@ grabaciones reales autorizadas con respuestas cortas (no basta un solo caso).
   silenciar/activar en Teams no cambiaron ninguna señal legible; Teams mantuvo el micrófono abierto. Por eso el aviso
   es un recordatorio estático. El componente se verifica con `MI_SNAPSHOT_DIR` (`recording-mute-reminder-light/dark.png`)
   porque la vista de grabación en vivo necesita una captura real.
+- Baja confianza del ASR: `MI_SNAPSHOT_MEETING=<id>` elige la reunión de las capturas; la primera fila marcada se
+  renderiza aparte (`transcript-low-confidence-light/dark.png`) porque suele quedar fuera de la primera pantalla.
 - API de Teams para apps de terceros (TD-23): no aparece en Configuración › Privacidad de la cuenta de prueba, que es
   de una organización, ni buscando "API" o "terceros". Una sonda pasiva no logró conectar al 127.0.0.1:8124 en 318 s.
 

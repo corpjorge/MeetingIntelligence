@@ -37,11 +37,24 @@ enum SnapshotDriver {
                         CallMuteReminderBanner(appName: nil, onPauseMicrophone: {}, onDismiss: {})
                     }
                 }
-                if let first = try? env.database.meetingRows().first(where: { $0.meeting.status == .ready }) {
+                // MI_SNAPSHOT_MEETING picks a specific meeting id; default is the first ready one.
+                let wanted = ProcessInfo.processInfo.environment["MI_SNAPSHOT_MEETING"]
+                if let first = try? env.database.meetingRows().first(where: {
+                    $0.meeting.status == .ready && (wanted == nil || $0.id == wanted)
+                }) {
                     for tab in MeetingDetailTab.allCases {
                         router.openMeeting(first.id, tab: tab)
                         try? await Task.sleep(for: .seconds(1.5))
                         capture("meeting-\(tab.rawValue)-\(suffix)", in: dir)
+                    }
+                    // Low-confidence rows are usually below the fold; render the first one standalone.
+                    if let detail = try? env.database.meetingDetail(id: first.id),
+                       let flagged = detail.segments.first(where: \.isLowConfidence) {
+                        captureComponent("transcript-low-confidence-\(suffix)", in: dir) {
+                            SegmentRow(segment: flagged, speakerName: detail.speakerName(for: flagged), colorIndex: nil,
+                                       showSpeaker: true, isActive: false, isMatch: false, query: "", isEditing: false,
+                                       onSeek: {}, onEdit: {}, onSave: { _ in }, onCancel: {}, onRevert: {})
+                        }
                     }
                 }
             }

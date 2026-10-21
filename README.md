@@ -32,6 +32,7 @@ apps y **local por defecto**.
 | Aviso "silenciado en la llamada ≠ pausado aquí" | ⚠️ Recordatorio estático | El silencio de Teams no es legible con APIs públicas (sonda en llamada real, TD-23); la API de terceros de Teams está bloqueada por la organización en la cuenta de prueba; no aplica a Zoom/Meet; **pendiente** verlo en una grabación real |
 | Esfuerzo de IA por proveedor | ✅ | Flags verificados (`--effort` Claude/agy, `model_reasoning_effort` Codex, `think` Ollama por modelo) y probados |
 | Edición de transcripción con historial | ✅ | Pruebas de persistencia |
+| Marca de fragmentos de baja confianza del ASR (< 0,7, "revisar") | ✅ | Prueba de la regla; capturas claro/oscuro con una reunión real (solo verificación local); detecta solo ~40 % de los errores (TD-22) |
 | Identidades manuales conservadas al reprocesar | ✅ | Integración real: asignar → reprocesar → identidad conservada |
 | Diccionario personalizado | ✅ | Pruebas + integración |
 | Análisis IA con evidencia (Codex) | ✅ | Ejecución real con Codex CLI sobre reunión fixture |
@@ -40,7 +41,7 @@ apps y **local por defecto**.
 | Servidor MCP (stdio, 2026-07-28 + 2025-11-25) | ✅ | Prueba stdio con el binario empaquetado |
 | Exportación TXT/MD/JSON/SRT/PDF | ✅ | Pruebas |
 
-83 pruebas automatizadas pasan (`scripts/test.sh`), incluidas 7 de integración con los modelos reales.
+88 pruebas automatizadas pasan (`scripts/test.sh`), incluidas 7 de integración con los modelos reales.
 
 ## Requisitos
 

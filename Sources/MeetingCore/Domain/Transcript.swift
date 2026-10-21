@@ -172,6 +172,15 @@ public struct TranscriptSegment: Codable, Sendable, Identifiable, Hashable {
     }
 
     public var duration: Double { max(0, endTime - startTime) }
+
+    /// Mean ASR confidence below which a segment is flagged for review (TD-22: catches 24/59 errors, 4/196 false alarms).
+    public static let lowConfidenceThreshold = 0.7
+
+    /// True when the ASR was unsure and the user has not reviewed the text yet.
+    public var isLowConfidence: Bool {
+        guard editedText == nil, let asrConfidence else { return false }
+        return asrConfidence < Self.lowConfidenceThreshold
+    }
 }
 
 /// Provenance of a piece of transcript text, kept distinct from AI-generated content.
