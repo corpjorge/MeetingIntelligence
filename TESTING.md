@@ -28,7 +28,7 @@ modelos reales se ejecutan solo si Parakeet Ultra y la diarización ya están en
 | Recordatorio de silencio en la llamada | solo con micrófono + audio de una app/sistema, oculto en pausa o descartado, texto con la app y ⌃⌘M |
 | Migración v2 y esfuerzo de IA | columnas/tabla nuevas, app de origen, flags de esfuerzo por CLI, sin flags que omitan permisos, esfuerzo registrado en el análisis |
 | Segmentación y alineación | tokens→palabras, pausas/oraciones, cambio de hablante, suavizado, solapamiento, eco |
-| Identidades manuales al reprocesar | re-mapeo por solapamiento, empate/poca evidencia → no se aplica, clusters divididos heredan, sin doble conteo, solo asignaciones manuales vigentes |
+| Identidades manuales al reprocesar | re-mapeo por solapamiento, empate/poca evidencia → no se aplica, mayoría mutua (división desigual: solo la parte mayoritaria hereda; a partes iguales: ninguna; persona absorbida por un cluster con nombre → desconocida), hablantes con el mismo nombre lo conservan, sin doble conteo, solo asignaciones manuales vigentes (también tras deshacer una fusión) |
 | Reconocimiento | sin calibrar → solo sugerencia, calibrado acepta/rechaza, voz ambigua no aceptada, poca voz → sugerencia |
 | Integración (modelos reales) | importar→Ultra→diarización→persistencia (2 hablantes, sin nombres inventados, WER < 15 %, diccionario), silencio → vacío, español + términos en inglés, frases cortas aisladas siguen en español con marcas en la línea de tiempo original (TD-22), transcripción en vivo, reprocesar conserva identidades manuales |
 

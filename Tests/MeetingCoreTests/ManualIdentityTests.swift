@@ -35,14 +35,55 @@ struct ManualIdentityTests {
         #expect(result.isEmpty)
     }
 
-    @Test func splitClustersBothInheritTheIdentity() {
+    @Test func unevenSplitOnlyMajorityPartInherits() {
         let previous = [ManualIdentityRemapper.PreviousIdentity(participantId: "katty", spans: [Span(start: 0, end: 20)])]
         let result = remapper.remap(previous: previous, newClusters: [
-            "part-1": [Span(start: 0, end: 9)],
+            "major": [Span(start: 0, end: 14)], // 70 % of Katty's previous speech
+            "minor": [Span(start: 15, end: 20)], // 25 % → may be someone else
+        ])
+        #expect(result["major"]?.participantId == "katty")
+        #expect(result["minor"] == nil)
+    }
+
+    @Test func evenSplitIsAmbiguous() {
+        let previous = [ManualIdentityRemapper.PreviousIdentity(participantId: "katty", spans: [Span(start: 0, end: 20)])]
+        let result = remapper.remap(previous: previous, newClusters: [
+            "part-1": [Span(start: 0, end: 10)],
             "part-2": [Span(start: 10, end: 20)],
         ])
-        #expect(result["part-1"]?.participantId == "katty")
-        #expect(result["part-2"]?.participantId == "katty")
+        #expect(result.isEmpty)
+    }
+
+    @Test func personAbsorbedByANamedClusterStaysUnknown() {
+        // The old "Katty" cluster also held Juan (10–14 s); re-processing separates him.
+        let previous = [
+            ManualIdentityRemapper.PreviousIdentity(participantId: "katty", spans: [Span(start: 0, end: 10), Span(start: 10, end: 14)]),
+            ManualIdentityRemapper.PreviousIdentity(participantId: "carlos", spans: [Span(start: 20, end: 30)]),
+        ]
+        let result = remapper.remap(previous: previous, newClusters: [
+            "katty": [Span(start: 0, end: 10)],
+            "juan": [Span(start: 10, end: 14)],
+            "carlos": [Span(start: 20, end: 30)],
+        ])
+        #expect(result["katty"]?.participantId == "katty")
+        #expect(result["juan"] == nil) // never "Katty"
+        #expect(result["carlos"]?.participantId == "carlos")
+    }
+
+    @Test func speakersNamedAlikeKeepTheirName() {
+        // The user named two over-split clusters as the same person.
+        let previous = [
+            ManualIdentityRemapper.PreviousIdentity(participantId: "katty", spans: [Span(start: 0, end: 10)]),
+            ManualIdentityRemapper.PreviousIdentity(participantId: "katty", spans: [Span(start: 20, end: 30)]),
+        ]
+        let stillSplit = remapper.remap(previous: previous, newClusters: [
+            "x": [Span(start: 0, end: 10)],
+            "y": [Span(start: 20, end: 30)],
+        ])
+        #expect(stillSplit["x"]?.participantId == "katty")
+        #expect(stillSplit["y"]?.participantId == "katty")
+        let joined = remapper.remap(previous: previous, newClusters: ["z": [Span(start: 0, end: 10), Span(start: 20, end: 30)]])
+        #expect(joined["z"]?.participantId == "katty")
     }
 
     @Test func overlappingSpansAreNotDoubleCounted() {
@@ -74,5 +115,29 @@ struct ManualIdentityTests {
         let captured = try db.manualIdentities(meetingId: meeting.id, source: .imported)
         #expect(captured.map(\.participantId) == [katty.id]) // automatic recognition is not carried over
         #expect(captured.first?.spans == [ManualIdentityRemapper.Span(start: 0, end: 4)])
+    }
+
+    @Test func manualIdentitySurvivesUndoneMerge() throws {
+        let db = try AppDatabase.inMemory()
+        let (meeting, _, _, segments) = try Fixture.meeting(db, texts: [("hola", 0, 4), ("adiós", 5, 9)])
+        let carlos = Participant(displayName: "FIXTURE Carlos")
+        try db.save(participant: carlos)
+        let first = MeetingSpeaker(meetingId: meeting.id, source: .imported, clusterKey: "S1", ordinal: 1, totalSpeechSeconds: 4)
+        let second = MeetingSpeaker(meetingId: meeting.id, source: .imported, clusterKey: "S2", ordinal: 2, totalSpeechSeconds: 4)
+        try db.writer.write { db in
+            try first.insert(db)
+            try second.insert(db)
+            try db.execute(sql: "UPDATE transcriptSegment SET meetingSpeakerId = ?, diarizedSpeakerId = ? WHERE id = ?",
+                           arguments: [first.id, first.id, segments[0].id])
+            try db.execute(sql: "UPDATE transcriptSegment SET meetingSpeakerId = ?, diarizedSpeakerId = ? WHERE id = ?",
+                           arguments: [second.id, second.id, segments[1].id])
+        }
+        try db.assignSpeaker(meetingSpeakerId: second.id, participantId: carlos.id)
+        try db.mergeSpeakers(second.id, into: first.id) // mistaken merge…
+        try db.splitSpeaker(second.id)                  // …undone: a `.split` row is now the latest
+
+        let captured = try db.manualIdentities(meetingId: meeting.id, source: .imported)
+        #expect(captured.map(\.participantId) == [carlos.id])
+        #expect(captured.first?.spans == [ManualIdentityRemapper.Span(start: 5, end: 9)])
     }
 }

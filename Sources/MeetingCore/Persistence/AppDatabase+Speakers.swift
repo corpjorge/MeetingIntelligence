@@ -42,8 +42,12 @@ extension AppDatabase {
                 .fetchAll(db)
             return try speakers.compactMap { speaker -> ManualIdentityRemapper.PreviousIdentity? in
                 guard let participantId = speaker.participantId else { return nil }
+                // Merge/split rows are bookkeeping that copy the current identity; its
+                // origin is the decision recorded before them.
+                let bookkeeping = [AssignmentMethod.merge.rawValue, AssignmentMethod.split.rawValue]
                 let latest = try SpeakerAssignment
                     .filter(Column("meetingSpeakerId") == speaker.id && Column("supersededAt") == nil)
+                    .filter(!bookkeeping.contains(Column("method")))
                     .order(Column("createdAt").desc)
                     .fetchOne(db)
                 guard latest?.method == .manual, latest?.participantId == participantId else { return nil }

@@ -105,7 +105,7 @@ reunión a la vez, con progreso real (FluidAudio) y cancelación cooperativa (`T
   local; si detecta varios, se crean "Local 1, Local 2…" y solo el reconocimiento o tú asignan identidades.
 - **Remoto/importado**: clusters "Hablante N" → reconocimiento → nombre solo si supera el umbral calibrado.
 - **Re-procesar**: las identidades manuales previas se re-aplican a los clusters nuevos por solapamiento temporal
-  (`ManualIdentityRemapper`, TD-16); lo ambiguo queda como desconocido.
+  con mayoría mutua (`ManualIdentityRemapper`, TD-16); lo ambiguo queda como desconocido.
 
 ## Concurrencia
 

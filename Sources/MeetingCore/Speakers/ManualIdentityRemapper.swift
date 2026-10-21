@@ -7,11 +7,17 @@ import Foundation
 /// inherits a previous manual identity only when the evidence is unambiguous:
 ///
 /// * at least `minimumShare` of the new cluster's speech falls inside the
-///   speech of previous speakers manually assigned to that same participant, and
-/// * that participant strictly beats every other participant's share.
+///   speech of previous speakers manually assigned to that same participant,
+/// * that participant strictly beats every other participant's share, and
+/// * the new cluster holds the strict majority of the speech of at least one
+///   of those previous speakers (mutual majority).
 ///
-/// Several new clusters may inherit the same identity (the diarizer split one
-/// person in two). Anything less clear stays "Participante desconocido".
+/// Mutual majority makes the mapping one-to-one per previous speaker: a
+/// minority fragment never inherits the name, because it may be another person
+/// the old cluster had absorbed. An even split leaves both parts unknown.
+/// Previous speakers the user named alike map to their own new clusters, and
+/// a new cluster joining them inherits the shared name. Anything less clear
+/// stays "Participante desconocido".
 public struct ManualIdentityRemapper: Sendable {
     public struct Span: Sendable, Hashable {
         public var start: Double
@@ -53,15 +59,26 @@ public struct ManualIdentityRemapper: Sendable {
             .mapValues { $0.flatMap(\.spans) }
         var result: [String: Match] = [:]
         for (clusterId, spans) in newClusters {
-            let total = spans.reduce(0) { $0 + $1.duration }
+            let total = Self.duration(spans)
             guard total > 0 else { continue }
             let shares = byParticipant.map { pid, old in (pid, Self.overlap(spans, old) / total) }
                 .sorted { $0.1 > $1.1 }
             guard let best = shares.first, best.1 >= minimumShare else { continue }
             if shares.count > 1, shares[1].1 >= best.1 { continue } // tie → ambiguous
+            let holdsMajority = previous.contains { old in
+                guard old.participantId == best.0 else { return false }
+                let oldTotal = Self.duration(old.spans)
+                return oldTotal > 0 && Self.overlap(spans, old.spans) / oldTotal > 0.5
+            }
+            guard holdsMajority else { continue } // minority fragment or even split → ambiguous
             result[clusterId] = Match(participantId: best.0, share: best.1)
         }
         return result
+    }
+
+    /// Speech time of a set of spans, shared time counted once.
+    static func duration(_ spans: [Span]) -> Double {
+        merge(spans).reduce(0) { $0 + $1.duration }
     }
 
     /// Total intersection between two sets of spans (each set may overlap itself;

@@ -103,9 +103,16 @@ contenido se verifica estructuralmente (6 filas presentes en el `NSOutlineView`)
 ## TD-16 · Identidades manuales al re-procesar
 Re-procesar reemplaza los clusters de diarización. Antes de reemplazarlos se capturan las identidades **manuales**
 vigentes (no las automáticas, que el reconocimiento recalcula) con los tramos de voz de cada hablante. Un cluster
-nuevo hereda una identidad solo si ≥ 50 % de su voz cae dentro de los tramos de ese participante y ningún otro
-participante empata; varios clusters pueden heredar la misma identidad (diarizador que divide a una persona). Cada
-re-aplicación queda auditada en `speakerAssignment` ("Re-aplicada tras reprocesar"). Verificado con los modelos reales.
+nuevo hereda una identidad solo con **mayoría mutua**: ≥ 50 % de su voz cae dentro de los tramos de ese participante
+(sin empate con otro) **y** el cluster nuevo se queda con más del 50 % de la voz de al menos un hablante previo con esa
+identidad. Así el mapeo es uno a uno por hablante previo: un fragmento minoritario nunca hereda el nombre, porque
+puede ser otra persona que el cluster antiguo había absorbido; una división a partes iguales deja ambas partes como
+desconocidas. Prioridad: fiabilidad sobre comodidad (mejor "desconocido" que un nombre equivocado); el fragmento sin
+nombre aún puede identificarse por reconocimiento calibrado o a mano. Hablantes previos con el mismo nombre (cluster
+dividido que el usuario ya unificó) conservan el nombre en sus clusters nuevos. Cada re-aplicación queda auditada en
+`speakerAssignment` ("Re-aplicada tras reprocesar"). Verificado con los modelos reales.
+Las filas `merge`/`split` (contabilidad al fusionar o deshacer una fusión) no ocultan el origen manual: se ignoran al
+decidir si la identidad vigente es manual.
 
 ## TD-17 · Cualquier app de videollamada, sin lista cerrada
 La fuente remota es una **app arbitraria**: sus procesos se agrupan por el `.app` más externo que contiene cada
