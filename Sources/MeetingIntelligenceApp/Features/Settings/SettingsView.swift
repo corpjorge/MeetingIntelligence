@@ -167,6 +167,9 @@ struct TranscriptionSettings: View {
                             .buttonStyle(.borderless)
                     }
                 }
+                Toggle("Refuerzo acústico de los términos", isOn: $settings.acousticVocabularyBoost)
+                Text("Compara el audio con cada término del diccionario usando Parakeet CTC 110M (FluidAudio, local; se descarga una vez, unos 98 MB). En pruebas con voces sintéticas en español acertó 39 de 48 nombres frente a 20 sin refuerzo, sin cambiar frases que no los contenían. Nunca reemplaza una palabra común del idioma por un término (\"firma\" no se convierte en \"Figma\"), por lo que algunos términos parecidos a palabras comunes no se corrigen.")
+                    .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
                 Text("Los cambios se aplican al procesar o reprocesar reuniones.").font(DS.Font.caption).foregroundStyle(DS.Color.textTertiary)
             }
         }
@@ -187,6 +190,7 @@ struct ModelSettings: View {
     @Environment(AppEnvironment.self) private var env
 
     var body: some View {
+        @Bindable var settings = env.settings
         SettingsPage {
             Section("Transcripción") {
                 LabeledContent("Motor", value: env.models.asrDescriptor.displayName)
@@ -204,12 +208,38 @@ struct ModelSettings: View {
                 LabeledContent("Modelo", value: "pyannote community segmentación + WeSpeaker + VBx (FluidAudio)")
                 LabeledContent("Estado", value: describe(env.models.diarizationStatus))
             }
+            Section("Búsqueda semántica (chat)") {
+                Toggle("Buscar también por significado", isOn: $settings.semanticSearch)
+                    .onChange(of: settings.semanticSearch) { env.semantic.refresh() }
+                Text("Encuentra fragmentos que dicen lo mismo con otras palabras (\"problemas de conexión\" → \"se me cayó el internet\"). Usa multilingual-e5-small en este Mac: se descarga una vez de Hugging Face (~470 MB) y el texto de las reuniones nunca sale del equipo. En pruebas sintéticas encontró la respuesta entre los 3 primeros resultados en 13 de 16 preguntas, frente a 5 solo con palabras.")
+                    .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
+                LabeledContent("Estado", value: describe(env.semantic.status))
+                if case .ready = env.semantic.status {
+                    Button("Borrar el índice semántico") { env.semantic.clearIndex() }
+                        .help("Elimina los vectores guardados; se vuelven a calcular si la búsqueda sigue activa.")
+                }
+            }
+            Section("Refuerzo del diccionario") {
+                LabeledContent("Modelo", value: "Parakeet CTC 110M (FluidAudio)")
+                LabeledContent("Estado", value: env.booster.isModelCached() ? "Listo (en caché local)"
+                                : "No descargado: se descarga al procesar con el refuerzo activado")
+            }
             Section {
                 Button("Descargar / verificar modelos") { Task { await env.models.prepareAll() } }
                     .disabled({ if case .preparing = env.models.asrStatus { return true } else { return false } }())
             }
         }
         .task { await env.models.refresh() }
+    }
+
+    private func describe(_ status: SemanticIndexController.Status) -> String {
+        switch status {
+        case .disabled: "Desactivada"
+        case .preparing(let text): text
+        case .indexing(let c): "Indexando \(c.indexed) de \(c.total) fragmentos"
+        case .ready(let c): "Lista · \(c.indexed) de \(c.total) fragmentos indexados"
+        case .failed(let message): "Error: \(message)"
+        }
     }
 
     private func describe(_ status: ModelStatusModel.Status) -> String {

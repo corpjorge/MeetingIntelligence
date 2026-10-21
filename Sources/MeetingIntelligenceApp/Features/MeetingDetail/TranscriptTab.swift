@@ -88,6 +88,7 @@ struct TranscriptTab: View {
                                     onSave: { text in
                                         try? env.database.editSegmentText(segmentId: segment.id, newText: text)
                                         editingId = nil
+                                        env.semantic.schedule()
                                     },
                                     onCancel: { editingId = nil },
                                     onRevert: { try? env.database.revertSegmentText(segmentId: segment.id) })

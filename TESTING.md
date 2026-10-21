@@ -9,7 +9,7 @@ scripts/generate-fixtures.sh    # regenera fixtures sintéticos (necesario para 
 Framework: **Swift Testing** (XCTest no está disponible con Command Line Tools). Las pruebas de integración con
 modelos reales se ejecutan solo si Parakeet Ultra y la diarización ya están en caché (nunca descargan en CI).
 
-## Inventario (83 pruebas, todas pasan al 17-oct-2026)
+## Inventario (97 pruebas, todas pasan al 21-oct-2026; 3 más bajo demanda)
 
 | Suite | Cubre |
 |---|---|
@@ -30,6 +30,10 @@ modelos reales se ejecutan solo si Parakeet Ultra y la diarización ya están en
 | Segmentación y alineación | tokens→palabras, pausas/oraciones, cambio de hablante, suavizado, solapamiento, eco |
 | Identidades manuales al reprocesar | re-mapeo por solapamiento, empate/poca evidencia → no se aplica, mayoría mutua (división desigual: solo la parte mayoritaria hereda; a partes iguales: ninguna; persona absorbida por un cluster con nombre → desconocida), hablantes con el mismo nombre lo conservan, sin doble conteo, solo asignaciones manuales vigentes (también tras deshacer una fusión) |
 | Reconocimiento | sin calibrar → solo sugerencia, calibrado acepta/rechaza, voz ambigua no aceptada, poca voz → sugerencia |
+| Historial del chat | hilos separados, respuesta nula (búsqueda fallida), borrar historial, borrar una reunión elimina su hilo y los mensajes que la citan |
+| Búsqueda semántica: índice y fusión | vectores ida y vuelta, coseno, pendientes por modelo, reindexado tras editar, cascada al borrar, alcance y umbral, fusión que no pierde resultados de FTS5 |
+| Refuerzo acústico: reglas | palabra común del idioma nunca reemplazada, varias palabras sí, puntuación conservada, solo el tramo coincidente |
+| Tokens partidos por la compactación | "▁¿" y "." se pegan a su palabra; piezas con letras y palabras nuevas no se mueven |
 | Integración (modelos reales) | importar→Ultra→diarización→persistencia (2 hablantes, sin nombres inventados, WER < 15 %, diccionario), silencio → vacío, español + términos en inglés, frases cortas aisladas siguen en español con marcas en la línea de tiempo original (TD-22), transcripción en vivo, reprocesar conserva identidades manuales |
 
 ## Fixtures
@@ -72,6 +76,21 @@ Medido el 16-oct-2026 (macOS 27.0.1, FluidAudio 0.17.7, Parakeet Ultra), con un 
 Pasar `language: .spanish` no cambia el texto en español frente a `nil` (167/169 idénticos; los otros 2 pasan de
 cirílico a `<unk>`); bajar el nivel a −40 dBFS no empeora el resultado. Pendiente: medir la tasa de deriva en
 grabaciones reales autorizadas con respuestas cortas (no basta un solo caso).
+Seguimiento (21-oct-2026): redecodificación con contexto y arreglo de palabras estiradas sobre huecos, TD-26.
+
+## Mediciones bajo demanda (TD-24, TD-25, TD-26)
+
+Los datos son voces sintéticas (`say`) generadas en una carpeta temporal; no se versionan.
+
+```bash
+MI_BOOST_DATA=<dir con data/*.wav|txt y terms.txt> scripts/test.sh --filter VocabularyBoostExperiment   # → report-*.txt
+MI_LANG_DATA=<dir con data/*.wav|txt y ctx/v1..4.wav> scripts/test.sh --filter LanguageDriftExperiment  # → report.txt
+MI_E5_MODELS=<carpeta con models/intfloat/multilingual-e5-small> scripts/test.sh --filter SemanticEngineIntegrationTests
+mi process <id> --boost-vocabulary        # refuerzo en el pipeline real
+mi semantic-index && mi ask "<pregunta>" --semantic
+```
+
+Resultados y conjuntos en `TECHNICAL_DECISIONS.md` (TD-24, TD-25, TD-26).
 
 ## Medir con grabaciones reales (autorizadas)
 
@@ -89,6 +108,7 @@ grabaciones reales autorizadas con respuestas cortas (no basta un solo caso).
   silenciar/activar en Teams no cambiaron ninguna señal legible; Teams mantuvo el micrófono abierto. Por eso el aviso
   es un recordatorio estático. El componente se verifica con `MI_SNAPSHOT_DIR` (`recording-mute-reminder-light/dark.png`)
   porque la vista de grabación en vivo necesita una captura real.
+- Ajustes: el modo de capturas renderiza aparte las páginas Transcripción y Modelos (`settings-*-light/dark.png`).
 - Baja confianza del ASR: `MI_SNAPSHOT_MEETING=<id>` elige la reunión de las capturas; la primera fila marcada se
   renderiza aparte (`transcript-low-confidence-light/dark.png`) porque suele quedar fuera de la primera pantalla.
 - API de Teams para apps de terceros (TD-23): no aparece en Configuración › Privacidad de la cuenta de prueba, que es

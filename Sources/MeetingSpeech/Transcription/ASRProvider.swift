@@ -20,6 +20,16 @@ public enum ModelPreparationPhase: Sendable, Equatable {
     case ready
 }
 
+/// One SentencePiece token as decoded (piece keeps its `▁` word marker).
+public struct ASRToken: Sendable, Hashable {
+    public var piece: String
+    public var tokenId: Int
+    /// Seconds on the file's own timeline.
+    public var start: Double
+    public var end: Double
+    public var confidence: Float
+}
+
 /// Result of one ASR pass over one file.
 public struct ASRTranscription: Sendable {
     public var text: String
@@ -28,6 +38,8 @@ public struct ASRTranscription: Sendable {
     public var meanConfidence: Double?
     public var audioDurationSeconds: Double
     public var processingSeconds: Double
+    /// Raw tokens on the file's timeline (input of acoustic vocabulary rescoring).
+    public var tokens: [ASRToken] = []
 }
 
 /// Contract implemented by every speech-to-text engine. The primary engine is

@@ -9,7 +9,7 @@ MeetingCore              Dominio, persistencia (GRDB/SQLite WAL + FTS5), búsque
   │                      VoiceSample, MeetingSpeaker, SpeakerAssignment, AIAnalysis, AnalysisItem,
   │                      AIProviderConfiguration, ProcessingJob, CorrectionEvent, VocabularyTerm
   ├─ Persistence/        AppDatabase, migraciones, repositorios (biblioteca, hablantes)
-  ├─ Search/             SearchService (FTS5, BM25, prefijos, plurales)
+  ├─ Search/             SearchService (FTS5, BM25, prefijos, plurales) + búsqueda por coseno y fusión (TD-25)
   ├─ Speakers/           SpeakerMatcher + SpeakerCalibration (puro, testeable)
   ├─ Export/             TXT, Markdown, JSON (documento completo), SRT, PDF (Core Text)
   ├─ AI/                 ProcessRunner, ToolEnvironment, AIProvider (+4 proveedores),
@@ -29,18 +29,22 @@ MeetingAudio             Captura y DSP. Depende de MeetingCore.
   └─ Import/             AudioImporter (copia WAV/M4A/MP3; extrae audio de MP4/MOV)
 
 MeetingSpeech            FluidAudio. Depende de MeetingCore y MeetingAudio.
-  ├─ Transcription/      ASRProvider, ParakeetUltraProvider, WordGrouping, SegmentBuilder, LiveTranscriber
+  ├─ Transcription/      ASRProvider, ParakeetUltraProvider, ShortUtteranceContext (TD-26), WordGrouping,
+  │                      SegmentBuilder, LiveTranscriber, AcousticVocabularyBooster (CTC, TD-24)
   ├─ Diarization/        DiarizationService (OfflineDiarizerManager), SpeakerAlignment, EchoDetector
   ├─ SpeakerRecognition/ SpeakerRecognitionService (enrolamiento, muestras validadas, reconocimiento)
   ├─ Pipeline/           MeetingProcessor (etapas + ProcessingJob), MeetingImportService
   └─ Models/             SerialGate, ExclusiveBox
+
+MeetingSemantic          Embeddings locales (multilingual-e5-small, swift-embeddings). Depende de MeetingCore.
+  └─ SemanticSearchEngine  descarga opcional, vectores de consulta, indexación incremental
 
 MeetingIntelligenceApp   SwiftUI (aislamiento por defecto MainActor).
   ├─ App/                App, AppEnvironment (raíz de composición), AppRouter, AppSettings, RootView,
   │                      MenuBarExtra, SnapshotDriver (verificación de UI)
   ├─ DesignSystem/       Tokens (tipografía, color, espaciado, radios, elevación, movimiento) + componentes
   ├─ Services/           ProcessingCoordinator, RecordingController, ModelStatusModel, AIController,
-  │                      MeetingAudioPlayer
+  │                      MeetingAudioPlayer, SemanticIndexController
   └─ Features/           Dashboard, Meetings, MeetingDetail (7 pestañas), Recording, Participants,
                          Intelligence, Settings, Onboarding
 
@@ -100,7 +104,10 @@ reunión a la vez, con progreso real (FluidAudio) y cancelación cooperativa (`T
 
 - **Transcripción**: antes de Ultra, `SilenceCompactor` colapsa el silencio muerto (≥ 1 s por debajo de −66 dBFS) en
   una copia temporal y las marcas vuelven a la línea de tiempo original; evita que frases cortas sin contexto salgan
-  en otro idioma (TD-22). El idioma no se puede forzar: `language:` de FluidAudio solo filtra por alfabeto.
+  en otro idioma (TD-22). El idioma no se puede forzar: `language:` de FluidAudio solo filtra por alfabeto. Las
+  frases cortas y aisladas se redecodifican con voz cercana de la misma pista (TD-26).
+- **Diccionario**: opcionalmente, rescoring acústico CTC por segmento → `vocabularyText` (TD-24); después, variantes
+  deterministas.
 - **Micrófono**: si la diarización detecta ≤ 1 hablante con ≥ 4 s de voz (excluyendo eco), se atribuye al usuario
   local; si detecta varios, se crean "Local 1, Local 2…" y solo el reconocimiento o tú asignan identidades.
 - **Remoto/importado**: clusters "Hablante N" → reconocimiento → nombre solo si supera el umbral calibrado.
@@ -118,7 +125,8 @@ reunión a la vez, con progreso real (FluidAudio) y cancelación cooperativa (`T
 
 ## Persistencia
 
-SQLite (GRDB 7.11.1, WAL). Migración `v1-core`. Relación verificable:
+SQLite (GRDB 7.11.1, WAL). Migraciones `v1-core`, `v2-conversation-apps`, `v3-chat-history`,
+`v4-segment-embeddings`. Relación verificable:
 `AudioTrack → Transcript → TranscriptSegment (startTime/endTime, palabras) → MeetingSpeaker → Participant`.
 
 - `asrText` (inmutable), `vocabularyText` (diccionario), `editedText` (usuario): nunca se sobrescribe el original.
@@ -128,6 +136,9 @@ SQLite (GRDB 7.11.1, WAL). Migración `v1-core`. Relación verificable:
 - `analysisItem` reúne decisiones, tareas, temas, riesgos… con evidencia (`Decision`, `ActionItem`,
   `MeetingTopic` son vistas tipadas).
 - FTS5 sincronizado por triggers (`transcriptSegmentFts`, `analysisItemFts`), `unicode61` sin diacríticos.
+- Historial del chat (`chatMessage` + `chatMessageSource`): un hilo por reunión y uno entre reuniones; borrar una
+  reunión borra su hilo y, por trigger, todo mensaje que la cite.
+- `segmentEmbedding`: caché reconstruible de vectores (modelo + hash del texto), en cascada con el segmento.
 
 ## IA
 

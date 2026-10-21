@@ -48,7 +48,8 @@ struct IntelligenceView: View {
                     .padding(.horizontal, DS.Space.xxl)
                     .padding(.bottom, DS.Space.s)
                     Divider()
-                    ChatPanel(scope: scopeMeetings.isEmpty ? .allMeetings : .meetings(Array(scopeMeetings))) { meetingId, _ in
+                    ChatPanel(scope: scopeMeetings.isEmpty ? .allMeetings : .meetings(Array(scopeMeetings)),
+                              thread: .library) { meetingId, _ in
                         router.openMeeting(meetingId, tab: .transcript)
                     }
                 }

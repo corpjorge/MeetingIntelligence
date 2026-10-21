@@ -49,6 +49,10 @@ final class AppSettings {
     var showProbableEcho: Bool { didSet { defaults.set(showProbableEcho, forKey: "showEcho") } }
     var hasCompletedOnboarding: Bool { didSet { defaults.set(hasCompletedOnboarding, forKey: "onboarded") } }
     var liveTranscription: Bool { didSet { defaults.set(liveTranscription, forKey: "liveTranscription") } }
+    /// Acoustic rescoring of dictionary terms (downloads Parakeet CTC 110M on first use).
+    var acousticVocabularyBoost: Bool { didSet { defaults.set(acousticVocabularyBoost, forKey: "acousticVocabularyBoost") } }
+    /// Semantic chat retrieval with local embeddings (downloads multilingual-e5-small on first use).
+    var semanticSearch: Bool { didSet { defaults.set(semanticSearch, forKey: "semanticSearch") } }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -74,6 +78,8 @@ final class AppSettings {
         showProbableEcho = defaults.object(forKey: "showEcho") as? Bool ?? false
         hasCompletedOnboarding = defaults.bool(forKey: "onboarded")
         liveTranscription = defaults.object(forKey: "liveTranscription") as? Bool ?? true
+        acousticVocabularyBoost = defaults.bool(forKey: "acousticVocabularyBoost")
+        semanticSearch = defaults.bool(forKey: "semanticSearch")
     }
 
     var processingOptions: ProcessingOptions {
@@ -82,6 +88,7 @@ final class AppSettings {
         options.diarize = diarize
         options.detectMultipleLocalSpeakers = detectMultipleLocalSpeakers
         options.flagEcho = flagEcho
+        options.acousticVocabularyBoost = acousticVocabularyBoost
         return options
     }
 }

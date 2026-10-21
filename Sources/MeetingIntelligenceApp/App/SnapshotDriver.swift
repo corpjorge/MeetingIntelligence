@@ -39,6 +39,9 @@ enum SnapshotDriver {
                 }
                 // MI_SNAPSHOT_MEETING picks a specific meeting id; default is the first ready one.
                 let wanted = ProcessInfo.processInfo.environment["MI_SNAPSHOT_MEETING"]
+                // The Settings scene is a separate window; render its pages standalone.
+                captureWindowContent("settings-transcription-\(suffix)", in: dir) { TranscriptionSettings().environment(env) }
+                captureWindowContent("settings-models-\(suffix)", in: dir) { ModelSettings().environment(env) }
                 if let first = try? env.database.meetingRows().first(where: {
                     $0.meeting.status == .ready && (wanted == nil || $0.id == wanted)
                 }) {
@@ -97,6 +100,22 @@ enum SnapshotDriver {
             .background(DS.Color.background))
         host.appearance = NSApp.appearance
         host.frame.size = host.fittingSize
+        host.layoutSubtreeIfNeeded()
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
+        host.cacheDisplay(in: host.bounds, to: rep)
+        if let png = rep.representation(using: .png, properties: [:]) {
+            try? png.write(to: dir.appendingPathComponent("\(name).png"))
+        }
+    }
+
+    /// Renders a full-height page (e.g. a settings Form) in an offscreen window.
+    @MainActor
+    static func captureWindowContent(_ name: String, in dir: URL, @ViewBuilder _ content: () -> some View) {
+        let host = NSHostingView(rootView: content().frame(width: 720, height: 1100))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 1100),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.appearance = NSApp.appearance
+        window.contentView = host
         host.layoutSubtreeIfNeeded()
         guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
         host.cacheDisplay(in: host.bounds, to: rep)

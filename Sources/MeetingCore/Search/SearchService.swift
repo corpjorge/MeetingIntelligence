@@ -24,7 +24,17 @@ public enum SearchScope: Sendable, Hashable {
 }
 
 public struct SearchService: Sendable {
-    private let reader: any DatabaseReader
+    let reader: any DatabaseReader
+
+    /// Resolved speaker label (participant > diarized speaker > track source).
+    static let speakerNameSQL = """
+        COALESCE(p.displayName,
+                 CASE WHEN ms.id IS NOT NULL THEN
+                     (CASE ms.source WHEN 'local_microphone' THEN 'Local ' ELSE 'Hablante ' END) || ms.ordinal
+                 ELSE (CASE s.source WHEN 'local_microphone' THEN 'Micrófono local'
+                                     WHEN 'remote_system_audio' THEN 'Audio remoto'
+                                     ELSE 'Sin identificar' END) END)
+        """
 
     public init(reader: any DatabaseReader) {
         self.reader = reader
@@ -50,12 +60,7 @@ public struct SearchService: Sendable {
                        COALESCE(m.startedAt, m.createdAt) AS meetingDate,
                        s.startTime, s.endTime,
                        COALESCE(s.editedText, s.vocabularyText, s.asrText) AS text,
-                       COALESCE(p.displayName,
-                                CASE WHEN ms.id IS NOT NULL THEN
-                                    (CASE ms.source WHEN 'local_microphone' THEN 'Local ' ELSE 'Hablante ' END) || ms.ordinal
-                                ELSE (CASE s.source WHEN 'local_microphone' THEN 'Micrófono local'
-                                                    WHEN 'remote_system_audio' THEN 'Audio remoto'
-                                                    ELSE 'Sin identificar' END) END) AS speakerName,
+                       \(Self.speakerNameSQL) AS speakerName,
                        snippet(transcriptSegmentFts, -1, '[', ']', '…', 24) AS snippet,
                        bm25(transcriptSegmentFts) AS rank
                 FROM transcriptSegmentFts

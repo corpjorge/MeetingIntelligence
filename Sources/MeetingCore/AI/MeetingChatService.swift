@@ -3,13 +3,13 @@ import GRDB
 
 /// Question answering over meetings.
 ///
-/// Retrieval is always local (SQLite FTS5); the LLM only reads the retrieved
+/// Retrieval is always local (SQLite FTS5, plus opt-in semantic vectors); the LLM only reads the retrieved
 /// excerpts and must cite them. Without a provider the user still gets the
 /// ranked excerpts with meeting + timestamp references.
 public struct MeetingChatService: Sendable {
     public static let promptVersion = "chat-v1"
 
-    public struct Citation: Sendable, Hashable, Identifiable {
+    public struct Citation: Codable, Sendable, Hashable, Identifiable {
         public var id: String { segmentId }
         public var reference: String
         public var segmentId: String
@@ -20,7 +20,7 @@ public struct MeetingChatService: Sendable {
         public var text: String
     }
 
-    public struct Answer: Sendable {
+    public struct Answer: Codable, Sendable, Hashable {
         public var question: String
         /// nil when no provider was used (local search only).
         public var text: String?
@@ -44,10 +44,15 @@ public struct MeetingChatService: Sendable {
     }
 
     /// Local retrieval. Speaker names mentioned in the question boost that speaker's excerpts.
+    /// With `semantic`, paraphrase matches from the vector index come first (TD-25).
     public func retrieve(question: String, scope: SearchScope, model: String?, effort: String? = nil,
-                         timeout: Double, limit: Int = 30) throws -> Retrieval {
+                         timeout: Double, limit: Int = 30, semantic: SemanticQuery? = nil) throws -> Retrieval {
         let search = SearchService(reader: database.reader)
         var hits = try search.search(question, scope: scope, limit: limit * 2)
+        if let semantic {
+            hits = SearchService.merge(semantic: try search.semanticSearch(semantic, scope: scope, limit: limit * 2),
+                                       keyword: hits, limit: limit * 2)
+        }
         let names = try database.participants().map(\.displayName)
         let mentioned = names.filter { name in
             TextNormalization.tokens(question).contains(TextNormalization.comparable(name).split(separator: " ").first.map(String.init) ?? "")

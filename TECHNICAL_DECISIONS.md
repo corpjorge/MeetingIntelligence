@@ -190,6 +190,7 @@ diarización sigue leyendo el archivo original.
 - Una frase muy corta, aislada y sin contexto puede seguir saliendo en otro idioma: después de compactar, 18 de 80
   siguen sin coincidir (p. ej. "¿Ya está?" → "Wie er ist da?" o "Надежда.", "Listo." → "Visto?",
   "No, todavía no." → "No, to Gabriano."). Es una propiedad del modelo multilingüe y no hay API para forzar el idioma.
+  Seguimiento en TD-26: con voz cercana de la misma pista como contexto se corrige la mayoría.
 - Con `language: .spanish`, un resultado en otro alfabeto puede llegar como `<unk>` en vez de cirílico.
 - Marcar segmentos de baja confianza solo detecta una parte: con confianza media < 0,7 se marcan 24 de 59 errores
   (y 4 de 196 aciertos); "(francés)" tenía 0,87–0,98. La transcripción marca esos fragmentos con "revisar" y la
@@ -231,9 +232,96 @@ Decisión: un recordatorio **estático** en la vista de grabación (`CallMuteRem
 con una app o todo el sistema. Su botón solo **pausa** (`pauseMicrophone()`, que nunca reanuda) y se puede ocultar
 durante esa grabación. Nada se pausa ni se reanuda solo. Zoom no se probó (no había llamada activa).
 
+## TD-24 · Refuerzo acústico del diccionario con Parakeet CTC 110M (medido)
+FluidAudio 0.17.7 no aplica vocabulario dentro de `AsrManager` (la documentación muestra
+`transcribe(_:customVocabulary:)`, que no existe en esta versión). Lo público es
+`VocabularyBoostingSession.rescore(text:tokenTimings:audioSamples:)`: un modelo CTC aparte (Parakeet CTC 110M,
+~98 MB, entrenado en inglés) compara el audio con cada término y reemplaza palabras del texto de Ultra.
+
+**Medición** (voces sintéticas `say`, 3 voces × 16 frases con nombres/marcas/términos + 8 de control por voz,
+diccionario de 16 términos; `VocabularyBoostExperiment`, se activa con `MI_BOOST_DATA`):
+
+| | Sin refuerzo | Rescoring de FluidAudio tal cual | Con la salvaguarda (pipeline real) |
+|---|---|---|---|
+| Términos acertados | 17/48 (archivos sueltos) · 20/48 (pipeline) | 41/48 | **39/48** |
+| Frases de control cambiadas | — | 3/24 ("Mañana" → "Grafana") | **0/24** |
+| Palabras comunes dañadas | — | "firma" → "Figma" (4 casos) | **0** |
+| WER total | 13,2 % · 8,1 % | 9,3 % | **4,4 %** |
+
+El CTC inglés puntúa mal cualquier palabra española (−10 a −12 frente a −3 a −6 del término), así que la confianza de
+Ultra y la puntuación acústica no separan aciertos de errores. **Salvaguarda**: nunca se reemplaza **una** palabra
+que pertenece al idioma de la reunión (lista de 42.337 palabras de `NLEmbedding.wordEmbedding(for: .spanish)`, sin
+nombres propios). Los reemplazos de varias palabras se aceptan ("Si Amara" → "Xiomara", "David Vienda" →
+"Davivienda"). Costo: términos parecidos a palabras comunes no se corrigen ("gira" → "Jira", "firma" → "Figma").
+
+**Integración**: opcional (Ajustes › Transcripción › Diccionario; `mi process --boost-vocabulary`), descarga el modelo
+la primera vez. Se ejecuta por segmento sobre su propio audio; el resultado va a `vocabularyText` (con el diccionario
+determinista encima) y `asrText` no cambia. Si algo falla, el procesamiento sigue sin refuerzo. Limitación: dentro de
+un segmento se reemplaza la primera aparición del texto original; no está medido con voces reales.
+
+## TD-25 · Búsqueda semántica local con multilingual-e5-small (medido)
+Los embeddings que trae macOS no sirven en español: con 12 fragmentos y 9 preguntas, `NLEmbedding.sentenceEmbedding`
+acertó 3/9 en primer lugar y `NLContextualEmbedding` (media de tokens) 2/9. Se eligió `intfloat/multilingual-e5-small`
+(MIT, 384 dimensiones, ~470 MB) con `swift-embeddings` 0.1.1 (MLTensor). Dependencias nuevas: swift-transformers,
+swift-huggingface, swift-safetensors, swift-sentencepiece (**binario precompilado** `sentencepiece.xcframework`
+publicado por su autor en GitHub), swift-numerics, swift-argument-parser, Command, swift-crypto y yyjson.
+`swift-collections` se fija en 1.2.1: 1.7.3 no compila con CLT 27 + SDK 26.5.
+
+**Medición** (30 fragmentos sintéticos tipo reunión, 16 preguntas: 7 comparten palabras con la respuesta, 9 son
+paráfrasis):
+
+| | Respuesta entre los 3 primeros | En 1.ª posición |
+|---|---|---|
+| Palabras (emulación de FTS5) | 5/16 (paráfrasis 2/9) | 5/16 |
+| e5-small | **14/16** (paráfrasis 7/9) | 11/16 |
+| Fusión RRF (pesos 1–3) | 13/16 | 8/16 |
+| De punta a punta (audio TTS → Ultra → índice → `mi ask`) | FTS5 5/16 · **semántica 13/16** | — |
+
+Fallan "problemas de conexión" ("se me cayó el internet"), "¿qué se decidió sobre el presupuesto?" y "riesgos de
+seguridad". Las similitudes están comprimidas (0,75–0,9): las preguntas fuera de tema llegan a 0,79–0,82 y la respuesta
+correcta más débil quedó en 0,80, así que el umbral (`semanticFloor = 0,80`) no separa del todo y una pregunta fuera de
+tema puede traer algún extracto.
+
+**Diseño**: `MeetingSemantic` (módulo nuevo; el servidor MCP no lo enlaza) carga el modelo y calcula vectores;
+`segmentEmbedding` (migración v4) guarda un vector por segmento con el hash de su texto, así una edición se reindexa;
+borrar una reunión borra sus vectores. La búsqueda es por coseno, por fuerza bruta. En el chat van primero 2/3 de
+resultados semánticos, luego los de FTS5 que falten (los nombres exactos no se pierden) y después el resto. Opcional
+(Ajustes › Modelos), desactivado por defecto; el modelo se descarga de Hugging Face y el texto nunca sale del equipo.
+Rendimiento (M5 Pro, release): carga 3 s, 46 textos en 0,5 s.
+
+## TD-26 · Frases cortas aisladas: redecodificar con contexto y no estirar palabras sobre huecos (medido)
+Seguimiento de TD-22. Ultra no acepta un idioma, pero su codificador usa el contexto. `ShortUtteranceContext`
+redecodifica cada frase corta y aislada (≤ 3 s, ≤ 6 palabras, ≥ 2 s de silencio a cada lado) precedida de hasta 8 s de
+voz de la misma pista, y se queda solo con los tokens de la frase. La nueva versión se usa solo si no está vacía y su
+confianza media es igual o mayor.
+
+| 80 frases cortas (4 voces × 10 × 2 niveles) y 20 en inglés | Exactas |
+|---|---|
+| Cada frase sola en su archivo, sin contexto | español 53/80 · inglés 20/20 |
+| Redecodificar siempre con contexto en español | español 73/80 · **inglés 10/20** (se "españolizan") |
+| Regla de confianza (la implementada) | **español 74/80 · inglés 19/20** (el restante: "Ok" por "Okay") |
+
+En una pista de micrófono realista (una frase normal + las 20 frases cortas separadas por 15 s de silencio, 4 voces)
+apareció otro fallo: con la compactación, el decodificador deja a veces "▁¿" al final del tramo anterior o "." después
+del hueco, y la palabra se estiraba 17 s y pegaba dos frases en un segmento (4 casos por pista; TD-22 no lo detectó).
+`reattachSplitWords` mueve esa pieza sin letras junto a su palabra.
+
+| Pistas realistas, 80 frases | Exactas |
+|---|---|
+| Antes | 67/76 comparables (4 pares de frases pegados) |
+| Solo el arreglo de piezas | 72/80 |
+| Arreglo + redecodificación con contexto | **74/80** |
+
+Los 6 errores restantes no son de idioma ("Allí" por "Ahí", "Togamía", "Un momento…" cortado). Costo: ~0,1 s por
+frase corta (pista de 390 s con 20 frases: ASR de 0,6 s a 2,5 s). Una pista con una sola frase no tiene contexto y
+queda igual. `asrText` guarda la decodificación elegida. Mediciones: `LanguageDriftExperiment` (`MI_LANG_DATA`).
+
 ## Limitaciones comprobadas
 - ASR monocanal pierde palabras en habla **superpuesta** (fixture: 2 de 16 palabras).
-- Frases muy cortas y aisladas pueden transcribirse en otro idioma; el idioma no se puede forzar (TD-22).
+- Frases muy cortas y aisladas pueden transcribirse en otro idioma; el idioma no se puede forzar. La
+  redecodificación con contexto corrige la mayoría si la pista tiene otra voz (TD-22, TD-26).
+- El refuerzo acústico del diccionario no corrige términos parecidos a palabras comunes ("Jira"/"gira", TD-24).
+- La búsqueda semántica falla en algunas paráfrasis y puede traer algún extracto ante preguntas fuera de tema (TD-25).
 - Los fixtures son TTS: WER/DER medidos son una cota optimista.
 - Bluetooth en llamadas usa perfil de banda estrecha (se advierte en UI).
 - Apps en navegador: no se puede aislar una pestaña; se graba todo el audio del navegador.

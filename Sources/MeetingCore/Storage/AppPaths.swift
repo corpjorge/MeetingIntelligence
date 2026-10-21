@@ -9,6 +9,7 @@ public import Foundation
 ///   Imports/                  Staging area for imported files
 ///   Exports/                  Default export destination
 ///   Logs/                     Processing logs (no transcript text, no secrets)
+///   Models/                   Text-embedding model (opt-in semantic search)
 /// ```
 ///
 /// The root defaults to `~/Library/Application Support/MeetingIntelligence` and
@@ -35,6 +36,8 @@ public struct AppPaths: Sendable, Hashable {
     public var importsDirectory: URL { root.appendingPathComponent("Imports", isDirectory: true) }
     public var exportsDirectory: URL { root.appendingPathComponent("Exports", isDirectory: true) }
     public var logsDirectory: URL { root.appendingPathComponent("Logs", isDirectory: true) }
+    /// Models this app downloads itself (FluidAudio keeps its own cache).
+    public var modelsDirectory: URL { root.appendingPathComponent("Models", isDirectory: true) }
 
     public func meetingDirectory(_ meetingID: String) -> URL {
         recordingsDirectory.appendingPathComponent(meetingID, isDirectory: true)

@@ -275,6 +275,45 @@ extension AppDatabase {
             }
         }
 
+        // v3: persistent chat history (per meeting and cross-meeting).
+        migrator.registerMigration("v3-chat-history") { db in
+            try db.create(table: "chatMessage") { t in
+                t.primaryKey("id", .text)
+                t.column("thread", .text).notNull()
+                t.belongsTo("meeting", onDelete: .cascade)
+                t.column("question", .text).notNull()
+                t.column("answerJSON", .blob)
+                t.column("scopeJSON", .blob)
+                t.column("createdAt", .datetime).notNull()
+            }
+            try db.create(index: "chatMessage_thread", on: "chatMessage", columns: ["thread", "meetingId", "createdAt"])
+            try db.create(table: "chatMessageSource") { t in
+                t.belongsTo("chatMessage", onDelete: .cascade).notNull()
+                t.belongsTo("meeting", onDelete: .cascade).notNull()
+                t.primaryKey(["chatMessageId", "meetingId"])
+            }
+            // A deleted meeting must not survive as quoted text in the cross-meeting history.
+            // BEFORE: the source links are still there (cascade runs with the delete itself).
+            try db.execute(sql: """
+                CREATE TRIGGER chatMessage_deleteWithCitedMeeting BEFORE DELETE ON meeting BEGIN
+                    DELETE FROM chatMessage WHERE id IN
+                        (SELECT chatMessageId FROM chatMessageSource WHERE meetingId = OLD.id);
+                END
+                """)
+        }
+
+        // v4: text embeddings for opt-in semantic search (TD-25). Rebuildable cache.
+        migrator.registerMigration("v4-segment-embeddings") { db in
+            try db.create(table: "segmentEmbedding") { t in
+                t.primaryKey("segmentId", .text)
+                    .references("transcriptSegment", onDelete: .cascade)
+                t.column("model", .text).notNull()
+                // Hash of the embedded text: an edited segment is re-embedded.
+                t.column("textHash", .text).notNull()
+                t.column("vector", .blob).notNull()
+            }
+        }
+
         return migrator
     }
 }

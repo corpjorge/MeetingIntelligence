@@ -15,6 +15,8 @@ public struct ProcessingOptions: Sendable, Hashable {
     /// A local cluster needs at least this much non-echo speech to count as a
     /// separate person (shorter clusters are usually coughs/noise/echo residue).
     public var minimumLocalSpeakerSeconds: Double = 4
+    /// Rescore dictionary terms acoustically (Parakeet CTC 110M, TD-24). Opt-in: downloads ~97.5 MB.
+    public var acousticVocabularyBoost: Bool = false
 
     public init() {}
 }
@@ -38,6 +40,8 @@ public struct ProcessingSummary: Sendable {
         public var segments: Int
         public var speakers: Int
         public var echoSegments: Int
+        /// Segments whose text the acoustic vocabulary boost changed.
+        public var boostedSegments: Int = 0
     }
     public var tracks: [TrackSummary]
     public var totalSeconds: Double
@@ -53,15 +57,18 @@ public actor MeetingProcessor {
     private let asr: any ASRProvider
     private let diarizer: DiarizationService
     private let recognizer: SpeakerRecognitionService?
+    private let booster: AcousticVocabularyBooster?
     private let logger = Logger(subsystem: "dev.meetingintelligence", category: "pipeline")
 
     public init(database: AppDatabase, paths: AppPaths, asr: any ASRProvider,
-                diarizer: DiarizationService, recognizer: SpeakerRecognitionService?) {
+                diarizer: DiarizationService, recognizer: SpeakerRecognitionService?,
+                booster: AcousticVocabularyBooster? = nil) {
         self.database = database
         self.paths = paths
         self.asr = asr
         self.diarizer = diarizer
         self.recognizer = recognizer
+        self.booster = booster
     }
 
     @discardableResult
@@ -134,7 +141,22 @@ public actor MeetingProcessor {
             return "ASR: \(asr.descriptor.modelIdentifier)"
         }
 
-        let vocabulary = VocabularyCorrector(terms: (try? database.vocabulary()) ?? [])
+        let terms = (try? database.vocabulary()) ?? []
+        let vocabulary = VocabularyCorrector(terms: terms)
+        // Optional acoustic boost; a failure here never stops processing.
+        var activeBooster: AcousticVocabularyBooster?
+        if options.acousticVocabularyBoost, let booster, !terms.isEmpty {
+            progress(.init(meetingId: meetingId, stage: .modelPreparation, source: nil, fraction: nil,
+                           message: "Preparando el refuerzo del diccionario (Parakeet CTC 110M)"))
+            do {
+                try await booster.prepare()
+                activeBooster = booster
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                logger.error("Vocabulary boost unavailable: \(error.localizedDescription, privacy: .public)")
+            }
+        }
         let localUser = try database.localUser()
         var summaries: [ProcessingSummary.TrackSummary] = []
         var remoteWords: [WordTiming] = []
@@ -202,6 +224,15 @@ public actor MeetingProcessor {
                                          remoteWords: track.source == .localMicrophone ? remoteWords : [],
                                          vocabulary: vocabulary, localUser: localUser, options: options)
             Self.reapplyManualIdentities(previousManual, to: &built)
+            var boostedSegments = 0
+            if let activeBooster, !built.segments.isEmpty {
+                progress(.init(meetingId: meetingId, stage: .alignment, source: track.source, fraction: nil,
+                               message: "Reforzando términos del diccionario"))
+                boostedSegments = try await Self.applyBoost(activeBooster, to: &built, track: track, url: url,
+                                                            transcription: transcription, terms: terms,
+                                                            vocabulary: vocabulary, language: options.language,
+                                                            logger: logger)
+            }
             try database.storeProcessedTrack(transcript: built.transcript, segments: built.segments,
                                              speakers: built.speakers, assignments: built.assignments)
 
@@ -210,7 +241,8 @@ public actor MeetingProcessor {
                                    diarizationSeconds: diarization?.processingSeconds,
                                    words: words.count, segments: built.segments.count,
                                    speakers: built.speakers.count,
-                                   echoSegments: built.segments.filter { $0.attribution == .probableEcho }.count))
+                                   echoSegments: built.segments.filter { $0.attribution == .probableEcho }.count,
+                                   boostedSegments: boostedSegments))
         }
 
         // 5. Speaker recognition against consented voice profiles.
@@ -223,6 +255,33 @@ public actor MeetingProcessor {
             }
         }
         return summaries
+    }
+
+    /// Writes boosted text into `vocabularyText` (deterministic dictionary on top). Returns changed segments.
+    static func applyBoost(_ booster: AcousticVocabularyBooster, to built: inout BuiltTrack, track: AudioTrack, url: URL,
+                           transcription: ASRTranscription, terms: [VocabularyTerm], vocabulary: VocabularyCorrector,
+                           language: String, logger: Logger) async throws -> Int {
+        let offset = track.timelineOffsetSeconds
+        let inputs = built.segments.map {
+            AcousticVocabularyBooster.Segment(start: $0.startTime - offset, end: $0.endTime - offset,
+                                              words: $0.words.map(\.word))
+        }
+        do {
+            let boosted = try await booster.boost(inputs, tokens: transcription.tokens, fileURL: url,
+                                                  terms: terms.map(\.canonical), language: language)
+            var changed = 0
+            for (i, text) in boosted.enumerated() {
+                guard let text, i < built.segments.count else { continue }
+                built.segments[i].vocabularyText = vocabulary.apply(to: text)?.text ?? text
+                changed += 1
+            }
+            return changed
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            logger.error("Vocabulary boost skipped: \(error.localizedDescription, privacy: .public)")
+            return 0
+        }
     }
 
     struct BuiltTrack {

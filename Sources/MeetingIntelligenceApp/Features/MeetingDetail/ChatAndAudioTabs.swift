@@ -2,20 +2,24 @@ import MeetingCore
 import SwiftUI
 
 struct ChatMessage: Identifiable {
-    let id = UUID()
+    var id = UUID().uuidString
     let question: String
     var answer: MeetingChatService.Answer?
     var isLoading = true
 }
 
 /// Question answering over one meeting or many (local retrieval + optional AI).
+/// Finished questions are stored in the library database, per thread.
 struct ChatPanel: View {
     let scope: SearchScope
+    let thread: ChatThread
     var onOpen: (String, Double) -> Void
     @Environment(AppEnvironment.self) private var env
     @State private var messages: [ChatMessage] = []
     @State private var draft = ""
     @State private var useAI = true
+    @State private var confirmClear = false
+    @State private var historyError: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -24,7 +28,8 @@ struct ChatPanel: View {
                     VStack(alignment: .leading, spacing: DS.Space.l) {
                         if messages.isEmpty {
                             EmptyStateView(systemImage: "bubble.left.and.text.bubble.right", title: "Pregunta sobre tus reuniones",
-                                           message: "La búsqueda es local (FTS5). Si activas la IA, solo se le envían los extractos encontrados y debe citarlos.")
+                                           message: (env.settings.semanticSearch ? "La búsqueda es local, por palabras y por significado." : "La búsqueda es local, por palabras (FTS5).")
+                                               + " Si activas la IA, solo se le envían los extractos encontrados y debe citarlos.")
                         }
                         ForEach(messages) { message in
                             messageView(message).id(message.id)
@@ -36,6 +41,11 @@ struct ChatPanel: View {
                 }
                 .onChange(of: messages.count) { if let last = messages.last { proxy.scrollTo(last.id, anchor: .bottom) } }
             }
+            if let historyError {
+                InlineBanner(tone: .warning, systemImage: "exclamationmark.triangle", title: historyError)
+                    .padding(.horizontal, DS.Space.xl)
+                    .padding(.bottom, DS.Space.s)
+            }
             HStack(spacing: DS.Space.m) {
                 Toggle(isOn: $useAI) { Label("IA", systemImage: "sparkles") }
                     .toggleStyle(.switch).controlSize(.small)
@@ -45,6 +55,8 @@ struct ChatPanel: View {
                     .onSubmit(send)
                 Button("Preguntar", action: send).buttonStyle(.dsPrimary)
                     .disabled(draft.trimmingCharacters(in: .whitespaces).count < 3)
+                IconButton(systemImage: "trash", help: "Borrar el historial de este chat") { confirmClear = true }
+                    .disabled(messages.isEmpty)
             }
             .padding(.horizontal, DS.Space.xl)
             .padding(.vertical, DS.Space.m)
@@ -54,6 +66,34 @@ struct ChatPanel: View {
         .sheet(item: Binding(get: { env.ai.pendingConsent }, set: { if $0 == nil { env.ai.declineConsent() } })) { request in
             RemoteConsentSheet(request: request)
         }
+        .confirmationDialog("¿Borrar el historial de este chat?", isPresented: $confirmClear) {
+            Button("Borrar historial", role: .destructive, action: clearHistory)
+        } message: {
+            Text("Se eliminan las preguntas y respuestas guardadas. Las reuniones no cambian.")
+        }
+        .task(id: thread) { loadHistory() }
+    }
+
+    private func loadHistory() {
+        do {
+            messages = try env.database.chatHistory(thread).map {
+                ChatMessage(id: $0.id, question: $0.question, answer: $0.answer, isLoading: false)
+            }
+            historyError = nil
+        } catch {
+            messages = []
+            historyError = "No se pudo cargar el historial: \(error.localizedDescription)"
+        }
+    }
+
+    private func clearHistory() {
+        do {
+            try env.database.clearChatHistory(thread)
+            messages = []
+            historyError = nil
+        } catch {
+            historyError = "No se pudo borrar el historial: \(error.localizedDescription)"
+        }
     }
 
     private func send() {
@@ -62,11 +102,21 @@ struct ChatPanel: View {
         draft = ""
         let message = ChatMessage(question: question)
         messages.append(message)
+        let scope = scope, thread = thread
         Task {
-            let answer = await env.ai.ask(question: question, scope: scope, useAI: useAI)
+            let semantic = await env.semantic.query(for: question)
+            let answer = await env.ai.ask(question: question, scope: scope, useAI: useAI, semantic: semantic)
             if let i = messages.firstIndex(where: { $0.id == message.id }) {
                 messages[i].answer = answer
                 messages[i].isLoading = false
+            }
+            let scopeIds: [String]? = if case .meetings(let ids) = scope { ids } else { nil }
+            do {
+                try env.database.appendChatMessage(
+                    ChatHistoryMessage(id: message.id, question: question, answer: answer, scopeMeetingIds: scopeIds),
+                    thread: thread)
+            } catch {
+                historyError = "La respuesta no se guardó en el historial: \(error.localizedDescription)"
             }
         }
     }
@@ -82,6 +132,9 @@ struct ChatPanel: View {
             }
             if message.isLoading {
                 HStack { ProgressView().controlSize(.small); Text("Buscando…").font(DS.Font.callout) }
+            } else if message.answer == nil {
+                Label("No se pudo completar la búsqueda local.", systemImage: "exclamationmark.triangle")
+                    .font(DS.Font.callout).foregroundStyle(DS.Color.warning)
             } else if let answer = message.answer {
                 VStack(alignment: .leading, spacing: DS.Space.s) {
                     if let text = answer.text {
@@ -132,7 +185,7 @@ struct MeetingChatTab: View {
     let model: MeetingDetailModel
 
     var body: some View {
-        ChatPanel(scope: .meetings([meetingId])) { _, time in model.player.seek(to: time, play: true) }
+        ChatPanel(scope: .meetings([meetingId]), thread: .meeting(meetingId)) { _, time in model.player.seek(to: time, play: true) }
     }
 }
 

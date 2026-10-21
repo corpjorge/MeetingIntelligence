@@ -121,12 +121,13 @@ final class AIController {
     // MARK: Chat
 
     /// Local retrieval always; LLM answer only after consent for remote providers.
-    func ask(question: String, scope: SearchScope, useAI: Bool) async -> MeetingChatService.Answer? {
+    func ask(question: String, scope: SearchScope, useAI: Bool, semantic: SemanticQuery? = nil) async -> MeetingChatService.Answer? {
         let chat = MeetingChatService(database: database)
         let kind = selectedProvider
         let config = configuration(for: kind)
         guard let retrieval = try? chat.retrieve(question: question, scope: scope, model: config.model,
-                                                 effort: config.effort, timeout: config.timeoutSeconds) else { return nil }
+                                                 effort: config.effort, timeout: config.timeoutSeconds,
+                                                 semantic: semantic) else { return nil }
         guard useAI else { return chat.localAnswer(question: question, retrieval: retrieval) }
         if kind.sendsDataToRemoteService {
             let confirmed = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in

@@ -16,11 +16,13 @@ final class AppEnvironment {
     let vault: BiometricVault
     let recognizer: SpeakerRecognitionService
     let processor: MeetingProcessor
+    let booster = AcousticVocabularyBooster()
     let importer: MeetingImportService
     let processing: ProcessingCoordinator
     let recording: RecordingController
     let models: ModelStatusModel
     let ai: AIController
+    let semantic: SemanticIndexController
     let calls: CallSuggestionController
 
     private(set) var startupError: String?
@@ -49,18 +51,22 @@ final class AppEnvironment {
         diarizer = DiarizationService(segmentationStepRatio: settings.diarizationStepRatio)
         vault = BiometricVault(keyProvider: KeychainBiometricKeyProvider())
         recognizer = SpeakerRecognitionService(database: database, vault: vault, diarizer: diarizer)
-        processor = MeetingProcessor(database: database, paths: paths, asr: asr, diarizer: diarizer, recognizer: recognizer)
+        processor = MeetingProcessor(database: database, paths: paths, asr: asr, diarizer: diarizer, recognizer: recognizer,
+                                     booster: booster)
         importer = MeetingImportService(database: database, paths: paths)
         processing = ProcessingCoordinator(processor: processor, settings: settings)
         recording = RecordingController(importer: importer, paths: paths, settings: settings, asr: asr)
         models = ModelStatusModel(asr: asr, diarizer: diarizer)
         ai = AIController(database: database)
+        semantic = SemanticIndexController(paths: paths, database: database, settings: settings)
         calls = CallSuggestionController(settings: settings, recording: recording)
         // The call monitor needs no permission; snapshot runs skip notifications.
         calls.start(requestNotifications: SnapshotDriver.directory == nil)
         recording.onFinished = { [processing, settings] meetingId in
             if settings.autoProcessAfterRecording { processing.enqueue(meetingId) }
         }
+        processing.onCompleted = { [semantic] _ in semantic.schedule() }
+        semantic.refresh()
         recoverAfterCrash()
     }
 

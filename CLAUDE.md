@@ -15,7 +15,8 @@ MI_SNAPSHOT_DIR=/tmp/s open -n -W --env MI_SNAPSHOT_DIR=/tmp/s "build/Meeting In
 Nunca uses `swift build` directo sin Xcode: falla por las macros de SwiftUI del SDK 27.
 
 ## Dependencias (versiones exactas)
-FluidAudio 0.17.7 (trait NemoTextProcessing desactivado), GRDB 7.11.1. Antes de usar una API de FluidAudio,
+FluidAudio 0.17.7 (trait NemoTextProcessing desactivado), GRDB 7.11.1, swift-embeddings 0.1.1 (solo
+`MeetingSemantic`), swift-collections fijado en 1.2.1 (1.7.x no compila con CLT 27). Antes de usar una API de FluidAudio,
 léela en `.build/checkouts/FluidAudio/Sources` (la documentación a veces difiere: p. ej. `transcribe(_:decoderState:language:)`).
 
 ## Convenciones

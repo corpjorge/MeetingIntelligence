@@ -23,7 +23,10 @@
 2. **Firma estable** (identidad propia o Developer ID) para que macOS conserve los permisos entre compilaciones.
 3. **Medición con grabaciones reales autorizadas** (WER/DER/identificación) y ajuste de `stepRatio` y del umbral de
    hablantes locales con datos medidos.
-4. Búsqueda semántica local (embeddings) como complemento de FTS5.
-5. Historial persistente del chat.
-6. Integración opcional de calendario para "Próximas reuniones" (requiere permiso de Calendario; no implementado).
-7. Vocabulario con *boosting* acústico de FluidAudio (CTC) para nombres propios, evaluando su comportamiento en español.
+4. Integración opcional de calendario para "Próximas reuniones" (requiere permiso de Calendario; no implementado).
+5. Validar con grabaciones reales autorizadas la búsqueda semántica (TD-25), el refuerzo del diccionario (TD-24) y la
+   redecodificación de frases cortas (TD-26); hoy solo están medidos con voces sintéticas.
+
+Hecho el 21-oct-2026: historial persistente del chat, búsqueda semántica local opcional (TD-25), refuerzo acústico
+del diccionario opcional (TD-24), frases cortas con contexto y palabras que ya no se estiran sobre huecos (TD-26),
+marca de fragmentos de baja confianza (TD-22).

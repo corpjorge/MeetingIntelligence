@@ -16,6 +16,8 @@ final class ProcessingCoordinator {
     private(set) var queue: [String] = []
     private(set) var lastError: (meetingId: String, message: String)?
     private(set) var lastCompleted: (meetingId: String, summary: String)?
+    /// Called after a meeting finished processing successfully.
+    var onCompleted: ((String) -> Void)?
 
     private let processor: MeetingProcessor
     private let settings: AppSettings
@@ -64,6 +66,7 @@ final class ProcessingCoordinator {
                 }
                 let words = summary.tracks.reduce(0) { $0 + $1.words }
                 self?.lastCompleted = (meetingId, "\(words) palabras en \(String(format: "%.1f", summary.totalSeconds)) s")
+                self?.onCompleted?(meetingId)
             } catch is CancellationError {
                 self?.logger.notice("Processing cancelled")
             } catch {

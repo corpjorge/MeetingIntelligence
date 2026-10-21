@@ -38,10 +38,15 @@ apps y **local por defecto**.
 | Análisis IA con evidencia (Codex) | ✅ | Ejecución real con Codex CLI sobre reunión fixture |
 | Análisis IA (Claude Code CLI / Antigravity / Ollama) | ✅ Implementado | Formatos de salida verificados; Claude: sesión OAuth expirada en el entorno de pruebas; Ollama no instalado |
 | Chat entre reuniones (FTS5 + IA opcional) | ✅ | Pruebas |
+| Historial persistente del chat (por reunión y entre reuniones) | ✅ | Pruebas de persistencia y de borrado de reuniones citadas; carga verificada en capturas |
+| Búsqueda semántica local opcional (multilingual-e5-small) | ✅ Implementada | Prueba con el modelo real; de punta a punta 13/16 preguntas frente a 5/16 con FTS5 en fixtures sintéticos (TD-25); **pendiente** validar con reuniones reales |
+| Refuerzo acústico del diccionario opcional (Parakeet CTC 110M) | ✅ Implementado | Pipeline real con voces sintéticas: 39/48 términos frente a 20/48, 0 palabras comunes dañadas (TD-24); **pendiente** con voces reales |
+| Frases cortas aisladas redecodificadas con contexto | ✅ | Pistas sintéticas: 74/80 frente a 67/76; también corrige frases pegadas por la compactación (TD-26) |
 | Servidor MCP (stdio, 2026-07-28 + 2025-11-25) | ✅ | Prueba stdio con el binario empaquetado |
 | Exportación TXT/MD/JSON/SRT/PDF | ✅ | Pruebas |
 
-88 pruebas automatizadas pasan (`scripts/test.sh`), incluidas 7 de integración con los modelos reales.
+97 pruebas automatizadas pasan (`scripts/test.sh`), incluidas 7 de integración con los modelos reales. Otras 3
+(mediciones de TD-24/TD-26 e integración de e5-small) se activan bajo demanda; ver `TESTING.md`.
 
 ## Requisitos
 

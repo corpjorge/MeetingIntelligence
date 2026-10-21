@@ -150,25 +150,65 @@ public actor ParakeetUltraProvider: ASRProvider {
             if case .invalidAudioData = error { throw ASRProviderError.emptyAudio }
             throw ASRProviderError.failed(ProcessingErrorText.describe(error))
         }
+        var tokens = Self.tokensOnFileTimeline(result.tokenTimings ?? [], compaction: compaction)
+        var text = result.text
+        // Short isolated replies: re-decode after nearby speech of the same file (TD-26).
+        do {
+            let redecoded = try await ShortUtteranceContext.redecode(
+                tokens: tokens, fileURL: fileURL, manager: manager, language: Self.fluidLanguage(for: languageHint))
+            if redecoded.replaced > 0 {
+                tokens = redecoded.tokens
+                text = tokens.map(\.piece).joined().replacingOccurrences(of: "▁", with: " ").trimmingCharacters(in: .whitespaces)
+                logger.info("Re-decoded \(redecoded.replaced) short utterance(s) with context")
+            }
+        } catch let error as CancellationError {
+            throw error
+        } catch {
+            logger.error("Short-utterance re-decode skipped: \(error.localizedDescription, privacy: .public)")
+        }
         progress(1)
-        let tokens = Self.tokensOnFileTimeline(result.tokenTimings ?? [], compaction: compaction)
         let confidences = tokens.map { Double($0.confidence) }
         return ASRTranscription(
-            text: result.text,
-            words: WordGrouping.words(from: tokens),
+            text: text,
+            words: WordGrouping.words(from: tokens.map { ($0.piece, $0.start, $0.end, $0.confidence) }),
             meanConfidence: confidences.isEmpty ? nil : confidences.reduce(0, +) / Double(confidences.count),
             audioDurationSeconds: compaction?.originalDurationSeconds ?? result.duration,
-            processingSeconds: Date().timeIntervalSince(started))
+            processingSeconds: Date().timeIntervalSince(started),
+            tokens: tokens)
     }
 
     /// Token timings mapped from the (possibly compacted) decoded audio back to the file's own timeline.
-    static func tokensOnFileTimeline(_ timings: [TokenTiming], compaction: SilenceCompaction?)
-        -> [(piece: String, start: Double, end: Double, confidence: Float)] {
-        timings.map { token in
+    static func tokensOnFileTimeline(_ timings: [TokenTiming], compaction: SilenceCompaction?) -> [ASRToken] {
+        reattachSplitWords(timings.map { token in
             let interval = compaction?.originalInterval(start: token.startTime, end: token.endTime)
                 ?? (start: token.startTime, end: token.endTime)
-            return (token.token, interval.start, interval.end, token.confidence)
+            return ASRToken(piece: token.token, tokenId: token.tokenId, start: interval.start, end: interval.end,
+                            confidence: token.confidence)
+        })
+    }
+
+    /// Across a removed gap the decoder can leave a piece on the wrong side: an opening
+    /// mark ("▁¿") at the end of the previous span, or a closing mark (".") after the gap.
+    /// The word would stretch over the gap and glue two utterances, so the letterless
+    /// piece is moved next to the word it belongs to. Pieces with letters are not moved.
+    static func reattachSplitWords(_ tokens: [ASRToken], maxGap: Double = 1.0) -> [ASRToken] {
+        func hasLetters(_ piece: String) -> Bool { piece.contains { $0.isLetter || $0.isNumber } }
+        var tokens = tokens
+        guard tokens.count > 1 else { return tokens }
+        for i in 0..<(tokens.count - 1) {
+            let current = tokens[i], next = tokens[i + 1]
+            guard !next.piece.hasPrefix("▁"), next.start - current.end > maxGap else { continue }
+            if !hasLetters(next.piece) {
+                let duration = min(max(0, next.end - next.start), 0.2)
+                tokens[i + 1].start = current.end
+                tokens[i + 1].end = current.end + duration
+            } else if !hasLetters(current.piece) {
+                let duration = min(max(0, current.end - current.start), 0.2)
+                tokens[i].end = next.start
+                tokens[i].start = next.start - duration
+            }
         }
+        return tokens
     }
 
     /// FluidAudio's language hint only filters tokens by *script* (Latin /

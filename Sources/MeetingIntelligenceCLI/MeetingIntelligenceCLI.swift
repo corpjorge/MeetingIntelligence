@@ -44,15 +44,16 @@ uso: mi <comando> [opciones]
   doctor                         Diagnóstico del entorno (modelos, apps con audio, dispositivos)
   import <archivo> [--title T] [--no-process] [--no-diarize]
                                  Importa audio y lo procesa con Parakeet Ultra
-  process <meetingId> [--no-diarize] [--no-local-diarization]
+  process <meetingId> [--no-diarize] [--no-local-diarization] [--boost-vocabulary]
   list                           Lista reuniones
   show <meetingId>               Muestra la transcripción con hablantes y timestamps
-  search <consulta> [--meeting ID] [--speaker NOMBRE]
+  search <consulta> [--meeting ID] [--speaker NOMBRE] [--semantic]
+  semantic-index                 Descarga e5-small (una vez) e indexa los fragmentos para --semantic
   export <meetingId> --format txt|markdown|json|srt|pdf [--out ruta]
   ai-providers                   Detecta proveedores de IA (versión, sesión, modelos)
   analyze <meetingId> --provider claude|codex|agy|ollama [--model M] [--effort E] [--share]
                                  Analiza con IA; los proveedores en la nube exigen --share
-  ask <pregunta> [--meeting ID] [--provider P] [--share]
+  ask <pregunta> [--meeting ID] [--provider P] [--share] [--semantic]
                                  Pregunta sobre reuniones (búsqueda local + IA opcional)
   evaluate <audio> [--reference ref.txt] [--rttm ref.rttm] [--no-diarize]
                                  Mide WER/DER/RTFx sin modificar la biblioteca
@@ -76,7 +77,8 @@ struct MeetingIntelligenceCLI {
             case "process": try await Commands.process(args, paths: paths)
             case "list": try Commands.list(paths: paths)
             case "show": try Commands.show(args, paths: paths)
-            case "search": try Commands.search(args, paths: paths)
+            case "search": try await Commands.search(args, paths: paths)
+            case "semantic-index": try await Commands.semanticIndex(paths: paths)
             case "export": try Commands.export(args, paths: paths)
             case "ai-providers": await Commands.aiProviders(paths: paths)
             case "analyze": try await Commands.analyze(args, paths: paths)

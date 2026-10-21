@@ -154,3 +154,30 @@ struct MetricsTests {
         #expect(abs(der.der - 0.1) < 0.01) // 1 s missed out of 10 s
     }
 }
+
+@Suite("Tokens partidos por la compactación")
+struct SplitWordTests {
+    private func token(_ piece: String, _ start: Double, _ end: Double) -> ASRToken {
+        ASRToken(piece: piece, tokenId: 0, start: start, end: end, confidence: 1)
+    }
+
+    @Test func leadingPieceMovesNextToItsContinuation() {
+        let tokens = [token("▁aviso", 335.4, 336.1), token(".", 336.1, 336.16), token("▁¿", 336.16, 336.3),
+                      token("Qu", 353.76, 353.9), token("ién", 353.9, 354.0), token("▁sigue", 354.0, 354.5)]
+        let fixed = ParakeetUltraProvider.reattachSplitWords(tokens)
+        #expect(fixed[2].start >= 353.5 && fixed[2].end == 353.76)
+        #expect(fixed[0] == tokens[0] && fixed[3] == tokens[3])
+        let words = WordGrouping.words(from: fixed.map { ($0.piece, $0.start, $0.end, $0.confidence) })
+        #expect(words.map(\.word) == ["aviso.", "¿Quién", "sigue"])
+        #expect(words[1].start > 353)
+        // A closing mark emitted after the gap goes back to its word.
+        let late = ParakeetUltraProvider.reattachSplitWords([token("▁Listo", 10, 10.4), token(".", 30, 30.1),
+                                                             token("▁Dale", 30.1, 30.5)])
+        #expect(late[1].start == 10.4 && late[2] == token("▁Dale", 30.1, 30.5))
+        // Pieces with letters are never moved, and a new word after a pause is left alone.
+        #expect(ParakeetUltraProvider.reattachSplitWords([token("▁Qu", 0, 0.2), token("ién", 5, 5.2)])
+                == [token("▁Qu", 0, 0.2), token("ién", 5, 5.2)])
+        #expect(ParakeetUltraProvider.reattachSplitWords([token("▁hola", 0, 1), token("▁adiós", 5, 6)])
+                == [token("▁hola", 0, 1), token("▁adiós", 5, 6)])
+    }
+}

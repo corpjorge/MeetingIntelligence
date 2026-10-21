@@ -101,7 +101,8 @@ public struct TranscriptSegment: Codable, Sendable, Identifiable, Hashable {
     public var endTime: Double
     /// Raw ASR output. Never modified after insertion.
     public var asrText: String
-    /// ASR output after deterministic custom-vocabulary replacements (nil if none applied).
+    /// ASR output after dictionary corrections: optional acoustic boost (TD-24) and
+    /// deterministic variant replacements (nil if none applied).
     public var vocabularyText: String?
     /// User correction (nil if never edited).
     public var editedText: String?

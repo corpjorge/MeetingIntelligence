@@ -2,6 +2,7 @@ import Foundation
 import GRDB
 import MeetingAudio
 import MeetingCore
+import MeetingSemantic
 import MeetingSpeech
 
 enum Commands {
@@ -14,7 +15,7 @@ enum Commands {
         let recognizer = SpeakerRecognitionService(
             database: database, vault: BiometricVault(keyProvider: KeychainBiometricKeyProvider()), diarizer: diarizer)
         return MeetingProcessor(database: database, paths: paths, asr: ParakeetUltraProvider(),
-                                diarizer: diarizer, recognizer: recognizer)
+                                diarizer: diarizer, recognizer: recognizer, booster: AcousticVocabularyBooster())
     }
 
     static func progressPrinter() -> @Sendable (PipelineProgress) -> Void {
@@ -78,6 +79,7 @@ enum Commands {
         var options = ProcessingOptions()
         options.diarize = !args.flags.contains("no-diarize")
         options.detectMultipleLocalSpeakers = !args.flags.contains("no-local-diarization")
+        options.acousticVocabularyBoost = args.flags.contains("boost-vocabulary")
         let summary = try await makeProcessor(database: db, paths: paths)
             .process(meetingId: meetingId, options: options, progress: progressPrinter())
         for t in summary.tracks {
@@ -86,7 +88,8 @@ enum Commands {
                          t.source.rawValue, t.audioSeconds, t.asrSeconds, rtfx,
                          t.diarizationSeconds.map { String(format: " · diarización %.2f s", $0) } ?? "",
                          t.words, t.segments, t.speakers,
-                         t.echoSegments > 0 ? " · \(t.echoSegments) eco probable" : ""))
+                         t.echoSegments > 0 ? " · \(t.echoSegments) eco probable" : "")
+              + (t.boostedSegments > 0 ? " · \(t.boostedSegments) segmentos con términos reforzados" : ""))
         }
         print(String(format: "Total: %.2f s", summary.totalSeconds))
         try show(Arguments([meetingId]), paths: paths)
@@ -126,11 +129,15 @@ enum Commands {
         }
     }
 
-    static func search(_ args: Arguments, paths: AppPaths) throws {
+    static func search(_ args: Arguments, paths: AppPaths) async throws {
         let query = args.positional.joined(separator: " ")
         let db = try openDatabase(paths)
         let scope: SearchScope = args.options["meeting"].map { .meetings([$0]) } ?? .allMeetings
-        let hits = try SearchService(reader: db.reader).search(query, scope: scope, speakerName: args.options["speaker"])
+        let service = SearchService(reader: db.reader)
+        var hits = try service.search(query, scope: scope, speakerName: args.options["speaker"])
+        if let semantic = try await semanticQuery(query, args: args, paths: paths) {
+            hits = SearchService.merge(semantic: try service.semanticSearch(semantic, scope: scope), keyword: hits, limit: 50)
+        }
         if hits.isEmpty { print("Sin resultados."); return }
         for h in hits {
             print("\(h.meetingTitle) · \(Timecode.hms(h.startTime)) · \(h.speakerName)\n   \(h.snippet)")
@@ -216,15 +223,17 @@ enum Commands {
         let db = try openDatabase(paths)
         let scope: SearchScope = args.options["meeting"].map { .meetings([$0]) } ?? .allMeetings
         let chat = MeetingChatService(database: db)
+        let semantic = try await semanticQuery(question, args: args, paths: paths)
         guard let providerName = args.options["provider"] else {
-            let retrieval = try chat.retrieve(question: question, scope: scope, model: nil, timeout: 60)
+            let retrieval = try chat.retrieve(question: question, scope: scope, model: nil, timeout: 60, semantic: semantic)
             if retrieval.excerpts.isEmpty { print("Sin resultados locales.") }
             for c in retrieval.excerpts { print("\(c.reference) \(c.meetingTitle) · \(Timecode.hms(c.startTime)) · \(c.speakerName): \(c.text)") }
             return
         }
         let kind = try providerKind(providerName)
         let config = try db.providerConfiguration(kind)
-        let retrieval = try chat.retrieve(question: question, scope: scope, model: config.model, timeout: config.timeoutSeconds)
+        let retrieval = try chat.retrieve(question: question, scope: scope, model: config.model, timeout: config.timeoutSeconds,
+                                          semantic: semantic)
         print(retrieval.sharedSummary)
         if kind.sendsDataToRemoteService && !args.flags.contains("share") {
             throw CLIError(message: "No se envió nada. Repite con --share para autorizar el envío descrito arriba.")
@@ -233,6 +242,34 @@ enum Commands {
                                            configuration: config, consentGiven: args.flags.contains("share"))
         print("\nRespuesta (IA, \(kind.displayName)): \(answer.text ?? "")")
         for c in answer.citations { print("  \(c.reference) \(c.meetingTitle) · \(Timecode.hms(c.startTime)) · \(c.speakerName): \(c.text)") }
+    }
+
+    // MARK: semantic search
+
+    /// Query vector when `--semantic` is given (the model must be downloaded: `mi semantic-index`).
+    static func semanticQuery(_ text: String, args: Arguments, paths: AppPaths) async throws -> SemanticQuery? {
+        guard args.flags.contains("semantic") else { return nil }
+        let engine = SemanticSearchEngine(modelsDirectory: paths.modelsDirectory)
+        guard engine.isModelCached() else {
+            throw CLIError(message: "El modelo semántico no está descargado. Ejecuta: mi semantic-index")
+        }
+        return try await engine.embedQuery(text)
+    }
+
+    static func semanticIndex(paths: AppPaths) async throws {
+        let db = try openDatabase(paths)
+        let engine = SemanticSearchEngine(modelsDirectory: paths.modelsDirectory)
+        if !engine.isModelCached() {
+            print("Descargando \(SemanticSearchEngine.modelId) (~470 MB, una sola vez) en \(paths.modelsDirectory.path)")
+        }
+        let started = Date()
+        try await engine.prepare()
+        print(String(format: "Modelo listo en %.1f s", Date().timeIntervalSince(started)))
+        let indexStart = Date()
+        let count = try await engine.indexPending(database: db)
+        let coverage = try db.semanticIndexCoverage(model: SemanticSearchEngine.modelId)
+        print(String(format: "%d fragmentos indexados en %.1f s · cobertura %d/%d", count,
+                     Date().timeIntervalSince(indexStart), coverage.indexed, coverage.total))
     }
 
     // MARK: evaluate
