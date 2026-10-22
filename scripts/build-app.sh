@@ -34,6 +34,8 @@ cp "$BIN/$EXECUTABLE_NAME" "$APP/Contents/MacOS/$EXECUTABLE_NAME"
 cp "$BIN/meeting-intelligence-mcp" "$APP/Contents/MacOS/"
 cp "$BIN/mi" "$APP/Contents/MacOS/"
 for bundle in "$BIN"/*.bundle(N); do cp -R "$bundle" "$APP/Contents/Resources/"; done
+# License and third-party notices travel with the binary.
+cp "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_NOTICES.md" "$APP/Contents/Resources/"
 
 echo "▸ Icono"
 ICONSET="$ROOT/build/AppIcon.iconset"
@@ -68,7 +70,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSMicrophoneUsageDescription</key>
   <string>$APP_NAME graba tu micrófono durante las reuniones que tú inicias, para transcribirlas localmente.</string>
   <key>NSAudioCaptureUsageDescription</key>
-  <string>$APP_NAME captura el audio de Microsoft Teams (o del sistema, si lo eliges) durante las reuniones que tú inicias, para transcribirlas localmente.</string>
+  <string>$APP_NAME captura el audio de la app de llamada que elijas (o de todo el sistema, si lo eliges) durante las reuniones que tú inicias, para transcribirlas localmente.</string>
 </dict>
 </plist>
 PLIST

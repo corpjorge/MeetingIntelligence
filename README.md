@@ -28,6 +28,25 @@ apps y **local por defecto**.
 | ![Resumen](docs/images/resumen.png) **Resumen** generado por IA, con proveedor, modelo y versión del prompt. | ![Tareas](docs/images/tareas-oscuro.png) **Tareas** con la cita exacta y el momento de la reunión (modo oscuro). |
 | ![Chat](docs/images/chat.png) **Chat entre reuniones**: búsqueda local y respuesta con fuentes verificables. | ![Modelos](docs/images/modelos.png) **Modelos**: versión, tamaño y actualización verificada. |
 
+## Descargar e instalar
+
+1. Descarga `Meeting-Intelligence-<versión>.dmg` desde [Releases](https://github.com/corpjorge/MeetingIntelligence/releases)
+   (o el `.zip`; las sumas SHA-256 están en `SHA256SUMS.txt`).
+2. Abre el DMG y arrastra **Meeting Intelligence** a **Aplicaciones**.
+3. La app no está notarizada por Apple: al abrirla por primera vez, macOS dirá que no puede verificar al
+   desarrollador. Ve a **Ajustes del Sistema › Privacidad y seguridad** y pulsa **Abrir de todos modos**.
+4. En el primer uso descarga los modelos locales (Parakeet Ultra ~630 MB y diarización ~22 MB) y pide permiso de
+   **micrófono** y de **audio del sistema** cuando grabas por primera vez.
+
+**Requisitos:** Mac con Apple Silicon (M1 o posterior) y macOS 26 o posterior. Los análisis con IA son opcionales y
+usan las CLIs que tengas instaladas (Claude Code, Codex, Antigravity) u Ollama.
+
+**Desinstalar:** borra la app y, si quieres eliminar también tus datos, la carpeta
+`~/Library/Application Support/MeetingIntelligence` (reuniones) y los modelos en
+`~/Library/Application Support/FluidAudio/Models`.
+
+Uso gratuito según [LICENSE](LICENSE); componentes de terceros en [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 > El nombre es provisional: cámbialo en `config/app.env` (`APP_NAME`); no requiere tocar código Swift.
 
 ## Estado real (verificado el 16-oct-2026 en MacBook Pro M5 Pro, macOS 27.0.1)
@@ -46,7 +65,7 @@ apps y **local por defecto**.
 | Aviso "silenciado en la llamada ≠ pausado aquí" | ⚠️ Recordatorio estático | El silencio de Teams no es legible con APIs públicas (sonda en llamada real, TD-23); la API de terceros de Teams está bloqueada por la organización en la cuenta de prueba; no aplica a Zoom/Meet; **pendiente** verlo en una grabación real |
 | Esfuerzo de IA por proveedor | ✅ | Flags verificados (`--effort` Claude/agy, `model_reasoning_effort` Codex, `think` Ollama por modelo) y probados |
 | Edición de transcripción con historial | ✅ | Pruebas de persistencia |
-| Marca de fragmentos de baja confianza del ASR (< 0,7, "revisar") | ✅ | Prueba de la regla; capturas claro/oscuro con una reunión real (solo verificación local); detecta solo ~40 % de los errores (TD-22) |
+| Marca de fragmentos de baja confianza del ASR (< 0,7, "revisar") | ✅ | Prueba de la regla; capturas claro/oscuro con una reunión real autorizada (solo verificación local); detecta solo ~40 % de los errores (TD-22) |
 | Identidades manuales conservadas al reprocesar | ✅ | Integración real: asignar → reprocesar → identidad conservada |
 | Diccionario personalizado | ✅ | Pruebas + integración |
 | Análisis IA con evidencia (Codex) | ✅ | Ejecución real con Codex CLI sobre reunión fixture |

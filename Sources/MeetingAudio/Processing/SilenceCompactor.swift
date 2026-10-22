@@ -59,7 +59,7 @@ public struct SilenceCompaction: Sendable, Equatable {
 /// capture, a silent system-audio tap) before ASR. Parakeet decodes fixed
 /// ~15 s windows; a window that is mostly dead silence leaves a short
 /// utterance without acoustic context and the multilingual model drifts to
-/// another language ("Aló" → "(francés)"/"Hello"). Only frames below `deadRMS`
+/// another language ("Aló" → "Hello"). Only frames below `deadRMS`
 /// — quieter than any real speech — are removed, and `keptFrames` stay on
 /// each side of sound. See TD-22.
 public enum SilenceCompactor {

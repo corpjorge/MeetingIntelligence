@@ -135,7 +135,7 @@ struct PipelineIntegrationTests {
         #expect(audit.contains { $0.method == .localUserTrack && ($0.note ?? "").contains("no encontró voz suficiente") })
     }
 
-    /// Regression (real Teams call: "Aló" → "(francés)"): a short utterance isolated in
+    /// Regression (seen in a real Teams call): a short utterance isolated in
     /// digital silence drifted to another language when decoded as is ("Hello, como
     /// está?", "Valeu, né?"). Dead silence is collapsed before ASR (TD-22) and the
     /// timings must still land on the file's own timeline.

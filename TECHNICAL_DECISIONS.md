@@ -152,8 +152,8 @@ El resto de errores de diarización sigue siendo fatal. Los mensajes de FluidAud
 (`ProcessingErrorText`). La regresión se prueba con el fixture `es_short_reply`.
 
 ## TD-22 · Frases cortas en otro idioma: compactar el silencio muerto antes del ASR
-Caso real (llamada de Teams): la pista remota empezó con "(saludo con la primera palabra en francés)" (se dijo "Aló") y el micrófono
-(≈ 1–2 s de voz) salió como "(frase en inglés)".
+Caso real (llamada de Teams autorizada; no se citan sus palabras): un saludo corto en español de la pista remota salió
+con su primera palabra en francés, y una respuesta de 1–2 s del micrófono salió como una frase en inglés.
 
 **Diagnóstico** (FluidAudio 0.17.7, código leído en `.build/checkouts/FluidAudio`):
 - `language:` solo filtra tokens por **alfabeto** (`TokenLanguageFilter`: latino, cirílico o griego). Ultra usa el
@@ -183,8 +183,8 @@ diarización sigue leyendo el archivo original.
 | 24 diálogos sintéticos (frases cortas entre silencios; una al final de la 1.ª ventana) | WER 10,7 %, 14/24 exactos | WER 1,9 %, 22/24 |
 | 80 frases aisladas en 22 s de silencio (4 voces × 10 frases × 2 niveles) | WER 26,6 %, 51/80 | WER 20,1 %, 62/80 |
 | Fixtures previos (`es_*`, `silence`) | — | mismo texto (solo `es_short_reply` y `silence` tienen silencio muerto) |
-| Reunión real, pista remota | "(saludo con la primera palabra en francés)…" | "Aló, ¿cómo está?…"; se pierde el "No," de "(respuesta corta)" (confianza 0,52) |
-| Reunión real, micrófono | "(frase en inglés)" | "(palabra en español)" (confianza 0,71; sin referencia, no se puede afirmar que sea correcto) |
+| Reunión real, pista remota | saludo con la primera palabra en francés | saludo en español; se pierde la primera palabra de una respuesta posterior (confianza 0,52) |
+| Reunión real, micrófono | frase en inglés | una palabra en español (confianza 0,71; sin referencia, no se puede afirmar que sea correcta) |
 
 **Lo que no resuelve** (documentado, sin solución con la API actual):
 - Una frase muy corta, aislada y sin contexto puede seguir saliendo en otro idioma: después de compactar, 18 de 80
@@ -193,7 +193,7 @@ diarización sigue leyendo el archivo original.
   Seguimiento en TD-26: con voz cercana de la misma pista como contexto se corrige la mayoría.
 - Con `language: .spanish`, un resultado en otro alfabeto puede llegar como `<unk>` en vez de cirílico.
 - Marcar segmentos de baja confianza solo detecta una parte: con confianza media < 0,7 se marcan 24 de 59 errores
-  (y 4 de 196 aciertos); "(francés)" tenía 0,87–0,98. La transcripción marca esos fragmentos con "revisar" y la
+  (y 4 de 196 aciertos); el saludo en francés de la reunión real tenía 0,87–0,98. La transcripción marca esos fragmentos con "revisar" y la
   leyenda los cuenta (`TranscriptSegment.isLowConfidence`; la marca desaparece al editar el texto). Una frase sin marca
   no está garantizada como correcta.
 - Solo se compacta por debajo de −66 dBFS: el ruido de fondo de un micrófono abierto no se toca.

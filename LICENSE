@@ -1,0 +1,36 @@
+Meeting Intelligence — Licencia de uso gratuito
+Copyright (c) 2026 corpjorge. Todos los derechos reservados.
+
+1. Uso permitido. Se autoriza, sin costo, a descargar, instalar y usar la aplicación compilada
+   "Meeting Intelligence" (en adelante, la Aplicación), tal como se publica en los releases oficiales de
+   https://github.com/corpjorge/MeetingIntelligence, para uso personal o interno no comercial.
+
+2. Restricciones. Sin autorización previa y por escrito del titular, no se permite:
+   a) redistribuir, vender, alquilar, sublicenciar ni publicar la Aplicación o copias de ella;
+   b) modificar, traducir ni crear obras derivadas de la Aplicación o de su código fuente;
+   c) usar la Aplicación con fines comerciales, ni ofrecerla como servicio a terceros;
+   d) eliminar o alterar avisos de copyright o de licencia.
+
+3. Código fuente. El código del repositorio se publica únicamente para su consulta. Su publicación no concede
+   ninguna licencia para copiarlo, modificarlo, compilar versiones propias ni distribuirlo, salvo lo que la ley
+   aplicable permita expresamente.
+
+4. Componentes de terceros. La Aplicación incluye bibliotecas de terceros distribuidas bajo sus propias
+   licencias (MIT, Apache-2.0, BSD), listadas en THIRD_PARTY_NOTICES.md. Esta licencia no limita los derechos
+   que esas licencias otorgan sobre dichos componentes. Los modelos de voz y de texto no se incluyen: la
+   Aplicación los descarga de Hugging Face cuando el usuario lo solicita, y su uso se rige por sus licencias
+   (CC-BY-4.0, MIT y otras indicadas en THIRD_PARTY_NOTICES.md).
+
+5. Responsabilidad del usuario. Quien use la Aplicación es responsable de cumplir las leyes de su jurisdicción
+   sobre grabación de conversaciones, protección de datos y consentimiento de los participantes.
+
+6. Sin garantía. LA APLICACIÓN SE PROPORCIONA "TAL CUAL", SIN GARANTÍAS DE NINGÚN TIPO, EXPRESAS O IMPLÍCITAS,
+   INCLUIDAS LAS DE COMERCIABILIDAD, IDONEIDAD PARA UN FIN PARTICULAR Y NO INFRACCIÓN. LAS TRANSCRIPCIONES,
+   IDENTIFICACIONES DE PARTICIPANTES Y ANÁLISIS PUEDEN CONTENER ERRORES.
+
+7. Limitación de responsabilidad. EN NINGÚN CASO EL TITULAR SERÁ RESPONSABLE DE DAÑOS DIRECTOS, INDIRECTOS,
+   INCIDENTALES O CONSECUENTES, NI DE PÉRDIDA DE DATOS, DERIVADOS DEL USO O DE LA IMPOSIBILIDAD DE USAR LA
+   APLICACIÓN, EN LA MEDIDA MÁXIMA PERMITIDA POR LA LEY.
+
+8. Terminación. El incumplimiento de esta licencia la extingue automáticamente; en ese caso deben eliminarse
+   todas las copias de la Aplicación.

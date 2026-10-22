@@ -73,7 +73,7 @@ Medido el 16-oct-2026 (macOS 27.0.1, FluidAudio 0.17.7, Parakeet Ultra), con un 
 | 24 diálogos sintéticos (frases entre silencios largos) | WER 10,7 % | WER 1,9 % |
 | 80 frases aisladas en 22 s de silencio | WER 26,6 % (51/80 exactas) | WER 20,1 % (62/80) |
 | Fixtures previos | — | mismo texto |
-| Reunión real autorizada (solo verificación local) | remoto "(saludo con la primera palabra en francés)" · micrófono "(frase en inglés)" | remoto "Aló, ¿cómo está?" · micrófono "(palabra en español)" (sin referencia) |
+| Reunión real autorizada (solo verificación local; no se citan sus palabras) | remoto: saludo en francés · micrófono: frase en inglés | remoto: saludo en español · micrófono: frase corta en español (sin referencia) |
 
 Pasar `language: .spanish` no cambia el texto en español frente a `nil` (167/169 idénticos; los otros 2 pasan de
 cirílico a `<unk>`); bajar el nivel a −40 dBFS no empeora el resultado. Pendiente: medir la tasa de deriva en
