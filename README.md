@@ -32,9 +32,14 @@ apps y **local por defecto**.
 
 1. Descarga `Meeting-Intelligence-<versión>.dmg` desde [Releases](https://github.com/corpjorge/MeetingIntelligence/releases)
    (o el `.zip`; las sumas SHA-256 están en `SHA256SUMS.txt`).
-2. Abre el DMG y arrastra **Meeting Intelligence** a **Aplicaciones**.
-3. La app no está notarizada por Apple: al abrirla por primera vez, macOS dirá que no puede verificar al
-   desarrollador. Ve a **Ajustes del Sistema › Privacidad y seguridad** y pulsa **Abrir de todos modos**.
+2. Abre el DMG y arrastra **Meeting Intelligence** a la carpeta **Aplicaciones** de la misma ventana:
+
+   <img src="docs/images/instalar.png" width="460" alt="Ventana del DMG: arrastrar la app a Aplicaciones">
+
+3. Abre la app desde Aplicaciones. Como **no está notarizada por Apple**, macOS mostrará «No se abrió “Meeting
+   Intelligence”»: pulsa **Listo**. Luego abre **Ajustes del Sistema › Privacidad y seguridad**, baja hasta
+   **Seguridad** y pulsa **Abrir de todos modos** junto a «Se bloqueó “Meeting Intelligence”»; confirma con tu
+   contraseña y pulsa **Abrir**. Solo hace falta la primera vez. (Desde macOS 15 ya no basta con clic derecho › Abrir.)
 4. En el primer uso descarga los modelos locales (Parakeet Ultra ~630 MB y diarización ~22 MB) y pide permiso de
    **micrófono** y de **audio del sistema** cuando grabas por primera vez.
 
