@@ -9,7 +9,7 @@ apps y **local por defecto**.
 - Transcribe localmente con **Parakeet Ultra** (FluidAudio + Core ML, Apple Neural Engine).
 - Separa hablantes con **diarización offline** (pyannote community + WeSpeaker + VBx) y reconoce participantes
   registrados **solo con consentimiento** y umbrales **calibrados con tus propios datos**.
-- Analiza reuniones con **Claude Code CLI, Codex CLI, Antigravity CLI u Ollama** — opcional, con confirmación explícita
+- Analiza reuniones con **Claude Code CLI, Codex CLI, Antigravity CLI, GitHub Copilot CLI u Ollama** — opcional, con confirmación explícita
   y **evidencia verificable** (cita exacta + timestamp) para cada hallazgo.
 - Búsqueda local **SQLite FTS5** (y por significado, opcional), chat entre reuniones con citas e historial,
   exportación TXT/Markdown/JSON/SRT/PDF y un **servidor MCP** de solo lectura para clientes como Claude Code y Codex.
@@ -53,7 +53,7 @@ DMG y reemplaza la anterior. Como la app no tiene firma de desarrollador, macOS 
 micrófono y de audio del sistema después de cada actualización.
 
 **Requisitos:** Mac con Apple Silicon (M1 o posterior) y macOS 26 o posterior. Los análisis con IA son opcionales y
-usan las CLIs que tengas instaladas (Claude Code, Codex, Antigravity) u Ollama.
+usan las CLIs que tengas instaladas (Claude Code, Codex, Antigravity, GitHub Copilot) u Ollama.
 
 **Desinstalar:** borra la app y, si quieres eliminar también tus datos, la carpeta
 `~/Library/Application Support/MeetingIntelligence` (reuniones) y los modelos en
@@ -83,6 +83,7 @@ Uso gratuito según [LICENSE](LICENSE); componentes de terceros en [THIRD_PARTY_
 | Identidades manuales conservadas al reprocesar | ✅ | Integración real: asignar → reprocesar → identidad conservada |
 | Diccionario personalizado | ✅ | Pruebas + integración |
 | Análisis IA con evidencia (Codex) | ✅ | Ejecución real con Codex CLI sobre reunión fixture |
+| Análisis IA y chat con GitHub Copilot CLI | ✅ | Ejecución real sobre reunión fixture; sin herramientas comprobado con una sonda; `COPILOT_HOME` aislado (TD-12) |
 | Análisis IA (Claude Code CLI / Antigravity / Ollama) | ✅ Implementado | Formatos de salida verificados; Claude: sesión OAuth expirada en el entorno de pruebas; Ollama no instalado |
 | Chat entre reuniones (FTS5 + IA opcional) | ✅ | Pruebas |
 | Historial persistente del chat (por reunión y entre reuniones) | ✅ | Pruebas de persistencia y de borrado de reuniones citadas; carga verificada en capturas |
@@ -95,7 +96,7 @@ Uso gratuito según [LICENSE](LICENSE); componentes de terceros en [THIRD_PARTY_
 | Actualizaciones de la app (GitHub, firma Ed25519, reinicio) | ✅ | Pruebas + de punta a punta con la app real: 0.2.0 → 0.2.1 con servidor local; firma alterada rechazada (TD-29); **pendiente** primera actualización real en `/Applications` |
 | Exportación TXT/MD/JSON/SRT/PDF | ✅ | Pruebas |
 
-136 pruebas automatizadas pasan (`scripts/test.sh`), incluidas 7 de integración con los modelos reales. Otras 4
+138 pruebas automatizadas pasan (`scripts/test.sh`), incluidas 7 de integración con los modelos reales. Otras 4
 (mediciones de TD-24/TD-26, e5-small y actualización real desde Hugging Face) se activan bajo demanda; ver `TESTING.md`.
 
 ## Requisitos
@@ -144,7 +145,7 @@ mi import grabacion.m4a --title "Comité"    # importa + Ultra + diarización + 
 mi show <meetingId>                         # transcripción con hablantes y timestamps
 mi search "indicador de ingresos"           # búsqueda local FTS5
 mi export <meetingId> --format pdf
-mi ai-providers                             # detecta Claude / Codex / Antigravity / Ollama
+mi ai-providers                             # detecta Claude / Codex / Antigravity / Copilot / Ollama
 mi analyze <meetingId> --provider codex --effort high --share
 mi ask "¿Qué compromisos asumió Carlos?" --provider ollama
 mi evaluate audio.wav --reference ref.txt --rttm ref.rttm   # WER / DER / RTFx reproducibles

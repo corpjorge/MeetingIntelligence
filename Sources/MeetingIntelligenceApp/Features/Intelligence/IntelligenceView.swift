@@ -87,7 +87,7 @@ struct ProvidersPane: View {
                 HStack {
                     InlineBanner(tone: .info, systemImage: "lock.shield",
                                  title: "Ejecutar un CLI en tu Mac no significa que el modelo sea local",
-                                 message: "Claude Code, Codex y Antigravity envían el texto a la nube de su proveedor; la app te pedirá confirmación cada vez. Ollama procesa todo en este Mac. Los agentes se ejecutan sin herramientas ni permisos de sistema.")
+                                 message: "Claude Code, Codex, Antigravity y GitHub Copilot envían el texto a la nube de su proveedor; la app te pedirá confirmación cada vez. Ollama procesa todo en este Mac. Los agentes se ejecutan sin herramientas ni permisos de sistema.")
                 }
                 HStack {
                     Spacer()

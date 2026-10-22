@@ -47,14 +47,17 @@ struct ConversationAppsAndEffortTests {
         #expect(codex.last == "-")
         let agy = AntigravityProvider.arguments(for: request(effort: "max"), prompt: "p")
         #expect(agy.windowContains(["--effort", "max"]))
+        let copilot = CopilotCLIProvider.arguments(for: request(effort: "xhigh"))
+        #expect(copilot.windowContains(["--reasoning-effort", "xhigh"]) && copilot.windowContains(["--model", "m"]))
         // Unknown levels are never forwarded; no effort → provider default.
         #expect(!ClaudeCodeProvider.arguments(for: request(effort: "turbo")).contains("--effort"))
         #expect(!CodexProvider.arguments(for: request(effort: nil), schemaPath: "", outputPath: "", workingDirectory: "")
             .contains { $0.contains("reasoning") })
         // Safety: no permission-bypass flags in any provider.
-        for args in [claude, codex, agy] {
+        for args in [claude, codex, agy, copilot] {
             #expect(!args.contains { $0.localizedCaseInsensitiveContains("dangerously") })
         }
+        #expect(!copilot.contains { $0.hasPrefix("--allow") || $0 == "--yolo" || $0.hasPrefix("--trust") })
         #expect(claude.windowContains(["--tools", ""]))
         #expect(codex.windowContains(["--sandbox", "read-only"]))
     }

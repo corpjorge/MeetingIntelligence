@@ -21,7 +21,7 @@ struct OnboardingView: View {
                     feature("lock.shield", "Privado por diseño", "Audio, transcripciones y perfiles de voz se quedan en este Mac.")
                     feature("cpu", "Parakeet Ultra en el Neural Engine", "Transcripción local de alta precisión en español con términos en inglés.")
                     feature("person.2.wave.2", "Quién dijo qué", "Diarización local y reconocimiento de voces solo con consentimiento.")
-                    feature("sparkles", "IA opcional", "Claude Code, Codex, Antigravity u Ollama, siempre con tu confirmación.")
+                    feature("sparkles", "IA opcional", "Claude Code, Codex, Antigravity, GitHub Copilot u Ollama, siempre con tu confirmación.")
                 }
                 VStack(alignment: .leading, spacing: DS.Space.xs) {
                     Text("¿Cómo te llamas?").font(DS.Font.headline)

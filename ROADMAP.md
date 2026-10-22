@@ -8,7 +8,7 @@
 | 3 | FluidAudio + Parakeet Ultra (definitiva) + provisional en vivo | ✅ verificada |
 | 4 | Diarización offline + alineación + eco | ✅ verificada (fixtures) |
 | 5 | Perfiles persistentes y reconocimiento calibrado | ✅ implementada · ⏳ validación con voces reales |
-| 6 | Claude Code, Codex, Antigravity, Ollama | ✅ (Codex verificado end-to-end) |
+| 6 | Claude Code, Codex, Antigravity, GitHub Copilot CLI, Ollama | ✅ (Codex y Copilot verificados end-to-end) |
 | 7 | Análisis con evidencia, búsqueda FTS5, chat | ✅ |
 | 8 | Servidor MCP local | ✅ verificado por stdio |
 | 9 | Testing integral, rendimiento, pulido | 🔄 en curso |
@@ -26,6 +26,9 @@
 4. Integración opcional de calendario para "Próximas reuniones" (requiere permiso de Calendario; no implementado).
 5. Validar con grabaciones reales autorizadas la búsqueda semántica (TD-25), el refuerzo del diccionario (TD-24) y la
    redecodificación de frases cortas (TD-26); hoy solo están medidos con voces sintéticas.
+
+Hecho el 22-oct-2026 (0.2.1): GitHub Copilot CLI como proveedor de IA, sin herramientas y con `COPILOT_HOME` aislado
+(TD-12); primera versión que se puede instalar desde la app.
 
 Hecho el 22-oct-2026 (0.2.0): la app se actualiza sola desde GitHub con firma Ed25519, solo con tu confirmación (TD-29;
 pendiente comprobarlo con la primera actualización real en `/Applications`); Codex aislado de `config.toml` y sin

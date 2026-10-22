@@ -5,6 +5,7 @@ public enum AIProviderKind: String, Codable, Sendable, CaseIterable, Identifiabl
     case claudeCode
     case codex
     case antigravity
+    case copilotCLI
     case ollama
 
     public var id: String { rawValue }
@@ -14,6 +15,7 @@ public enum AIProviderKind: String, Codable, Sendable, CaseIterable, Identifiabl
         case .claudeCode: "Claude Code CLI"
         case .codex: "OpenAI Codex CLI"
         case .antigravity: "Google Antigravity CLI"
+        case .copilotCLI: "GitHub Copilot CLI"
         case .ollama: "Ollama (local)"
         }
     }
@@ -22,7 +24,7 @@ public enum AIProviderKind: String, Codable, Sendable, CaseIterable, Identifiabl
     /// CLIs run locally but send prompts to their vendor's cloud models.
     public var sendsDataToRemoteService: Bool {
         switch self {
-        case .claudeCode, .codex, .antigravity: true
+        case .claudeCode, .codex, .antigravity, .copilotCLI: true
         case .ollama: false
         }
     }

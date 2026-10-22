@@ -44,6 +44,9 @@ enum SnapshotDriver {
                     }
                 }
                 captureUpdateStates(suffix: suffix, in: dir, env: env)
+                // Provider cards (local detection only; the Intelligence screen runs it too).
+                if env.ai.statuses.isEmpty { await env.ai.refreshStatuses() }
+                captureWindowContent("intelligence-providers-\(suffix)", in: dir) { ProvidersPane().environment(env) }
                 // MI_SNAPSHOT_MEETING picks a specific meeting id; default is the first ready one.
                 let wanted = ProcessInfo.processInfo.environment["MI_SNAPSHOT_MEETING"]
                 // The Settings scene is a separate window; render its pages standalone.

@@ -176,8 +176,9 @@ enum Commands {
         case "claude", "claudecode", "claude-code": .claudeCode
         case "codex": .codex
         case "agy", "antigravity": .antigravity
+        case "copilot", "copilot-cli", "github-copilot": .copilotCLI
         case "ollama": .ollama
-        default: throw CLIError(message: "Indica --provider claude|codex|agy|ollama")
+        default: throw CLIError(message: "Indica --provider claude|codex|agy|copilot|ollama")
         }
     }
 

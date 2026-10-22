@@ -12,7 +12,7 @@ MeetingCore              Dominio, persistencia (GRDB/SQLite WAL + FTS5), búsque
   ├─ Search/             SearchService (FTS5, BM25, prefijos, plurales) + búsqueda por coseno y fusión (TD-25)
   ├─ Speakers/           SpeakerMatcher + SpeakerCalibration (puro, testeable)
   ├─ Export/             TXT, Markdown, JSON (documento completo), SRT, PDF (Core Text)
-  ├─ AI/                 ProcessRunner, ToolEnvironment, AIProvider (+4 proveedores),
+  ├─ AI/                 ProcessRunner, ToolEnvironment, AIProvider (+5 proveedores),
   │                      MeetingAnalysisService, MeetingChatService
   ├─ MCP/                MCPServerCore (JSON-RPC dual-era), MCPTools, MCPAccessPolicy
   ├─ Security/           KeychainStore, BiometricVault (AES-GCM)

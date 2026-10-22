@@ -52,7 +52,7 @@ uso: mi <comando> [opciones]
   models [update <id>]           Versiones de los modelos (consulta Hugging Face) y actualización verificada
   export <meetingId> --format txt|markdown|json|srt|pdf [--out ruta]
   ai-providers                   Detecta proveedores de IA (versión, sesión, modelos)
-  analyze <meetingId> --provider claude|codex|agy|ollama [--model M] [--effort E] [--share]
+  analyze <meetingId> --provider claude|codex|agy|copilot|ollama [--model M] [--effort E] [--share]
                                  Analiza con IA; los proveedores en la nube exigen --share
   ask <pregunta> [--meeting ID] [--provider P] [--share] [--semantic] [--save]
                                  Pregunta sobre reuniones (búsqueda local + IA opcional)

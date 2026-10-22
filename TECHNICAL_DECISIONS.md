@@ -96,6 +96,28 @@ aparece en la transcripción → "Información no confirmada".
   automáticamente. Comprobado: sin instrucción explícita intentó ejecutar un comando y devolvió vacío; con instrucción
   de no usar herramientas respondió, pero con **dos** objetos JSON en `response` → `JSONExtraction` elige el que tiene
   las claves esperadas. Nunca se usa `--dangerously-skip-permissions`.
+- GitHub Copilot CLI (`copilot`, 1.0.101): `copilot --output-format json --no-auto-update --no-custom-instructions
+  --no-ask-user --disable-builtin-mcps --disallow-temp-dir --no-remote-export --disable-client-telemetry
+  --available-tools=mi_sin_herramientas --deny-tool=shell --deny-tool=write --deny-tool=url`. El prompt va por stdin
+  y se ejecuta con un `COPILOT_HOME` temporal y vacío. Comprobado el 22-oct-2026:
+  - **`--available-tools=` vacío no desactiva nada.** El modelo seguía viendo `bash`, `view`, `web_fetch` y
+    subagentes, y usó una herramienta. Con un nombre inexistente en la lista, Copilot oculta todas («Disabled tools:
+    bash, create, edit, glob, grep…»). Control con un archivo inocuo en el directorio de trabajo: sin restricciones
+    lo leyó con `view`; con ellas respondió «SIN HERRAMIENTAS» y no hubo ningún `tool.execution_start`. Si apareciera
+    alguno, la respuesta se descarta.
+  - **`COPILOT_HOME` temporal:** no carga *hooks* (que ejecutan comandos), plugins, servidores MCP, instrucciones ni
+    carpetas de confianza del usuario. La sesión, el registro y los logs (que contienen la transcripción) se crean
+    ahí y se borran al terminar. La autenticación sigue funcionando porque Copilot la toma del llavero o de `gh`. Se
+    quitan `COPILOT_ALLOW_ALL`, `COPILOT_ASSISTED_APPROVAL` y `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` del entorno.
+  - No tiene `--json-schema`: el esquema va en el prompt y `JSONExtraction` toma el objeto con las claves esperadas
+    del último `assistant.message` del JSONL, que también indica el modelo usado. Los errores solo usan stderr,
+    porque el JSONL repite el prompt, es decir, la transcripción.
+  - El catálogo de modelos depende del plan: con la cuenta personal de prueba solo «auto» estaba disponible
+    (`--model X` → «is not available»). Modelo vacío = «auto».
+  - Otra herramienta también se llama `copilot` (AWS Copilot CLI): solo se usa si `--version` dice «GitHub Copilot».
+  - Sin sesión termina con «No authentication information found» antes de enviar nada → «Sin sesión».
+  - Análisis real y chat sobre el fixture sintético: correctos (modelo `gpt-5.6-luna`, 8,3 s, citas verificadas).
+    Cada ejecución cuenta como una solicitud de Copilot.
 - Ollama: solo endpoints loopback; JSON schema vía `format`.
 - Siempre: directorio temporal vacío, timeout, cancelación (SIGTERM→SIGKILL), consentimiento previo para proveedores
   en la nube con el resumen exacto de lo que se comparte, transcripción delimitada como datos no confiables.
@@ -157,6 +179,9 @@ un control propio: se escribe silencio en la pista del micrófono y se registra 
 - Codex: `-c model_reasoning_effort="…"` (clave verificada en el binario 0.160.1 y en `~/.codex/config.toml`);
   los niveles admitidos dependen del modelo y Codex los informa si no corresponde.
 - Antigravity: `--effort low|medium|high|max` (`agy --help`).
+- GitHub Copilot CLI: `--reasoning-effort minimal|low|medium|high|xhigh|max` (`copilot --help`, 1.0.101). Con el
+  modelo «auto» lo rechaza («does not support reasoning effort configuration»), así que la app exige un modelo
+  concreto antes de enviar nada.
 - Ollama: `think` con los valores que cada modelo declara en `/api/show` (`thinking.values`); sin valores, no se ofrece.
 El esfuerzo usado queda registrado en cada análisis (`aiAnalysis.effort`).
 

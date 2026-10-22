@@ -10,7 +10,7 @@ Framework: **Swift Testing** (XCTest no está disponible con Command Line Tools)
 preferencias) tiene su propio target, `MeetingIntelligenceAppTests`; las vistas se verifican con capturas (TD-15). Las pruebas de integración con
 modelos reales se ejecutan solo si Parakeet Ultra y la diarización ya están en caché (nunca descargan en CI).
 
-## Inventario (136 pruebas, todas pasan al 22-oct-2026; 4 más bajo demanda)
+## Inventario (138 pruebas, todas pasan al 22-oct-2026; 4 más bajo demanda)
 
 | Suite | Cubre |
 |---|---|
@@ -18,7 +18,7 @@ modelos reales se ejecutan solo si Parakeet Ultra y la diarización ya están en
 | Búsqueda FTS5 | sin acentos, prefijos, plurales, ediciones de usuario, alcance por reunión |
 | Exportación | JSON completo (timestamps, origen del texto, correcciones), SRT, Markdown, TXT, PDF; sin datos biométricos |
 | Utilidades / Cifrado | timecodes, normalización, diccionario por palabra completa, AES-GCM (ida y vuelta, manipulación, revocación) |
-| IA | extracción JSON ruidosa (formato real de `agy`), verificación de citas, cita inventada → no confirmada, consentimiento remoto obligatorio, salida inválida registrada, chat con citas válidas, timeout de procesos, una CLI que no lee la transcripción no cierra la app (SIGPIPE), Codex aislado de `config.toml` y sin ejecución de comandos (solo funciones que esa versión conoce; sin `shell_tool`/`unified_exec` no se envía nada), modelo y esfuerzo de `config.toml` conservados, Ollama solo local |
+| IA | extracción JSON ruidosa (formato real de `agy`), verificación de citas, cita inventada → no confirmada, consentimiento remoto obligatorio, salida inválida registrada, chat con citas válidas, timeout de procesos, una CLI que no lee la transcripción no cierra la app (SIGPIPE), Codex aislado de `config.toml` y sin ejecución de comandos (solo funciones que esa versión conoce; sin `shell_tool`/`unified_exec` no se envía nada), modelo y esfuerzo de `config.toml` conservados, Copilot CLI sin herramientas (lista con un nombre inexistente, shell/escritura/URLs denegados), `COPILOT_HOME` aislado y variables que reactivan herramientas eliminadas, esfuerzo sin modelo rechazado antes de enviar, lectura del JSONL (último mensaje y modelo; respuesta descartada si se usó una herramienta), AWS Copilot no se confunde con GitHub Copilot, Ollama solo local |
 | Servidor MCP | `initialize` legacy, `server/discover` moderno, versión no soportada (-32022), errores JSON-RPC, acceso deshabilitado por defecto, herramientas con timestamps, validación de parámetros, política por reunión |
 | Escritura WAV / Alineación / Conversión | WAV legible, recuperación tras cierre, huecos, deriva, pausas, remuestreo 48→16 kHz (duración, tono, nivel), mezcla a mono |
 | Compactación de silencio antes del ASR | tramos muertos inicial/intermedio/final, pausas < 1 s y voz baja (−60 dBFS) intactas, última trama parcial, remapeo de tiempos (uniones, tokens recortados), muestras conservadas idénticas, archivo sin silencio → no se copia |

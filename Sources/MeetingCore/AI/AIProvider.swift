@@ -96,6 +96,7 @@ public enum AIProviders {
         case .claudeCode: ClaudeCodeProvider()
         case .codex: CodexProvider()
         case .antigravity: AntigravityProvider()
+        case .copilotCLI: CopilotCLIProvider()
         case .ollama: OllamaProvider()
         }
     }

@@ -176,6 +176,69 @@ struct AIAnalysisTests {
         #expect(args.last == "-")
     }
 
+    @Test func copilotRunsWithoutToolsOrUserConfiguration() {
+        let request = AIRequest(instructions: "i", input: "x", jsonSchema: #"{"type":"object"}"#, requiredKeys: [],
+                                model: nil, effort: nil, timeoutSeconds: 60)
+        let args = CopilotCLIProvider.arguments(for: request)
+        // Only a tool name that does not exist is allowed: Copilot hides every tool.
+        #expect(args.contains("--available-tools=mi_sin_herramientas"))
+        for flag in ["--no-custom-instructions", "--disable-builtin-mcps", "--disallow-temp-dir", "--no-ask-user",
+                     "--no-remote-export", "--deny-tool=shell", "--deny-tool=write", "--deny-tool=url"] {
+            #expect(args.contains(flag), "\(flag)")
+        }
+        #expect(args.windowContains(["--output-format", "json"]))
+        #expect(!args.contains { $0.hasPrefix("--allow") || $0 == "--yolo" || $0.hasPrefix("--trust") || $0 == "-p" })
+        #expect(!args.contains("--model")) // empty model = auto
+
+        // Fresh COPILOT_HOME: the user's hooks, plugins, MCP servers and instructions are not loaded.
+        let env = CopilotCLIProvider.environment(["COPILOT_ALLOW_ALL": "true", "COPILOT_HOME": "/Users/x/.copilot",
+                                                  "COPILOT_CUSTOM_INSTRUCTIONS_DIRS": "/a", "GH_TOKEN": "t",
+                                                  "PATH": "/bin"], home: URL(fileURLWithPath: "/tmp/h"))
+        #expect(env["COPILOT_HOME"] == "/tmp/h" && env["COPILOT_AUTO_UPDATE"] == "false")
+        #expect(env["COPILOT_ALLOW_ALL"] == nil && env["COPILOT_CUSTOM_INSTRUCTIONS_DIRS"] == nil)
+        #expect(env["GH_TOKEN"] == "t" && env["PATH"] == "/bin") // authentication keeps working
+
+        // No JSON Schema flag: the schema travels in the prompt, before the delimited transcript.
+        let prompt = CopilotCLIProvider.prompt(for: request)
+        #expect(prompt.hasPrefix("i\n") && prompt.contains("JSON Schema:\n" + #"{"type":"object"}"#) && prompt.hasSuffix("x"))
+    }
+
+    @Test func copilotModelEffortAndEventStream() throws {
+        func request(_ model: String?, _ effort: String?) -> AIRequest {
+            AIRequest(instructions: "i", input: "x", jsonSchema: "{}", requiredKeys: [], model: model, effort: effort,
+                      timeoutSeconds: 60)
+        }
+        #expect(!CopilotCLIProvider.arguments(for: request("auto", nil)).contains("--model"))
+        let explicit = CopilotCLIProvider.arguments(for: request("claude-sonnet-5.5", "high"))
+        #expect(explicit.windowContains(["--model", "claude-sonnet-5.5"]))
+        #expect(explicit.windowContains(["--reasoning-effort", "high"]))
+        // Copilot rejects an effort with "auto": refused before anything is sent.
+        #expect(throws: AIProviderError.self) { try CopilotCLIProvider.validate(request(nil, "high")) }
+        #expect(throws: AIProviderError.self) { try CopilotCLIProvider.validate(request("Auto", "low")) }
+        try CopilotCLIProvider.validate(request("gpt-5", "high"))
+        try CopilotCLIProvider.validate(request(nil, nil))
+
+        // Event format of Copilot CLI 1.0.101 (--output-format json).
+        let jsonl = """
+        {"type":"session.info","data":{"infoType":"configuration","message":"Disabled tools: bash, create, edit"},"ephemeral":true}
+        {"type":"user.message","data":{"content":"transcripción"}}
+        {"type":"assistant.message","data":{"model":"gpt-5.6-luna","content":"Revisando…"}}
+        no es JSON
+        {"type":"assistant.message","data":{"model":"gpt-5.6-luna","content":"{\\"answer\\":\\"ok\\"}"}}
+        {"type":"assistant.message","data":{"model":"gpt-5.6-luna","content":"  "}}
+        {"type":"result","exitCode":0}
+        """
+        let output = CopilotCLIProvider.parse(jsonl)
+        #expect(output == CopilotCLIProvider.Output(text: #"{"answer":"ok"}"#, model: "gpt-5.6-luna", toolsUsed: []))
+        let withTool = CopilotCLIProvider.parse(jsonl + "\n" + #"{"type":"tool.execution_start","data":{"toolName":"view"}}"#)
+        #expect(withTool.toolsUsed == ["view"]) // the answer is discarded
+
+        // AWS Copilot CLI is also called `copilot`.
+        #expect(CopilotCLIProvider.isGitHubCopilot(version: "GitHub Copilot CLI 1.0.101."))
+        #expect(!CopilotCLIProvider.isGitHubCopilot(version: "copilot version: v1.34.0"))
+        #expect(!CopilotCLIProvider.isGitHubCopilot(version: nil))
+    }
+
     @Test func codexKeepsModelAndEffortFromConfigOnly() {
         let toml = """
         # comment

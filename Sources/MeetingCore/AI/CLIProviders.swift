@@ -220,6 +220,163 @@ public struct CodexProvider: AIProvider {
     }
 }
 
+// MARK: - GitHub Copilot CLI
+
+/// `copilot` (GitHub Copilot CLI) reading the prompt from stdin, isolated (TD-12):
+/// * a fresh, empty `COPILOT_HOME` per run, so the user's hooks, plugins, MCP servers, custom instructions and
+///   saved sessions are not loaded, and nothing of the meeting is persisted in `~/.copilot` (the session store
+///   and logs live in the temporary home and are deleted);
+/// * no tools at all: `--available-tools` lists only a name that does not exist, which hides every tool
+///   (verified: Copilot reports "Disabled tools: bash, create, edit, …"); shell, writes and URLs are also denied;
+/// * any tool execution in the event stream discards the answer.
+/// Prompts are sent to GitHub Copilot's cloud models. There is no JSON Schema flag: the schema goes in the prompt.
+public struct CopilotCLIProvider: AIProvider {
+    public let kind = AIProviderKind.copilotCLI
+    /// `--reasoning-effort` values (`copilot --help`, 1.0.101). Copilot rejects them with the "auto" model.
+    public static let effortLevels = ["minimal", "low", "medium", "high", "xhigh", "max"]
+    /// Allowlist entry that matches no tool: every tool is hidden from the model.
+    static let noToolsAllowlist = "mi_sin_herramientas"
+    /// Environment variables that could re-enable tools, approvals or instruction files.
+    static let strippedEnvironment = ["COPILOT_ALLOW_ALL", "COPILOT_ASSISTED_APPROVAL", "COPILOT_CUSTOM_INSTRUCTIONS_DIRS",
+                                      "COPILOT_HOME"]
+    public init() {}
+
+    /// Never includes `--allow-all*`, `--yolo`, `--trust-folder` or `--allow-tool`.
+    static func arguments(for request: AIRequest) -> [String] {
+        var args = ["--output-format", "json", "--no-auto-update", "--no-custom-instructions", "--no-ask-user",
+                    "--disable-builtin-mcps", "--disallow-temp-dir", "--no-remote-export", "--disable-client-telemetry",
+                    "--available-tools=\(noToolsAllowlist)",
+                    "--deny-tool=shell", "--deny-tool=write", "--deny-tool=url"]
+        if let model = explicitModel(request.model) { args += ["--model", model] }
+        if let effort = request.effort, effortLevels.contains(effort) { args += ["--reasoning-effort", effort] }
+        return args
+    }
+
+    /// nil = let Copilot choose ("auto"), which is also its default.
+    static func explicitModel(_ model: String?) -> String? {
+        guard let model = model?.trimmingCharacters(in: .whitespaces), !model.isEmpty,
+              model.lowercased() != "auto" else { return nil }
+        return model
+    }
+
+    /// Rejects combinations Copilot would refuse, before anything is sent.
+    static func validate(_ request: AIRequest) throws {
+        if let effort = request.effort, effortLevels.contains(effort), explicitModel(request.model) == nil {
+            throw AIProviderError.failed(.copilotCLI, "con el modelo «auto» no se puede elegir el esfuerzo. Escribe un "
+                                         + "modelo concreto o deja el esfuerzo en Predeterminado. No se envió nada.")
+        }
+    }
+
+    static func prompt(for request: AIRequest) -> String {
+        request.instructions
+            + "\n\nFormato de la respuesta: devuelve únicamente un objeto JSON válido, sin texto antes ni después y sin "
+            + "bloques de código, que cumpla este JSON Schema:\n" + request.jsonSchema + "\n\n" + request.input
+    }
+
+    static func environment(_ base: [String: String], home: URL) -> [String: String] {
+        var env = base.filter { !strippedEnvironment.contains($0.key) }
+        env["COPILOT_HOME"] = home.path
+        env["COPILOT_AUTO_UPDATE"] = "false"
+        env["NO_COLOR"] = "1"
+        return env
+    }
+
+    struct Output: Equatable {
+        var text = ""
+        var model: String?
+        var toolsUsed: [String] = []
+    }
+
+    /// Last non-empty `assistant.message` of the JSONL event stream, and any tool execution.
+    static func parse(_ jsonl: String) -> Output {
+        var output = Output()
+        for line in jsonl.split(separator: "\n") {
+            guard let event = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  let type = event["type"] as? String else { continue }
+            let data = event["data"] as? [String: Any]
+            switch type {
+            case "assistant.message":
+                if let content = data?["content"] as? String,
+                   !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    output.text = content
+                    output.model = data?["model"] as? String ?? output.model
+                }
+            case "tool.execution_start":
+                output.toolsUsed.append(data?["toolName"] as? String ?? "desconocida")
+            default:
+                break
+            }
+        }
+        return output
+    }
+
+    /// Another tool is also called `copilot` (AWS Copilot CLI): never send meetings to it.
+    static func isGitHubCopilot(version: String?) -> Bool {
+        version?.localizedCaseInsensitiveContains("GitHub Copilot") == true
+    }
+
+    public func detect(configuration: AIProviderConfiguration) async -> ProviderStatus {
+        guard let exe = await ToolEnvironment.shared.locate("copilot", configuredPath: configuration.executablePath) else {
+            return ProviderStatus(kind: kind, installed: false)
+        }
+        let env = await ToolEnvironment.shared.environment()
+        let version = await CLISupport.version(exe, env: env)
+        guard Self.isGitHubCopilot(version: version) else {
+            return ProviderStatus(kind: kind, installed: false, executablePath: exe.path, version: version,
+                                  notes: ["El ejecutable «copilot» de esta ubicación no es GitHub Copilot CLI."])
+        }
+        var status = ProviderStatus(kind: kind, installed: true, executablePath: exe.path, version: version,
+                                    notes: ["Se ejecuta localmente, pero los modelos de GitHub Copilot procesan los datos en la nube.",
+                                            "Sin herramientas y sin cargar tu ~/.copilot (hooks, plugins, MCP, instrucciones); "
+                                            + "la sesión no se guarda.",
+                                            "Modelo vacío = auto. El esfuerzo solo se aplica con un modelo concreto. "
+                                            + "Cada análisis cuenta como una solicitud de Copilot."])
+        status.authDetail = "Usa la sesión de `copilot login` o de `gh auth login`; se comprueba al analizar."
+        status.effortLevels = Self.effortLevels
+        return status
+    }
+
+    public func complete(_ request: AIRequest, configuration: AIProviderConfiguration) async throws -> AIResponse {
+        guard let exe = await ToolEnvironment.shared.locate("copilot", configuredPath: configuration.executablePath) else {
+            throw AIProviderError.notInstalled(kind)
+        }
+        try Self.validate(request)
+        let env = await ToolEnvironment.shared.environment()
+        guard Self.isGitHubCopilot(version: await CLISupport.version(exe, env: env)) else {
+            throw AIProviderError.failed(kind, "el ejecutable \(exe.path) no es GitHub Copilot CLI; no se envió nada.")
+        }
+        let workdir = try CLISupport.makeSandboxDirectory()
+        defer { try? FileManager.default.removeItem(at: workdir) }
+        let home = workdir.appendingPathComponent("copilot-home", isDirectory: true)
+        let runDir = workdir.appendingPathComponent("work", isDirectory: true)
+        for dir in [home, runDir] { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) }
+        let result = try await ProcessRunner.run(executable: exe, arguments: Self.arguments(for: request),
+                                                 stdin: Data(Self.prompt(for: request).utf8),
+                                                 environment: Self.environment(env, home: home),
+                                                 workingDirectory: runDir, timeout: request.timeoutSeconds)
+        if result.timedOut { throw ProcessRunnerError.timedOut(request.timeoutSeconds) }
+        let output = Self.parse(result.stdoutText)
+        guard output.toolsUsed.isEmpty else {
+            throw AIProviderError.failed(kind, "el agente usó herramientas (\(output.toolsUsed.joined(separator: ", "))); "
+                                         + "se descartó la respuesta")
+        }
+        guard result.exitCode == 0 else {
+            if result.stderrText.localizedCaseInsensitiveContains("No authentication information") {
+                throw AIProviderError.notAuthenticated(kind, "ejecuta `copilot` en una terminal e inicia sesión con /login "
+                                                       + "(o `gh auth login`).")
+            }
+            // stdout (JSONL) echoes the prompt, i.e. the transcript: errors use stderr only.
+            throw AIProviderError.failed(kind, result.stderrText.isEmpty ? "terminó con el código \(result.exitCode)"
+                                                                         : CLISupport.shortError(result.stderrText))
+        }
+        guard let data = JSONExtraction.object(in: output.text, requiredKeys: request.requiredKeys) else {
+            throw AIProviderError.invalidOutput(kind, "sin objeto JSON con las claves esperadas")
+        }
+        return AIResponse(json: data, rawOutput: output.text, model: output.model ?? request.model,
+                          durationSeconds: result.durationSeconds)
+    }
+}
+
 /// The values of `$CODEX_HOME/config.toml` the app still honours: model and reasoning effort, used when the user
 /// leaves them empty. Only top-level quoted strings with a safe charset are read; the rest of the file is ignored.
 struct CodexUserDefaults: Equatable, Sendable {
