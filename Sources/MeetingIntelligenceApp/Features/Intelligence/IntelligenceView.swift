@@ -15,7 +15,7 @@ struct IntelligenceView: View {
     @State private var showScopePicker = false
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: DS.Space.none) {
             VStack(alignment: .leading, spacing: DS.Space.m) {
                 VStack(alignment: .leading, spacing: DS.Space.xs) {
                     Text("Inteligencia").font(DS.Font.display)
@@ -25,7 +25,7 @@ struct IntelligenceView: View {
                 Picker("Vista", selection: $pane) {
                     ForEach(Pane.allCases) { Text($0.rawValue).tag($0) }
                 }
-                .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 460)
+                .pickerStyle(.segmented).labelsHidden().frame(maxWidth: DS.Layout.Control.segmentedPickerMaxWidth)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, DS.Space.xxl)
@@ -33,7 +33,7 @@ struct IntelligenceView: View {
 
             switch pane {
             case .chat:
-                VStack(spacing: 0) {
+                VStack(spacing: DS.Space.none) {
                     HStack(spacing: DS.Space.m) {
                         Label(scopeMeetings.isEmpty ? "Todas las reuniones" : "\(scopeMeetings.count) reuniones seleccionadas",
                               systemImage: "rectangle.stack")
@@ -72,7 +72,7 @@ struct IntelligenceView: View {
             Picker("Proveedor", selection: $ai.selectedProvider) {
                 ForEach(AIProviderKind.allCases) { Text($0.displayName).tag($0) }
             }
-            .frame(width: 220)
+            .frame(width: DS.Layout.Control.pickerWidth)
             if let status = env.ai.statuses[env.ai.selectedProvider] { ProviderStatusPill(status: status) }
         }
     }
@@ -121,9 +121,9 @@ struct ProviderCard: View {
             VStack(alignment: .leading, spacing: DS.Space.m) {
                 HStack(spacing: DS.Space.m) {
                     Image(systemName: kind.sendsDataToRemoteService ? "cloud" : "desktopcomputer")
-                        .frame(width: 30, height: 30)
+                        .frame(width: DS.Size.iconTile, height: DS.Size.iconTile)
                         .background(DS.Color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.Radius.s))
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: DS.Space.xxs) {
                         Text(kind.displayName).font(DS.Font.headline)
                         Text(kind.sendsDataToRemoteService ? "Modelo en la nube del proveedor" : "Modelo local")
                             .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
@@ -152,12 +152,12 @@ struct ProviderCard: View {
                                 Text("Predeterminado").tag("")
                                 ForEach(models, id: \.self) { Text($0).tag($0) }
                             }
-                            .frame(maxWidth: 320)
+                            .frame(maxWidth: DS.Layout.Control.fieldMaxWidth)
                         } else {
                             TextField("Modelo (vacío = predeterminado)", text: Binding(
                                 get: { binding.wrappedValue.model ?? "" },
                                 set: { binding.wrappedValue.model = $0.isEmpty ? nil : $0 }))
-                                .textFieldStyle(.roundedBorder).frame(maxWidth: 280)
+                                .textFieldStyle(.roundedBorder).frame(maxWidth: DS.Layout.Control.fieldNarrowMaxWidth)
                                 .onSubmit(save)
                         }
                         if let levels = status?.effortLevels, !levels.isEmpty {
@@ -166,7 +166,7 @@ struct ProviderCard: View {
                                 Text("Predeterminado").tag("")
                                 ForEach(levels, id: \.self) { Text(EffortLabel.text($0)).tag($0) }
                             }
-                            .frame(maxWidth: 220)
+                            .frame(maxWidth: DS.Layout.Control.pickerWidth)
                             .help("Más esfuerzo = razonamiento más profundo, pero más lento y con más consumo.")
                         }
                         Stepper("Tiempo límite: \(Int(binding.wrappedValue.timeoutSeconds)) s",
@@ -177,7 +177,7 @@ struct ProviderCard: View {
                     if kind == .ollama {
                         TextField("Endpoint local", text: Binding(get: { binding.wrappedValue.endpoint ?? OllamaProvider.defaultEndpoint },
                                                                   set: { binding.wrappedValue.endpoint = $0 }))
-                            .textFieldStyle(.roundedBorder).frame(maxWidth: 320).onSubmit(save)
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: DS.Layout.Control.fieldMaxWidth).onSubmit(save)
                     } else {
                         TextField("Ruta del ejecutable (vacío = detección automática)", text: Binding(
                             get: { binding.wrappedValue.executablePath ?? "" },

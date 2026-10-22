@@ -102,24 +102,57 @@ public struct ClaudeCodeProvider: AIProvider {
 
 // MARK: - Codex
 
-/// `codex exec` with `--output-schema`, read-only sandbox, ephemeral session and
-/// an empty working directory. Prompts are sent to OpenAI's cloud models.
+/// `codex exec` isolated from the user's Codex setup (TD-12): `--ignore-user-config` skips MCP servers,
+/// plugins, hooks, `notify`, web search and sandbox overrides from config.toml; command execution is disabled
+/// (`shell_tool`, `unified_exec`); read-only sandbox, ephemeral session and an empty working directory.
+/// Prompts are sent to OpenAI's cloud models.
 public struct CodexProvider: AIProvider {
     public let kind = AIProviderKind.codex
     /// Passed as `-c model_reasoning_effort=…` (config key verified in the Codex 0.160.1 binary
     /// and the user's config.toml). Accepted values depend on the model; Codex reports them on error.
     public static let effortLevels = ["low", "medium", "high", "xhigh"]
+    /// Without these the agent can run commands (verified with 0.160.1). If this Codex does not list them,
+    /// nothing is sent.
+    static let requiredDisabledFeatures = ["shell_tool", "unified_exec"]
+    /// Other agent tools, disabled too when this Codex lists them: an unknown name makes Codex exit with an error.
+    static let optionalDisabledFeatures = [
+        "apps", "plugins", "remote_plugin", "browser_use", "browser_use_external", "in_app_browser", "computer_use",
+        "image_generation", "multi_agent", "multi_agent_v2", "view_image", "hooks", "skill_search",
+        "skill_mcp_dependency_install", "tool_suggest", "code_mode", "code_mode_host", "goals", "sleep_tool",
+        "memories", "workspace_dependencies", "request_permissions_tool", "standalone_web_search",
+    ]
     public init() {}
 
-    static func arguments(for request: AIRequest, schemaPath: String, outputPath: String, workingDirectory: String) -> [String] {
-        var args = ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--ephemeral", "--color", "never",
-                    "--output-schema", schemaPath, "-o", outputPath, "-C", workingDirectory]
-        if let model = request.model, !model.isEmpty { args += ["-m", model] }
-        if let effort = request.effort, effortLevels.contains(effort) {
-            args += ["-c", "model_reasoning_effort=\"\(effort)\""]
-        }
+    static func arguments(for request: AIRequest, schemaPath: String, outputPath: String, workingDirectory: String,
+                          disabledFeatures: [String] = requiredDisabledFeatures,
+                          defaults: CodexUserDefaults = CodexUserDefaults()) -> [String] {
+        var args = ["exec", "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules",
+                    "--sandbox", "read-only", "--ephemeral", "--color", "never", "-c", "web_search=\"disabled\""]
+        for feature in disabledFeatures { args += ["--disable", feature] }
+        args += ["--output-schema", schemaPath, "-o", outputPath, "-C", workingDirectory]
+        if let model = request.model.flatMap({ $0.isEmpty ? nil : $0 }) ?? defaults.model { args += ["-m", model] }
+        let effort = request.effort.flatMap { effortLevels.contains($0) ? $0 : nil } ?? defaults.reasoningEffort
+        if let effort { args += ["-c", "model_reasoning_effort=\"\(effort)\""] }
         args.append("-")
         return args
+    }
+
+    /// Feature names from `codex features list` (first column of each row).
+    static func featureNames(in listing: String) -> Set<String> {
+        Set(listing.split(separator: "\n").compactMap { line in
+            line.split(whereSeparator: \.isWhitespace).first.map(String.init)
+                .flatMap { $0.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "." } ? $0 : nil }
+        })
+    }
+
+    /// Features to pass to `--disable`; throws when command execution cannot be turned off.
+    static func disabledFeatures(available: Set<String>) throws -> [String] {
+        let missing = requiredDisabledFeatures.filter { !available.contains($0) }
+        guard missing.isEmpty else {
+            throw AIProviderError.failed(.codex, "esta versión de Codex no permite desactivar la ejecución de comandos "
+                                         + "(\(missing.joined(separator: ", "))); no se envió nada. Actualiza Codex.")
+        }
+        return requiredDisabledFeatures + optionalDisabledFeatures.filter(available.contains)
     }
 
     public func detect(configuration: AIProviderConfiguration) async -> ProviderStatus {
@@ -127,11 +160,21 @@ public struct CodexProvider: AIProvider {
             return ProviderStatus(kind: kind, installed: false)
         }
         let env = await ToolEnvironment.shared.environment()
+        let defaults = CodexUserDefaults.load(environment: env)
+        var notes = ["Se ejecuta localmente, pero el modelo de OpenAI procesa los datos en la nube.",
+                     "Modelo y esfuerzo vacíos = los de ~/.codex/config.toml. El resto de ese archivo (MCP, plugins, "
+                     + "hooks, búsqueda web) no se carga, y Codex se ejecuta sin poder usar comandos."]
+        if let provider = defaults.modelProvider, provider != "openai" {
+            notes.append("El proveedor «\(provider)» de config.toml no se usa: la app ignora ese archivo por seguridad.")
+        }
         var status = ProviderStatus(kind: kind, installed: true, executablePath: exe.path,
-                                    version: await CLISupport.version(exe, env: env),
-                                    notes: ["Se ejecuta localmente, pero el modelo de OpenAI procesa los datos en la nube.",
-                                            "Modelo y esfuerzo vacíos = los de ~/.codex/config.toml."])
+                                    version: await CLISupport.version(exe, env: env), notes: notes)
         status.effortLevels = Self.effortLevels
+        do {
+            _ = try Self.disabledFeatures(available: try await CodexFeatureCache.shared.names(executable: exe, environment: env))
+        } catch {
+            status.notes.append(error.localizedDescription)
+        }
         if let result = try? await ProcessRunner.run(executable: exe, arguments: ["login", "status"], environment: env, timeout: 20) {
             let text = (result.stdoutText + result.stderrText).trimmingCharacters(in: .whitespacesAndNewlines)
             status.authenticated = result.exitCode == 0 && text.localizedCaseInsensitiveContains("logged in")
@@ -144,6 +187,9 @@ public struct CodexProvider: AIProvider {
         guard let exe = await ToolEnvironment.shared.locate("codex", configuredPath: configuration.executablePath) else {
             throw AIProviderError.notInstalled(kind)
         }
+        let env = await ToolEnvironment.shared.environment()
+        let disabled = try Self.disabledFeatures(
+            available: try await CodexFeatureCache.shared.names(executable: exe, environment: env))
         let workdir = try CLISupport.makeSandboxDirectory()
         defer { try? FileManager.default.removeItem(at: workdir) }
         let schemaURL = workdir.appendingPathComponent("schema.json")
@@ -152,11 +198,11 @@ public struct CodexProvider: AIProvider {
         // The sandbox dir also holds the schema; the agent sees an otherwise empty folder.
         let runDir = workdir.appendingPathComponent("work", isDirectory: true)
         try FileManager.default.createDirectory(at: runDir, withIntermediateDirectories: true)
-        let args = Self.arguments(for: request, schemaPath: schemaURL.path, outputPath: outURL.path, workingDirectory: runDir.path)
+        let args = Self.arguments(for: request, schemaPath: schemaURL.path, outputPath: outURL.path, workingDirectory: runDir.path,
+                                  disabledFeatures: disabled, defaults: CodexUserDefaults.load(environment: env))
         let prompt = request.instructions + "\n\n" + request.input
         let result = try await ProcessRunner.run(executable: exe, arguments: args, stdin: Data(prompt.utf8),
-                                                 environment: await ToolEnvironment.shared.environment(),
-                                                 workingDirectory: runDir, timeout: request.timeoutSeconds)
+                                                 environment: env, workingDirectory: runDir, timeout: request.timeoutSeconds)
         if result.timedOut { throw ProcessRunnerError.timedOut(request.timeoutSeconds) }
         let lastMessage = (try? String(contentsOf: outURL, encoding: .utf8)) ?? ""
         guard result.exitCode == 0 else {
@@ -171,6 +217,62 @@ public struct CodexProvider: AIProvider {
             .map { $0.split(separator: ":", maxSplits: 1).last.map { $0.trimmingCharacters(in: .whitespaces) } ?? "" }
         return AIResponse(json: data, rawOutput: lastMessage, model: model ?? request.model,
                           durationSeconds: result.durationSeconds)
+    }
+}
+
+/// The values of `$CODEX_HOME/config.toml` the app still honours: model and reasoning effort, used when the user
+/// leaves them empty. Only top-level quoted strings with a safe charset are read; the rest of the file is ignored.
+struct CodexUserDefaults: Equatable, Sendable {
+    var model: String?
+    var reasoningEffort: String?
+    var modelProvider: String?
+
+    static func parse(_ toml: String) -> CodexUserDefaults {
+        var values: [String: String] = [:]
+        for raw in toml.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("[") { break } // first table: top-level keys are over
+            guard !line.hasPrefix("#"), let eq = line.firstIndex(of: "=") else { continue }
+            let key = line[..<eq].trimmingCharacters(in: .whitespaces)
+            let rest = line[line.index(after: eq)...].trimmingCharacters(in: .whitespaces)
+            guard let quote = rest.first, quote == "\"" || quote == "'",
+                  let close = rest.dropFirst().firstIndex(of: quote) else { continue }
+            let value = String(rest[rest.index(after: rest.startIndex)..<close])
+            guard !value.isEmpty, value.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "._:/-".contains($0)) })
+            else { continue }
+            values[key] = value
+        }
+        return CodexUserDefaults(model: values["model"], reasoningEffort: values["model_reasoning_effort"],
+                                 modelProvider: values["model_provider"])
+    }
+
+    static func load(environment: [String: String]) -> CodexUserDefaults {
+        let home = environment["CODEX_HOME"].flatMap { $0.isEmpty ? nil : ($0 as NSString).expandingTildeInPath }
+            ?? ("~/.codex" as NSString).expandingTildeInPath
+        guard let text = try? String(contentsOf: URL(fileURLWithPath: home).appendingPathComponent("config.toml"),
+                                     encoding: .utf8) else { return CodexUserDefaults() }
+        return parse(text)
+    }
+}
+
+/// `codex features list`, cached per executable until it changes (upgrades rename or remove features).
+actor CodexFeatureCache {
+    static let shared = CodexFeatureCache()
+    private var cache: [String: (stamp: Date?, names: Set<String>)] = [:]
+
+    func names(executable: URL, environment: [String: String]) async throws -> Set<String> {
+        let stamp = (try? FileManager.default.attributesOfItem(
+            atPath: executable.resolvingSymlinksInPath().path)[.modificationDate]) as? Date
+        if let hit = cache[executable.path], hit.stamp == stamp { return hit.names }
+        let result = try await ProcessRunner.run(executable: executable, arguments: ["features", "list"],
+                                                 environment: environment, timeout: 20)
+        guard result.exitCode == 0 else {
+            throw AIProviderError.failed(.codex, "no se pudieron consultar sus funciones (`codex features list`): "
+                                         + CLISupport.shortError(result.stderrText))
+        }
+        let names = CodexProvider.featureNames(in: result.stdoutText)
+        cache[executable.path] = (stamp, names)
+        return names
     }
 }
 

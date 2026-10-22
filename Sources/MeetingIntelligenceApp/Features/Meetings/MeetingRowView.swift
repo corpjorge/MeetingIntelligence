@@ -35,7 +35,7 @@ struct MeetingRowView: View {
             MeetingStatusPill(meeting: row.meeting, busy: env.processing.isBusy(row.id))
         }
         .padding(.horizontal, DS.Space.m)
-        .padding(.vertical, DS.Space.s + 2)
+        .padding(.vertical, DS.Space.s + DS.Space.xxs)
         .contentShape(Rectangle())
         .hoverHighlight()
         .accessibilityElement(children: .combine)
@@ -46,13 +46,13 @@ struct DateBadge: View {
     let date: Date
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: DS.Space.none) {
             Text(date.formatted(.dateTime.month(.abbreviated)).uppercased())
-                .font(.system(size: 9, weight: .semibold)).foregroundStyle(DS.Color.accent)
-            Text(date.formatted(.dateTime.day())).font(.system(size: 15, weight: .semibold, design: .rounded))
+                .font(DS.Font.dateBadgeMonth).foregroundStyle(DS.Color.accent)
+            Text(date.formatted(.dateTime.day())).font(DS.Font.dateBadgeDay)
                 .foregroundStyle(DS.Color.textPrimary)
         }
-        .frame(width: 38, height: 38)
+        .frame(width: DS.Size.dateBadge, height: DS.Size.dateBadge)
         .background(DS.Color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.Radius.s, style: .continuous))
     }
 }

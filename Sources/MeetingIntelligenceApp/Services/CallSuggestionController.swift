@@ -52,7 +52,7 @@ final class CallSuggestionController {
 
     // MARK: Events
 
-    private func handle(_ event: CallEvent) {
+    func handle(_ event: CallEvent) {
         switch event {
         case .callStarted(let activity):
             activeCalls.removeAll { $0.id == activity.id }

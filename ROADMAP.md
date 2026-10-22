@@ -27,6 +27,10 @@
 5. Validar con grabaciones reales autorizadas la búsqueda semántica (TD-25), el refuerzo del diccionario (TD-24) y la
    redecodificación de frases cortas (TD-26); hoy solo están medidos con voces sintéticas.
 
+Hecho el 22-oct-2026 (0.2.0): la app se actualiza sola desde GitHub con firma Ed25519, solo con tu confirmación (TD-29;
+pendiente comprobarlo con la primera actualización real en `/Applications`); Codex aislado de `config.toml` y sin
+ejecución de comandos; una CLI que termina antes ya no cierra la app (SIGPIPE); pruebas de la lógica de la app.
+
 Hecho el 22-oct-2026: actualización verificada de modelos y limpieza de los que no se usan (TD-27); borrar una reunión
 libera todo su espacio (TD-28); capturas en el README.
 

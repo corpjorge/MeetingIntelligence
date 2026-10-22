@@ -49,7 +49,7 @@ struct ParticipantsView: View {
     var body: some View {
         // Plain HStack, not HSplitView: a nested NSSplitView inside the
         // NavigationSplitView detail shifts the app sidebar and adds a titlebar band.
-        HStack(spacing: 0) {
+        HStack(spacing: DS.Space.none) {
             list.frame(width: DS.Layout.listColumnWidth)
             Rectangle().fill(DS.Color.border).frame(width: DS.Layout.hairline)
             Group {
@@ -82,7 +82,7 @@ struct ParticipantsView: View {
     }
 
     private var list: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: DS.Space.none) {
             HStack {
                 Text("Participantes").font(DS.Font.title)
                 Spacer()
@@ -98,7 +98,7 @@ struct ParticipantsView: View {
                 ForEach(model.participants) { p in
                     HStack(spacing: DS.Space.m) {
                         SpeakerAvatar(name: p.displayName, colorIndex: StableHash.index(p.id))
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: DS.Space.xxs) {
                             HStack(spacing: DS.Space.xs) {
                                 Text(p.displayName).font(DS.Font.bodyEmphasis)
                                 if p.isLocalUser { StatusPill(text: "Yo", tone: .accent) }
@@ -174,7 +174,7 @@ struct ParticipantDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.Space.xl) {
                 HStack(spacing: DS.Space.l) {
-                    SpeakerAvatar(name: participant.displayName, colorIndex: StableHash.index(participant.id), size: 52)
+                    SpeakerAvatar(name: participant.displayName, colorIndex: StableHash.index(participant.id), size: DS.Size.avatarLarge)
                     VStack(alignment: .leading) {
                         Text(participant.displayName).font(DS.Font.display)
                         Text(participant.isLocalUser ? "Usuario local (micrófono de este Mac)" : "Participante")
@@ -204,7 +204,7 @@ struct ParticipantDetailView: View {
                 historyCard
             }
             .padding(DS.Space.xxl)
-            .frame(maxWidth: 820, alignment: .leading)
+            .frame(maxWidth: DS.Layout.detailMaxWidth, alignment: .leading)
         }
         .task(id: sampleCount) { load() }
         .sheet(isPresented: $showEnroll) {
@@ -456,7 +456,7 @@ struct EnrollmentSheet: View {
             }
         }
         .padding(DS.Space.xl)
-        .frame(width: 560)
+        .frame(width: DS.Layout.Sheet.xl)
         .onAppear { statement = existingProfile?.consentStatement ?? "Autorización verbal otorgada el \(Date().formatted(date: .long, time: .omitted))" }
         .fileImporter(isPresented: $showImporter, allowedContentTypes: [.audio]) { result in
             if case .success(let url) = result { enroll(url: url, temporary: false) }

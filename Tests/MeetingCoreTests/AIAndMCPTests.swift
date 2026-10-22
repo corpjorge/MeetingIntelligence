@@ -139,6 +139,75 @@ struct AIAnalysisTests {
         #expect(echo.stdoutText == "entrada")
     }
 
+    /// A CLI that exits before reading a long transcript used to kill the whole app with SIGPIPE.
+    @Test func processRunnerSurvivesChildThatIgnoresStdin() async throws {
+        let transcript = Data(repeating: 0x61, count: 4 * 1024 * 1024) // far above the 64 KB pipe buffer
+        let result = try await ProcessRunner.run(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "exit 3"],
+                                                 stdin: transcript, timeout: 10)
+        #expect(result.exitCode == 3)
+        try await Task.sleep(for: .milliseconds(500)) // let the background stdin writer hit the closed pipe
+    }
+
+    @Test func codexRunsIsolatedFromUserConfigAndWithoutCommands() throws {
+        let listing = """
+        apps                                     stable             true
+        shell_tool                               stable             true
+        unified_exec                             stable             true
+        computer_use                             stable             true
+        brand_new_tool                           experimental       false
+        """
+        let available = CodexProvider.featureNames(in: listing)
+        #expect(available == ["apps", "shell_tool", "unified_exec", "computer_use", "brand_new_tool"])
+        // Only names this Codex knows are passed (an unknown one makes it exit with an error).
+        let disabled = try CodexProvider.disabledFeatures(available: available)
+        #expect(disabled == ["shell_tool", "unified_exec", "apps", "computer_use"])
+        // Without a way to turn off command execution, nothing is sent.
+        #expect(throws: AIProviderError.self) { try CodexProvider.disabledFeatures(available: ["apps", "shell_tool"]) }
+
+        let request = AIRequest(instructions: "i", input: "x", jsonSchema: "{}", requiredKeys: [], model: nil,
+                                effort: nil, timeoutSeconds: 60)
+        let args = CodexProvider.arguments(for: request, schemaPath: "/s", outputPath: "/o", workingDirectory: "/w",
+                                           disabledFeatures: disabled)
+        for flag in ["--ignore-user-config", "--ignore-rules", "--ephemeral"] { #expect(args.contains(flag)) }
+        #expect(args.windowContains(["--sandbox", "read-only"]))
+        #expect(args.windowContains(["-c", "web_search=\"disabled\""]))
+        #expect(args.windowContains(["--disable", "shell_tool"]) && args.windowContains(["--disable", "unified_exec"]))
+        #expect(!args.contains("-m") && !args.contains { $0.contains("reasoning") })
+        #expect(args.last == "-")
+    }
+
+    @Test func codexKeepsModelAndEffortFromConfigOnly() {
+        let toml = """
+        # comment
+        model = "gpt-6.1-sol"
+        model_provider = 'openai'
+        model_reasoning_effort = "high" # trailing comment
+        sandbox_mode = "danger-full-access"
+        notify = ['/Applications/x.app/Contents/MacOS/x', 'turn-ended']
+
+        [mcp_servers.azure-devops]
+        model = "never-read"
+        """
+        let defaults = CodexUserDefaults.parse(toml)
+        #expect(defaults == CodexUserDefaults(model: "gpt-6.1-sol", reasoningEffort: "high", modelProvider: "openai"))
+        #expect(CodexUserDefaults.parse(#"model = "x\" -c y""#).model == nil) // unsafe characters → ignored
+
+        let empty = AIRequest(instructions: "i", input: "x", jsonSchema: "{}", requiredKeys: [], model: "",
+                              effort: nil, timeoutSeconds: 60)
+        let fromConfig = CodexProvider.arguments(for: empty, schemaPath: "/s", outputPath: "/o", workingDirectory: "/w",
+                                                 defaults: defaults)
+        #expect(fromConfig.windowContains(["-m", "gpt-6.1-sol"]))
+        #expect(fromConfig.windowContains(["-c", "model_reasoning_effort=\"high\""]))
+        #expect(!fromConfig.contains { $0.contains("danger") || $0.contains("notify") })
+
+        let chosen = AIRequest(instructions: "i", input: "x", jsonSchema: "{}", requiredKeys: [], model: "gpt-5",
+                               effort: "low", timeoutSeconds: 60)
+        let explicit = CodexProvider.arguments(for: chosen, schemaPath: "/s", outputPath: "/o", workingDirectory: "/w",
+                                               defaults: defaults)
+        #expect(explicit.windowContains(["-m", "gpt-5"]) && !explicit.contains("gpt-6.1-sol"))
+        #expect(explicit.windowContains(["-c", "model_reasoning_effort=\"low\""]))
+    }
+
     @Test func ollamaRejectsNonLocalEndpoints() {
         var config = AIProviderConfiguration(provider: .ollama)
         config.endpoint = "https://example.com:11434"

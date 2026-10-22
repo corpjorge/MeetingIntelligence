@@ -9,7 +9,7 @@ struct RootView: View {
         @Bindable var router = router
         NavigationSplitView {
             Sidebar()
-                .navigationSplitViewColumnWidth(min: 210, ideal: DS.Layout.sidebarWidth, max: 300)
+                .navigationSplitViewColumnWidth(min: DS.Layout.sidebarMinWidth, ideal: DS.Layout.sidebarWidth, max: DS.Layout.sidebarMaxWidth)
         } detail: {
             Group {
                 switch router.section {
@@ -25,10 +25,14 @@ struct RootView: View {
                 }
             }
             .background(DS.Color.background)
+            .overlay(alignment: .top) { AppUpdateBanner() }
         }
         .overlay(alignment: .bottom) { ProcessingToast() }
         .sheet(isPresented: .constant(!env.settings.hasCompletedOnboarding)) {
             OnboardingView().environment(env)
+        }
+        .sheet(isPresented: Bindable(env.updates).isSheetPresented) {
+            AppUpdateSheet().environment(env)
         }
         .task {
             env.calls.onAcceptStart = { app in
@@ -52,7 +56,7 @@ struct Sidebar: View {
 
     var body: some View {
         @Bindable var router = router
-        VStack(spacing: 0) {
+        VStack(spacing: DS.Space.none) {
             List(selection: $router.section) {
                 Section {
                     ForEach(AppRouter.Section.allCases) { section in
@@ -61,7 +65,7 @@ struct Sidebar: View {
                                 Text(section.title)
                                 Spacer()
                                 if section == .recording, env.recording.isActive {
-                                    RecordingDot(size: 7)
+                                    RecordingDot(size: DS.Size.dotS)
                                 }
                             }
                         } icon: {
@@ -85,7 +89,7 @@ private struct SidebarFooter: View {
         VStack(alignment: .leading, spacing: DS.Space.s) {
             if env.recording.isActive {
                 HStack(spacing: DS.Space.s) {
-                    RecordingDot(size: 8)
+                    RecordingDot(size: DS.Size.dotM)
                     Text(env.recording.state == .paused ? "Pausado" : "Grabando")
                         .font(DS.Font.captionEmphasis).foregroundStyle(DS.Color.recording)
                     Spacer()
@@ -93,7 +97,7 @@ private struct SidebarFooter: View {
                 }
             }
             HStack(spacing: DS.Space.s) {
-                Circle().fill(env.models.allReady ? DS.Color.success : DS.Color.warning).frame(width: 6, height: 6)
+                Circle().fill(env.models.allReady ? DS.Color.success : DS.Color.warning).frame(width: DS.Size.dotXS, height: DS.Size.dotXS)
                 Text(env.models.allReady ? "Modelos listos" : "Modelos pendientes")
                     .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
                     .lineLimit(1).truncationMode(.tail)
@@ -124,7 +128,7 @@ struct ProcessingToast: View {
                         .progressViewStyle(.circular).controlSize(.small)
                         .opacity(job.progress?.fraction == nil ? 0 : 1)
                         .overlay { if job.progress?.fraction == nil { ProgressView().controlSize(.small) } }
-                    VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: DS.Space.none) {
                         Text(job.progress?.stage.displayName ?? "Procesando")
                             .font(DS.Font.captionEmphasis).foregroundStyle(DS.Color.textPrimary)
                         Text(job.progress?.message ?? "Preparando…")
@@ -153,7 +157,7 @@ struct ProcessingToast: View {
                         IconButton(systemImage: "xmark", help: "Cerrar") { env.processing.dismissError() }
                     }
                 }
-                .frame(maxWidth: 520)
+                .frame(maxWidth: DS.Layout.toastMaxWidth)
                 .background(DS.Color.surfaceRaised, in: RoundedRectangle(cornerRadius: DS.Radius.m))
                 .elevation(.overlay)
                 .padding(.bottom, DS.Space.l)

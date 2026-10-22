@@ -9,7 +9,7 @@ struct OnboardingView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.xl) {
             HStack(spacing: DS.Space.m) {
-                Image(systemName: "waveform.circle.fill").font(.system(size: 40)).foregroundStyle(DS.Color.accent)
+                Image(systemName: "waveform.circle.fill").font(DS.Font.heroIcon).foregroundStyle(DS.Color.accent)
                 VStack(alignment: .leading) {
                     Text("Bienvenido a \(AppIdentity.displayName)").font(DS.Font.title)
                     Text("Graba, transcribe y analiza conversaciones de cualquier app de videollamada. Todo local por defecto.")
@@ -58,15 +58,15 @@ struct OnboardingView: View {
             }
         }
         .padding(DS.Space.xxl)
-        .frame(width: 560)
+        .frame(width: DS.Layout.Sheet.xl)
         .onAppear { name = env.settings.localUserName }
         .interactiveDismissDisabled()
     }
 
     private func feature(_ icon: String, _ title: String, _ text: String) -> some View {
         HStack(alignment: .top, spacing: DS.Space.m) {
-            Image(systemName: icon).foregroundStyle(DS.Color.accent).frame(width: 24)
-            VStack(alignment: .leading, spacing: 2) {
+            Image(systemName: icon).foregroundStyle(DS.Color.accent).frame(width: DS.Size.featureIcon)
+            VStack(alignment: .leading, spacing: DS.Space.xxs) {
                 Text(title).font(DS.Font.bodyEmphasis)
                 Text(text).font(DS.Font.callout).foregroundStyle(DS.Color.textSecondary)
             }

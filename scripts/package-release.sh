@@ -1,7 +1,8 @@
 #!/bin/zsh
 # Builds the release app and packages it for distribution:
 #   dist/<APP_NAME>-<VERSION>.dmg   (drag-to-Applications image with license and notices)
-#   dist/<APP_NAME>-<VERSION>.zip   (same app, ditto keeps the signature)
+#   dist/<APP_NAME>-<VERSION>.zip   (same app, ditto keeps the signature; used by in-app updates)
+#   dist/<APP_NAME>-<VERSION>.zip.sig  (Ed25519 signature checked by the in-app updater, TD-29)
 #   dist/SHA256SUMS.txt
 #
 #   scripts/package-release.sh
@@ -13,6 +14,13 @@ ROOT="${0:A:h:h}"
 source "$ROOT/config/app.env"
 cd "$ROOT"
 
+[[ -n "${UPDATE_PUBLIC_KEY:-}" ]] || { echo "Falta UPDATE_PUBLIC_KEY en config/app.env (ver TD-29)." >&2; exit 1; }
+"$ROOT/scripts/swiftw" build -c release --product mi-release 2>&1 | grep -E "error" || true
+RELEASE_TOOL="$("$ROOT/scripts/swiftw" build -c release --show-bin-path)/mi-release"
+# Fail before building if the Keychain key does not match the key the app will embed.
+[[ "$("$RELEASE_TOOL" public-key)" == "$UPDATE_PUBLIC_KEY" ]] \
+  || { echo "La clave de firma del Llavero no corresponde a UPDATE_PUBLIC_KEY." >&2; exit 1; }
+
 "$ROOT/scripts/third-party-notices.sh"
 "$ROOT/scripts/build-app.sh" release
 
@@ -23,6 +31,10 @@ rm -rf "$DIST" && mkdir -p "$DIST"
 
 echo "▸ ZIP"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$DIST/$NAME.zip"
+
+echo "▸ Firma de actualización"
+"$RELEASE_TOOL" sign "$DIST/$NAME.zip" --version "$VERSION" --public-key "$UPDATE_PUBLIC_KEY" > "$DIST/$NAME.zip.sig"
+"$RELEASE_TOOL" verify "$DIST/$NAME.zip" --version "$VERSION" --signature "$DIST/$NAME.zip.sig" --public-key "$UPDATE_PUBLIC_KEY"
 
 echo "▸ DMG"
 # Standard drag-to-Applications window: background with an arrow, the app on the left, the
@@ -104,5 +116,5 @@ MOUNTED=""
 hdiutil convert -quiet "$RW" -format UDZO -imagekey zlib-level=9 -ov -o "$DIST/$NAME.dmg"
 
 echo "▸ Sumas"
-( cd "$DIST" && shasum -a 256 "$NAME.dmg" "$NAME.zip" > SHA256SUMS.txt )
+( cd "$DIST" && shasum -a 256 "$NAME.dmg" "$NAME.zip" "$NAME.zip.sig" > SHA256SUMS.txt )
 ls -lh "$DIST"

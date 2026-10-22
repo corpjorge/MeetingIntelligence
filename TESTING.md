@@ -6,10 +6,11 @@ scripts/test.sh --filter MCP    # filtrar
 scripts/generate-fixtures.sh    # regenera fixtures sintéticos (necesario para las pruebas de integración)
 ```
 
-Framework: **Swift Testing** (XCTest no está disponible con Command Line Tools). Las pruebas de integración con
+Framework: **Swift Testing** (XCTest no está disponible con Command Line Tools). La lógica de la app (servicios y
+preferencias) tiene su propio target, `MeetingIntelligenceAppTests`; las vistas se verifican con capturas (TD-15). Las pruebas de integración con
 modelos reales se ejecutan solo si Parakeet Ultra y la diarización ya están en caché (nunca descargan en CI).
 
-## Inventario (105 pruebas, todas pasan al 22-oct-2026; 4 más bajo demanda)
+## Inventario (136 pruebas, todas pasan al 22-oct-2026; 4 más bajo demanda)
 
 | Suite | Cubre |
 |---|---|
@@ -17,7 +18,7 @@ modelos reales se ejecutan solo si Parakeet Ultra y la diarización ya están en
 | Búsqueda FTS5 | sin acentos, prefijos, plurales, ediciones de usuario, alcance por reunión |
 | Exportación | JSON completo (timestamps, origen del texto, correcciones), SRT, Markdown, TXT, PDF; sin datos biométricos |
 | Utilidades / Cifrado | timecodes, normalización, diccionario por palabra completa, AES-GCM (ida y vuelta, manipulación, revocación) |
-| IA | extracción JSON ruidosa (formato real de `agy`), verificación de citas, cita inventada → no confirmada, consentimiento remoto obligatorio, salida inválida registrada, chat con citas válidas, timeout de procesos, Ollama solo local |
+| IA | extracción JSON ruidosa (formato real de `agy`), verificación de citas, cita inventada → no confirmada, consentimiento remoto obligatorio, salida inválida registrada, chat con citas válidas, timeout de procesos, una CLI que no lee la transcripción no cierra la app (SIGPIPE), Codex aislado de `config.toml` y sin ejecución de comandos (solo funciones que esa versión conoce; sin `shell_tool`/`unified_exec` no se envía nada), modelo y esfuerzo de `config.toml` conservados, Ollama solo local |
 | Servidor MCP | `initialize` legacy, `server/discover` moderno, versión no soportada (-32022), errores JSON-RPC, acceso deshabilitado por defecto, herramientas con timestamps, validación de parámetros, política por reunión |
 | Escritura WAV / Alineación / Conversión | WAV legible, recuperación tras cierre, huecos, deriva, pausas, remuestreo 48→16 kHz (duración, tono, nivel), mezcla a mono |
 | Compactación de silencio antes del ASR | tramos muertos inicial/intermedio/final, pausas < 1 s y voz baja (−60 dBFS) intactas, última trama parcial, remapeo de tiempos (uniones, tokens recortados), muestras conservadas idénticas, archivo sin silencio → no se copia |
@@ -36,6 +37,12 @@ modelos reales se ejecutan solo si Parakeet Ultra y la diarización ya están en
 | Borrado y espacio en disco | resumen previo (tamaño, muestras, chat), muestras de voz conservadas o borradas, `VACUUM` devuelve el espacio, carpetas huérfanas y temporales viejos |
 | Actualización de modelos | hash de blob git, plan solo sobre lo descargado (variantes y ONNX ignorados), preparación aparte, intercambio, confirmación, vuelta atrás, recuperación tras un cierre, modelos fijados, paginación |
 | Tokens partidos por la compactación | "▁¿" y "." se pegan a su palabra; piezas con letras y palabras nuevas no se mueven |
+| App: preferencias | valores por defecto seguros (solo sugerencias, consentimiento, descargas opcionales), persistencia entre arranques, "conservar siempre" = nil, modo de captura heredado, opciones de procesamiento |
+| App: consentimiento de IA | análisis en la nube espera confirmación (rechazar no envía nada ni guarda análisis), confirmar lo ejecuta, Ollama sin preguntar, chat: rechazar → respuesta local sin enviar, confirmar → respuesta con citas, proveedor elegido recordado |
+| App: cola de procesamiento | una reunión a la vez con el pipeline real, sin duplicados, cancelar una en cola, error informado por reunión |
+| App: sugerencias de llamada | sugerir grabar solo si está activado (nunca graba solo), fin de llamada limpia la sugerencia y no ofrece detener si no se graba, apps ignoradas persistidas, aceptar entrega la app al flujo del usuario |
+| Actualizaciones de la app | versiones (pre-releases, `1.0` = `1.0.0`, tags inválidos), lectura de releases de GitHub (borradores, sin firma o sin versión → ignorados; pre-releases incluidos; notas «Novedades» con líneas unidas como en Markdown, sobre `docs/releases/0.2.0.md`), firma Ed25519 (versión, ZIP y clave atados), preparación válida y rechazos (otra clave, versión o app distinta, macOS mínimo, tamaño), intercambio atómico y limpieza, ubicaciones no instalables (App Translocation, sin permiso), firma de código manipulada y ad hoc |
+| App: actualizaciones | aviso solo para búsquedas automáticas, «Ahora no» y «Omitir esta versión» (la búsqueda manual la ofrece igual), al día, fallo silencioso en segundo plano y visible al buscar, un fallo en segundo plano conserva la versión ya ofrecida, nunca descarga donde la app no se puede reemplazar, descarga → verificada → no se instala mientras se graba → instala, reinicia y cierra; el arranque siguiente informa y borra la versión anterior; búsqueda automática activada por defecto |
 | Integración (modelos reales) | importar→Ultra→diarización→persistencia (2 hablantes, sin nombres inventados, WER < 15 %, diccionario), silencio → vacío, español + términos en inglés, frases cortas aisladas siguen en español con marcas en la línea de tiempo original (TD-22), transcripción en vivo, reprocesar conserva identidades manuales |
 
 ## Fixtures
@@ -126,7 +133,20 @@ Resultados y conjuntos en `TECHNICAL_DECISIONS.md` (TD-24, TD-25, TD-26).
 - API de Teams para apps de terceros (TD-23): no aparece en Configuración › Privacidad de la cuenta de prueba, que es
   de una organización, ni buscando "API" o "terceros". Una sonda pasiva no logró conectar al 127.0.0.1:8124 en 318 s.
 
+- Actualización de punta a punta (TD-29): la app 0.2.0 compilada en release, en una carpeta temporal y con biblioteca
+  aparte. Un servidor local publicaba una 0.2.1 firmada con la clave real:
+  ```bash
+  open -n --env MEETING_INTELLIGENCE_HOME=<dir> --env MI_UPDATE_API=http://127.0.0.1:8765 --env MI_UPDATE_E2E=1 "<dir>/Meeting Intelligence.app"
+  ```
+  `MI_UPDATE_E2E=1` acepta la descarga y la instalación (solo con API loopback). La app detectó, descargó, verificó,
+  reemplazó y reinició en aproximadamente 1 s. La 0.2.1 registró «installed» y borró la anterior; sin cuarentena y
+  con firma válida. Con una 0.2.2 de firma alterada no cambió nada. El aviso y la hoja tienen capturas
+  (`update-banner-*`, `update-sheet-*`, `settings-general-*`).
+
 ## Pruebas manuales pendientes (requieren permisos o condiciones del usuario)
+
+- Primera actualización real desde `/Applications` (una copia aprobada con «Abrir de todos modos»): confirmar que
+  macOS no bloquea el reemplazo (protección «Gestión de apps») y qué permisos vuelve a pedir.
 
 - Detección de llamadas: unirse a una llamada en Teams, Zoom y Meet (Chrome) y comprobar la sugerencia de grabar y,
   al colgar, la sugerencia de detener; registrar qué procesos usan el micrófono en cada app.

@@ -53,6 +53,15 @@ final class AppSettings {
     var acousticVocabularyBoost: Bool { didSet { defaults.set(acousticVocabularyBoost, forKey: "acousticVocabularyBoost") } }
     /// Semantic chat retrieval with local embeddings (downloads multilingual-e5-small on first use).
     var semanticSearch: Bool { didSet { defaults.set(semanticSearch, forKey: "semanticSearch") } }
+    /// Look for new app versions on GitHub at launch and once a day (TD-29); never installs by itself.
+    var checkForAppUpdates: Bool { didSet { defaults.set(checkForAppUpdates, forKey: "checkForAppUpdates") } }
+    /// Version the user chose to skip: no banner for it (a manual check still offers it).
+    var skippedAppVersion: String? { didSet { defaults.set(skippedAppVersion, forKey: "skippedAppVersion") } }
+    var lastAppUpdateCheck: Date? { didSet { defaults.set(lastAppUpdateCheck, forKey: "lastAppUpdateCheck") } }
+    /// Set just before quitting to install an update; the next launch reports whether it took effect.
+    var pendingAppUpdateVersion: String? {
+        didSet { defaults.set(pendingAppUpdateVersion, forKey: "pendingAppUpdateVersion") }
+    }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -80,6 +89,10 @@ final class AppSettings {
         liveTranscription = defaults.object(forKey: "liveTranscription") as? Bool ?? true
         acousticVocabularyBoost = defaults.bool(forKey: "acousticVocabularyBoost")
         semanticSearch = defaults.bool(forKey: "semanticSearch")
+        checkForAppUpdates = defaults.object(forKey: "checkForAppUpdates") as? Bool ?? true
+        skippedAppVersion = defaults.string(forKey: "skippedAppVersion")
+        lastAppUpdateCheck = defaults.object(forKey: "lastAppUpdateCheck") as? Date
+        pendingAppUpdateVersion = defaults.string(forKey: "pendingAppUpdateVersion")
     }
 
     var processingOptions: ProcessingOptions {

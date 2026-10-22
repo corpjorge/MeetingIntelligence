@@ -74,7 +74,24 @@ aparece en la transcripción → "Información no confirmada".
 - Claude Code: `claude -p --output-format json --json-schema … --tools "" --strict-mcp-config --no-session-persistence
   --permission-mode dontAsk --system-prompt …`; la salida estructurada llega en `structured_output` (documentación
   oficial). En este entorno el CLI devolvió `OAuth session expired`, así que la ruta de éxito no se ejecutó aquí.
-- Codex: `codex exec --sandbox read-only --ephemeral --output-schema … -o … -C <dir vacío>` (ejecución real exitosa).
+- Codex: `codex exec --ignore-user-config --ignore-rules --sandbox read-only --ephemeral -c web_search="disabled"
+  --disable shell_tool --disable unified_exec [--disable …] --output-schema … -o … -C <dir vacío>`. Comprobado con
+  Codex 0.160.1 (22-oct-2026) con una sonda inocua (un token aleatorio en un archivo temporal):
+  - **Antes** solo se pedía en el prompt no usar herramientas. Codex ejecutó `cat`, devolvió el token y listó
+    `exec_command`, `spawn_agent` y el MCP de Azure DevOps del usuario. Además cargaba `~/.codex/config.toml`
+    entero: servidores MCP, plugins, hooks, `notify`, `web_search = "live"` (el `sandbox_mode` lo sobrescribía
+    `--sandbox`). Una transcripción con instrucciones maliciosas podía leer archivos del Mac y enviarlos a la nube.
+  - **Ahora** `--ignore-user-config` no carga ese archivo (la sesión sigue en `CODEX_HOME`) y sin `shell_tool` ni
+    `unified_exec` no hay forma de ejecutar comandos: ni directamente ni con un subagente (`spawn_agent` falla con
+    `code-mode host is disabled`). El token no apareció en ninguna salida.
+  - `--disable` con un nombre desconocido hace fallar Codex (`Unknown feature flag`), así que la lista se cruza con
+    `codex features list` (en caché por ejecutable). Si esa versión no lista `shell_tool` y `unified_exec`, **no se
+    envía nada** y se pide actualizar Codex. Las demás funciones (apps, plugins, navegador, computer use, imágenes,
+    multiagente, hooks…) se desactivan solo si existen.
+  - Modelo y esfuerzo vacíos siguen siendo los de `config.toml`: solo se leen `model` y `model_reasoning_effort`
+    (cadenas de primer nivel con caracteres seguros) y se pasan con `-m`/`-c`. Un `model_provider` distinto de
+    `openai` no se usa y se avisa en Ajustes.
+  - Análisis real con un fixture sintético: correcto, con el modelo de `config.toml` y las citas verificadas.
 - Antigravity: `agy -p … --output-format json --json-schema … --sandbox`; en headless las herramientas se deniegan
   automáticamente. Comprobado: sin instrucción explícita intentó ejecutar un comando y devolvió vacío; con instrucción
   de no usar herramientas respondió, pero con **dos** objetos JSON en `response` → `JSONExtraction` elige el que tiene
@@ -82,6 +99,9 @@ aparece en la transcripción → "Información no confirmada".
 - Ollama: solo endpoints loopback; JSON schema vía `format`.
 - Siempre: directorio temporal vacío, timeout, cancelación (SIGTERM→SIGKILL), consentimiento previo para proveedores
   en la nube con el resumen exacto de lo que se comparte, transcripción delimitada como datos no confiables.
+- La transcripción va por stdin. Si la CLI termina sin leerla entera (sesión caducada, flag no reconocido), escribir
+  en la tubería cerrada enviaba SIGPIPE y **cerraba la app**, también en plena grabación (comprobado: código 141).
+  El extremo de escritura se marca con `F_SETNOSIGPIPE`, así que la escritura falla con EPIPE y la app sigue.
 
 ## TD-13 · MCP propio, dual-era
 La especificación vigente (2026-07-28) es sin sesión (`_meta` por solicitud, `server/discover` obligatorio); muchos
@@ -376,6 +396,70 @@ Antes ya se borraban en cascada las filas de la reunión y su carpeta de audio. 
   `mi-ai-*`, `mi-enroll-*`) de más de 1 h.
 
 No se borra lo que el usuario exportó: son archivos suyos, en una carpeta que él eligió.
+
+## TD-29 · Actualizaciones desde la app (comprobado)
+**Detección.** Se consulta `GET https://api.github.com/repos/corpjorge/MeetingIntelligence/releases`. No se usa
+`/releases/latest` porque excluye los *pre-releases*, y la 0.1.0 lo es (comprobado: devuelve 404).
+- La consulta se hace al abrir la app (si la última tiene más de 1 h) y luego cada 24 h. Se puede desactivar en
+  Ajustes › General, donde también está «Buscar ahora»; el menú de la app tiene «Buscar actualizaciones…».
+- Solo cuentan los releases que no son borrador, cuyo tag es una versión y que publican `<nombre>-<versión>.zip` y
+  `….zip.sig`.
+- Si hay una versión más nueva aparece un aviso flotante con «Ver novedades» y «Actualizar». Nunca abre ventanas ni
+  descarga nada por sí solo. «Omitir esta versión» la silencia; una búsqueda manual la vuelve a ofrecer.
+
+**Autenticidad.** Cada ZIP se firma con Ed25519 (CryptoKit). El mensaje firmado contiene el contexto, la versión y el
+SHA-256 del ZIP. Incluir la versión impide ofrecer un ZIP antiguo y firmado como si fuera nuevo.
+- La clave privada se crea una vez con `mi-release keygen` en el Llavero de inicio de sesión. Se guarda y se lee con
+  `/usr/bin/security`, así que no aparece en los argumentos de ningún proceso y recompilar no provoca avisos del
+  Llavero.
+- La clave pública va en `config/app.env` y de ahí a `MIUpdatePublicKey` en el Info.plist. Quien consiga publicar en
+  el repositorio pero no tenga la clave privada no puede instalar nada. `SHA256SUMS.txt` no bastaría: lo publica el
+  mismo origen que el ZIP.
+- Antes de instalar se comprueba además el tamaño publicado, el bundle ID, que `CFBundleShortVersionString` coincida
+  con el tag, `LSMinimumSystemVersion` y la firma de código (`SecStaticCodeCheckValidity` estricta, con el código
+  anidado). Si algo falla se borra la descarga y no se toca la app.
+
+**Instalación.** Solo se instala al pulsar «Reiniciar e instalar», y nunca mientras se graba, se procesa o se
+actualiza un modelo.
+1. La app verificada se copia junto a la instalada, en `.<app>.mi-update` (mismo volumen).
+2. Las dos se intercambian con un solo `renamex_np(RENAME_SWAP)` atómico, así que en ningún momento falta la app. Si
+   el volumen no lo admite, se usan dos renombrados que se deshacen si el segundo falla. El proceso en marcha sigue
+   funcionando porque sus archivos siguen abiertos.
+3. Un ayudante (`/bin/sh` lanzado con `posix_spawn`, en su propia sesión y sin descriptores heredados) espera a que la
+   app termine y la vuelve a abrir. Conserva `MEETING_INTELLIGENCE_HOME` si estaba definido.
+4. Al arrancar, la versión nueva borra la anterior y las descargas, y muestra «Se actualizó a la versión X» (o avisa
+   de que no se completó).
+
+No se instala si la app se ejecuta desde App Translocation, desde el DMG (volumen de solo lectura) o desde una carpeta
+sin permiso de escritura. En esos casos se explica el motivo y se ofrece la descarga desde GitHub.
+
+**Gatekeeper y permisos.**
+- Lo que descarga la app no lleva atributo de cuarentena, porque la app no declara `LSFileQuarantineEnabled`
+  (comprobado: 0 atributos después de actualizar). Por eso la versión nueva abre sin el paso «Abrir de todos modos».
+  La app no quita ninguna cuarentena.
+- Con firma ad hoc la identidad cambia en cada compilación, así que macOS vuelve a pedir los permisos de micrófono y
+  de audio del sistema. La hoja de actualización lo avisa (la firma ad hoc se detecta con
+  `SecCodeCopySigningInformation`). Una identidad de firma estable lo evitaría; está pendiente en el ROADMAP.
+
+**Verificado (22-oct-2026).**
+- Pruebas automáticas: versiones, lectura de releases, firma, preparación válida y manipulada (otra clave, versión o
+  app distinta, macOS mínimo, tamaño), intercambio y limpieza, ubicaciones donde no se puede instalar, y el controlador
+  (aviso, omitir, fallos silenciosos, bloqueo mientras se graba, reinicio).
+- De punta a punta con la app real compilada en release: una 0.2.0 en una carpeta temporal y un servidor local
+  (`MI_UPDATE_API`) que publicaba una 0.2.1 firmada con la clave real. Con `MI_UPDATE_E2E=1`, la app acepta como lo
+  haría el usuario; esto solo funciona con una API loopback. La app detectó, descargó, verificó, reemplazó, se cerró y
+  arrancó la 0.2.1 en aproximadamente 1 s. La 0.2.1 registró «installed» y borró la anterior. La firma de código era válida, no
+  había cuarentena y siguió usando la misma biblioteca temporal.
+- Con una 0.2.2 de firma alterada: la detectó, la rechazó y no cambió nada.
+- El aviso y la hoja se verificaron con capturas en modo claro y oscuro.
+
+**No verificado.** Reemplazar en `/Applications` una copia aprobada con «Abrir de todos modos»: en este Mac la app no
+está instalada ahí. La protección de macOS «Gestión de apps» podría pedir permiso. Se comprobará con la primera
+actualización real después de la 0.2.0. La 0.1.0 no tiene actualizador, así que la 0.2.0 se instala a mano.
+
+**La clave.** Si se pierde la clave privada, las versiones futuras no se podrán instalar desde la app (sí a mano). Haz
+una copia: `security find-generic-password -s dev.meetingintelligence.update-signing -a ed25519 -w`. Para cambiarla
+hay que publicar una versión, firmada con la clave antigua, que ya traiga la nueva clave pública.
 
 ## Limitaciones comprobadas
 - ASR monocanal pierde palabras en habla **superpuesta** (fixture: 2 de 16 palabras).

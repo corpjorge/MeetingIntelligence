@@ -37,10 +37,10 @@ struct TranscriptTab: View {
                 }
             }
             .padding(.horizontal, DS.Space.m)
-            .frame(height: 30)
+            .frame(height: DS.Layout.Control.searchFieldCompactHeight)
             .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: DS.Radius.s))
             .overlay(RoundedRectangle(cornerRadius: DS.Radius.s).strokeBorder(DS.Color.border))
-            .frame(minWidth: 240, maxWidth: 360)
+            .frame(minWidth: DS.Layout.Control.searchFieldMinWidth, maxWidth: DS.Layout.Control.searchFieldMaxWidth)
             Toggle("Seguir el audio", isOn: $followPlayback).toggleStyle(.checkbox).font(DS.Font.callout).fixedSize()
             Toggle("Mostrar eco probable", isOn: $settings.showProbableEcho).toggleStyle(.checkbox).font(DS.Font.callout)
                 .fixedSize()
@@ -48,7 +48,7 @@ struct TranscriptTab: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: DS.Space.none) {
             // Legend drops to its own line when the pills would squeeze the search field.
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: DS.Space.m) {
@@ -69,7 +69,7 @@ struct TranscriptTab: View {
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 0) {
+                        LazyVStack(alignment: .leading, spacing: DS.Space.none) {
                             ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
                                 let previous = index > 0 ? segments[index - 1] : nil
                                 SegmentRow(
@@ -97,7 +97,7 @@ struct TranscriptTab: View {
                         }
                         .padding(.horizontal, DS.Space.xxl)
                         .padding(.bottom, DS.Space.xxl)
-                        .frame(maxWidth: DS.Layout.readingMaxWidth + 160, alignment: .leading)
+                        .frame(maxWidth: DS.Layout.transcriptMaxWidth, alignment: .leading)
                         .frame(maxWidth: .infinity)
                     }
                     .onChange(of: activeId) { _, id in
@@ -171,13 +171,13 @@ struct SegmentRow: View {
         segment.participantId == nil && segment.attribution != .localUserTrack
     }
 
-    private let gutter: CGFloat = 64
+    private let gutter = DS.Layout.timecodeGutter
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.xs) {
             if showSpeaker {
                 HStack(spacing: DS.Space.s) {
-                    SpeakerAvatar(name: speakerName, colorIndex: colorIndex, size: 20, isUnknown: isUnknown && colorIndex == nil)
+                    SpeakerAvatar(name: speakerName, colorIndex: colorIndex, size: DS.Size.avatarSmall, isUnknown: isUnknown && colorIndex == nil)
                     Text(speakerName).font(DS.Font.bodyEmphasis)
                         .foregroundStyle(colorIndex.map(DS.Color.speaker) ?? DS.Color.textSecondary)
                     badges
@@ -211,7 +211,7 @@ struct SegmentRow: View {
         .padding(.horizontal, DS.Space.s)
         .background(
             RoundedRectangle(cornerRadius: DS.Radius.s, style: .continuous)
-                .fill(isActive ? DS.Color.accentSoft : (isMatch ? DS.Color.warning.opacity(0.08) : (hovering ? DS.Color.hover : .clear))))
+                .fill(isActive ? DS.Color.accentSoft : (isMatch ? DS.Color.searchMatch : (hovering ? DS.Color.hover : .clear))))
         .onHover { hovering = $0 }
         .contextMenu {
             Button("Reproducir desde aquí", action: onSeek)
@@ -249,7 +249,7 @@ struct SegmentRow: View {
     }
 
     private var actions: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: DS.Space.none) {
             IconButton(systemImage: "pencil", help: "Editar texto", action: onEdit)
             if segment.editedText != nil {
                 IconButton(systemImage: "arrow.uturn.backward", help: "Restaurar texto original", action: onRevert)
@@ -263,7 +263,7 @@ struct SegmentRow: View {
                 .font(DS.Font.reading)
                 .scrollContentBackground(.hidden)
                 .padding(DS.Space.s)
-                .frame(minHeight: 64)
+                .frame(minHeight: DS.Layout.editorMinHeight)
                 .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: DS.Radius.s))
                 .overlay(RoundedRectangle(cornerRadius: DS.Radius.s).strokeBorder(DS.Color.accent))
                 .onAppear { draft = segment.displayText }
@@ -282,7 +282,7 @@ struct SegmentRow: View {
         guard q.count >= 2 else { return text }
         var searchRange = text.startIndex..<text.endIndex
         while let range = text[searchRange].range(of: q, options: [.caseInsensitive, .diacriticInsensitive]) {
-            text[range].backgroundColor = DS.Color.warning.opacity(0.3)
+            text[range].backgroundColor = DS.Color.searchMatchHighlight
             searchRange = range.upperBound..<text.endIndex
         }
         return text

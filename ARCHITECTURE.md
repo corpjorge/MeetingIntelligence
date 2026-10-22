@@ -18,6 +18,8 @@ MeetingCore              Dominio, persistencia (GRDB/SQLite WAL + FTS5), búsque
   ├─ Security/           KeychainStore, BiometricVault (AES-GCM)
   ├─ Storage/            AppIdentity, AppPaths, StorageMaintenance (borrado completo, VACUUM, restos; TD-28)
   ├─ Models/             ManagedModel, ModelInstaller, HuggingFaceHub, ModelInventory (actualizaciones; TD-27)
+  ├─ Updates/            AppVersion, AppRelease + GitHubReleases, GitHubReleaseSource, UpdateSignature (Ed25519),
+  │                      AppUpdateInstaller (verificar, intercambiar, reiniciar), CodeSignature (TD-29)
   └─ Utilities/          Timecode, TextNormalization, VocabularyCorrector, Metrics (WER/DER)
 
 MeetingAudio             Captura y DSP. Depende de MeetingCore.
@@ -45,12 +47,13 @@ MeetingIntelligenceApp   SwiftUI (aislamiento por defecto MainActor).
   │                      MenuBarExtra, SnapshotDriver (verificación de UI)
   ├─ DesignSystem/       Tokens (tipografía, color, espaciado, radios, elevación, movimiento) + componentes
   ├─ Services/           ProcessingCoordinator, RecordingController, ModelStatusModel, AIController,
-  │                      MeetingAudioPlayer, SemanticIndexController, ModelUpdateController
+  │                      MeetingAudioPlayer, SemanticIndexController, ModelUpdateController, AppUpdateController
   └─ Features/           Dashboard, Meetings, MeetingDetail (7 pestañas), Recording, Participants,
-                         Intelligence, Settings, Onboarding
+                         Intelligence, Settings, Onboarding, Updates (aviso, hoja y sección de Ajustes)
 
 MeetingMCPServer         Ejecutable `meeting-intelligence-mcp` (stdio, solo lectura).
 MeetingIntelligenceCLI   Ejecutable `mi` (diagnóstico, importación, evaluación, IA, exportación).
+MeetingReleaseTool       Ejecutable `mi-release` (clave y firma de actualizaciones; solo para publicar, no va en la app).
 ```
 
 Regla: las capas inferiores nunca importan a las superiores. La UI no importa FluidAudio.
@@ -145,10 +148,22 @@ SQLite (GRDB 7.11.1, WAL). Migraciones `v1-core`, `v2-conversation-apps`, `v3-ch
 
 `AIProvider` común; `ToolEnvironment` resuelve el PATH del shell de inicio de sesión (los GUI no lo heredan).
 Las CLIs se ejecutan en un directorio temporal vacío, con timeout y cancelación; nunca con flags que omitan
-permisos. El análisis valida localmente cada cita contra el segmento citado.
+permisos. Codex no carga la configuración del usuario y se ejecuta sin herramientas de ejecución (TD-12). La
+transcripción va por stdin con `F_SETNOSIGPIPE`: una CLI que termina antes no cierra la app. El análisis valida
+localmente cada cita contra el segmento citado.
 
 ## MCP
 
 `MCPServerCore` implementa JSON-RPC 2.0 sobre stdio (mensajes por línea), dual-era: `server/discover` y `_meta`
 (2026-07-28) y `initialize` (2025-11-25/06-18/03-26). Abre la biblioteca **solo lectura** y relee la política de
 acceso (`mcp-access.json`) en cada llamada.
+
+## Actualizaciones de la app (TD-29)
+
+```
+GitHub /releases ─► versión más nueva con .zip + .zip.sig ─► aviso (el usuario decide)
+   ─► descarga a Caches/…/Updates ─► Ed25519(versión + SHA-256) con la clave del Info.plist
+   ─► ditto -x ─► bundle ID · versión · macOS mínimo · firma de código
+   ─► «Reiniciar e instalar» (no si se graba/procesa) ─► copia junto a la app ─► renamex_np(RENAME_SWAP)
+   ─► ayudante en su propia sesión espera el cierre y abre la app ─► la nueva borra la anterior y avisa
+```

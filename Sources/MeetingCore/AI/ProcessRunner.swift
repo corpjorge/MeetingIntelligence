@@ -37,6 +37,8 @@ public enum ProcessRunner {
         if let environment { process.environment = environment }
         if let workingDirectory { process.currentDirectoryURL = workingDirectory }
         let outPipe = Pipe(), errPipe = Pipe(), inPipe = Pipe()
+        // A child that exits before reading all of stdin must yield EPIPE, not a SIGPIPE that kills this process.
+        _ = fcntl(inPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         process.standardOutput = outPipe
         process.standardError = errPipe
         process.standardInput = stdin == nil ? FileHandle.nullDevice : inPipe

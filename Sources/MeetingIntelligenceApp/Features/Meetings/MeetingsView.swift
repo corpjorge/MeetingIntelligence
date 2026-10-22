@@ -113,7 +113,7 @@ struct MeetingsView: View {
         }
         .overlay {
             if dropTargeted {
-                RoundedRectangle(cornerRadius: DS.Radius.l).strokeBorder(DS.Color.accent, style: StrokeStyle(lineWidth: 2, dash: [6]))
+                RoundedRectangle(cornerRadius: DS.Radius.l).strokeBorder(DS.Color.accent, style: DS.Stroke.dropTarget)
                     .background(DS.Color.accentSoft)
                     .overlay(Label("Suelta para importar", systemImage: "square.and.arrow.down").font(DS.Font.headline))
                     .padding(DS.Space.l)
@@ -136,7 +136,7 @@ struct MeetingsView: View {
                 }
             }
             .padding(.horizontal, DS.Space.m)
-            .frame(height: 32)
+            .frame(height: DS.Layout.Control.searchFieldHeight)
             .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: DS.Radius.s))
             .overlay(RoundedRectangle(cornerRadius: DS.Radius.s).strokeBorder(DS.Color.border))
 
@@ -144,7 +144,7 @@ struct MeetingsView: View {
                 ForEach(MeetingsModel.Filter.allCases) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
-            .frame(width: 340)
+            .frame(width: DS.Layout.Control.filterPickerWidth)
             .labelsHidden()
 
             Menu {
@@ -163,7 +163,7 @@ struct MeetingsView: View {
         VStack(alignment: .leading, spacing: DS.Space.s) {
             SectionHeader(title: "En las transcripciones", subtitle: "\(model.contentHits.count) coincidencias (búsqueda local FTS5)")
             SurfaceCard(padding: DS.Space.xs) {
-                VStack(spacing: 0) {
+                VStack(spacing: DS.Space.none) {
                     ForEach(model.contentHits.prefix(8)) { hit in
                         Button { router.openMeeting(hit.meetingId, tab: .transcript) } label: {
                             VStack(alignment: .leading, spacing: DS.Space.xxs) {
@@ -201,7 +201,7 @@ struct MeetingsView: View {
                 EmptyStateView(systemImage: "line.3.horizontal.decrease.circle", title: "Sin resultados",
                                message: "Ninguna reunión coincide con los filtros actuales.")
             } else {
-                LazyVStack(spacing: 0) {
+                LazyVStack(spacing: DS.Space.none) {
                     ForEach(rows) { row in
                         NavigationLink(value: row.id) { MeetingRowView(row: row) }
                             .buttonStyle(.plain)

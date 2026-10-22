@@ -22,7 +22,7 @@ struct ChatPanel: View {
     @State private var historyError: String?
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: DS.Space.none) {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: DS.Space.l) {
@@ -36,7 +36,7 @@ struct ChatPanel: View {
                         }
                     }
                     .padding(DS.Space.xxl)
-                    .frame(maxWidth: DS.Layout.readingMaxWidth + 120, alignment: .leading)
+                    .frame(maxWidth: DS.Layout.chatMaxWidth, alignment: .leading)
                     .frame(maxWidth: .infinity)
                 }
                 // Start of the newest message: its question stays in view above a long answer.
@@ -177,7 +177,7 @@ struct ChatPanel: View {
 
     private func citation(_ c: MeetingChatService.Citation) -> some View {
         Button { onOpen(c.meetingId, c.startTime) } label: {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DS.Space.xxs) {
                 Text("\(c.reference) · \(c.meetingTitle) · \(Timecode.hms(c.startTime)) · \(c.speakerName)")
                     .font(DS.Font.mono).foregroundStyle(DS.Color.accent)
                 Text(c.text).font(DS.Font.callout).foregroundStyle(DS.Color.textSecondary).lineLimit(3)
@@ -238,7 +238,7 @@ struct AudioTab: View {
                     SurfaceCard {
                         HStack(alignment: .top, spacing: DS.Space.m) {
                             Image(systemName: track.source == .localMicrophone ? "mic.fill" : (track.source == .remoteSystemAudio ? "person.3.fill" : "doc.fill"))
-                                .frame(width: 28, height: 28)
+                                .frame(width: DS.Size.iconTileSmall, height: DS.Size.iconTileSmall)
                                 .background(DS.Color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.Radius.s))
                             VStack(alignment: .leading, spacing: DS.Space.xs) {
                                 HStack(spacing: DS.Space.s) {

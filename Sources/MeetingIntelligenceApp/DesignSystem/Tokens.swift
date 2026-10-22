@@ -10,6 +10,8 @@ import SwiftUI
 enum DS {
     // MARK: Spacing (4-pt grid)
     enum Space {
+        static let none: CGFloat = 0
+        static let xxxs: CGFloat = 1
         static let xxs: CGFloat = 2
         static let xs: CGFloat = 4
         static let s: CGFloat = 8
@@ -39,6 +41,90 @@ enum DS {
         static let avatarSize: CGFloat = 28
         static let iconButton: CGFloat = 28
         static let hairline: CGFloat = 1
+
+        static let sidebarMinWidth: CGFloat = 210
+        static let sidebarMaxWidth: CGFloat = 300
+        /// Single-column pages (recording setup and live view).
+        static let singleColumnMaxWidth: CGFloat = 720
+        static let detailMaxWidth: CGFloat = 820
+        static let chatMaxWidth: CGFloat = readingMaxWidth + 120
+        static let transcriptMaxWidth: CGFloat = readingMaxWidth + 160
+        static let dashboardColumnMinWidth: CGFloat = 300
+        static let toastMaxWidth: CGFloat = 520
+        /// Floating banner with actions (e.g. a new app version).
+        static let bannerMaxWidth: CGFloat = 640
+        static let menuBarWidth: CGFloat = 280
+        /// Timecode column to the left of transcript text.
+        static let timecodeGutter: CGFloat = 64
+        static let editorMinHeight: CGFloat = 64
+
+        enum Window {
+            static let minWidth: CGFloat = 1000
+            static let minHeight: CGFloat = 640
+            static let defaultWidth: CGFloat = 1240
+            static let defaultHeight: CGFloat = 800
+            static let settingsWidth: CGFloat = 680
+            static let settingsHeight: CGFloat = 560
+        }
+
+        enum Sheet {
+            static let s: CGFloat = 380
+            static let m: CGFloat = 480
+            static let l: CGFloat = 520
+            static let xl: CGFloat = 560
+            static let listHeight: CGFloat = 320
+        }
+
+        enum Control {
+            static let searchFieldHeight: CGFloat = 32
+            static let searchFieldCompactHeight: CGFloat = 30
+            static let searchFieldMinWidth: CGFloat = 240
+            static let searchFieldMaxWidth: CGFloat = 360
+            static let segmentedPickerMaxWidth: CGFloat = 460
+            static let filterPickerWidth: CGFloat = 340
+            static let pickerNarrowWidth: CGFloat = 190
+            static let pickerWidth: CGFloat = 220
+            static let pickerWideWidth: CGFloat = 260
+            static let fieldNarrowMaxWidth: CGFloat = 280
+            static let fieldMaxWidth: CGFloat = 320
+            static let progressBarMaxWidth: CGFloat = 240
+            static let meterLabelWidth: CGFloat = 190
+            /// Level meter numeric readout and compact (menu bar) meter label.
+            static let meterCompactWidth: CGFloat = 52
+        }
+    }
+
+    // MARK: Component sizes
+    enum Size {
+        // Status and recording indicator dots
+        static let dotXS: CGFloat = 6
+        static let dotS: CGFloat = 7
+        static let dotM: CGFloat = 8
+        static let dotL: CGFloat = 12
+
+        // Speaker avatars (the regular one is `Layout.avatarSize`)
+        static let avatarSmall: CGFloat = 20
+        static let avatarMedium: CGFloat = 36
+        static let avatarLarge: CGFloat = 52
+
+        static let appIcon: CGFloat = 22
+        static let featureIcon: CGFloat = 24
+        /// Icon on a rounded sunken tile.
+        static let iconTileSmall: CGFloat = 28
+        static let iconTile: CGFloat = 30
+        static let playButton: CGFloat = 30
+        static let dateBadge: CGFloat = 38
+    }
+
+    // MARK: Strokes
+    enum Stroke {
+        static let emphasis: CGFloat = 2
+        static let dropTarget = StrokeStyle(lineWidth: emphasis, dash: [6])
+    }
+
+    // MARK: Opacity
+    enum Opacity {
+        static let disabled: Double = 0.5
     }
 
     // MARK: Typography (SF Pro / SF Mono, Dynamic Type aware via relativeTo)
@@ -56,6 +142,13 @@ enum DS {
         static let mono = SwiftUI.Font.system(size: 11.5, design: .monospaced)
         static let timer = SwiftUI.Font.system(size: 44, weight: .light, design: .rounded).monospacedDigit()
         static let metric = SwiftUI.Font.system(size: 22, weight: .semibold, design: .rounded).monospacedDigit()
+        static let dateBadgeMonth = SwiftUI.Font.system(size: 9, weight: .semibold)
+        static let dateBadgeDay = SwiftUI.Font.system(size: 15, weight: .semibold, design: .rounded)
+        /// Play/pause glyph of the transport bar.
+        static let transportIcon = SwiftUI.Font.system(size: 13, weight: .semibold)
+        /// Leading icon of a sheet header.
+        static let headerIcon = SwiftUI.Font.system(size: 24)
+        static let heroIcon = SwiftUI.Font.system(size: 40)
     }
 
     // MARK: Colors (semantic, dynamic)
@@ -83,6 +176,13 @@ enum DS {
         static let danger = dynamic(light: 0xD93D42, dark: 0xFF6369)
         static let info = dynamic(light: 0x2E7CD6, dark: 0x5EB1EF)
         static let ai = dynamic(light: 0x8B5CF6, dark: 0xA78BFA)
+
+        /// Background of a transcript row that contains a search match.
+        static let searchMatch: SwiftUI.Color = warning.opacity(0.08)
+        /// Background of the matched text itself.
+        static let searchMatchHighlight: SwiftUI.Color = warning.opacity(0.3)
+        /// Vertical rule beside an evidence quote.
+        static let evidenceRule: SwiftUI.Color = accent.opacity(0.5)
 
         /// Distinct, accessible hues for speakers (cycled by speaker ordinal).
         static let speakers: [SwiftUI.Color] = [

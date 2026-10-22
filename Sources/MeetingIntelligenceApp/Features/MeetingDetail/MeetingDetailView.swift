@@ -89,7 +89,7 @@ struct MeetingDetailView: View {
     var body: some View {
         Group {
             if let detail = model.detail {
-                VStack(spacing: 0) {
+                VStack(spacing: DS.Space.none) {
                     header(detail)
                         .padding(.horizontal, DS.Space.xxl)
                         .padding(.top, DS.Space.xl)
@@ -150,7 +150,7 @@ struct MeetingDetailView: View {
 
             if let progress = env.processing.progress(for: meetingId) {
                 HStack(spacing: DS.Space.m) {
-                    if let f = progress.fraction { ProgressView(value: f).frame(maxWidth: 240) } else { ProgressView().controlSize(.small) }
+                    if let f = progress.fraction { ProgressView(value: f).frame(maxWidth: DS.Layout.Control.progressBarMaxWidth) } else { ProgressView().controlSize(.small) }
                     Text(progress.message).font(DS.Font.callout).foregroundStyle(DS.Color.textSecondary)
                     Button("Cancelar") { env.processing.cancel(meetingId) }.buttonStyle(.ds(.ghost, size: .small))
                 }
@@ -274,10 +274,10 @@ struct PlayerBar: View {
             IconButton(systemImage: "gobackward.10", help: "Retroceder 10 s") { player.skip(-10) }
             Button { player.toggle() } label: {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 30, height: 30)
+                    .font(DS.Font.transportIcon)
+                    .frame(width: DS.Size.playButton, height: DS.Size.playButton)
                     .background(DS.Color.accent, in: Circle())
-                    .foregroundStyle(.white)
+                    .foregroundStyle(DS.Color.onAccent)
             }
             .buttonStyle(.plain)
             .keyboardShortcut(.space, modifiers: [])

@@ -16,7 +16,7 @@ struct AnalysisRunBar: View {
             HStack(spacing: DS.Space.m) { providerControls; Spacer(minLength: DS.Space.m); actions }
             VStack(alignment: .leading, spacing: DS.Space.s) {
                 HStack(spacing: DS.Space.m) { providerControls }
-                HStack(spacing: DS.Space.m) { Spacer(minLength: 0); actions }
+                HStack(spacing: DS.Space.m) { Spacer(minLength: DS.Space.none); actions }
             }
         }
         .task { if env.ai.statuses.isEmpty { await env.ai.refreshStatuses() } }
@@ -35,7 +35,7 @@ extension AnalysisRunBar {
                 Text(kind.displayName + (kind.sendsDataToRemoteService ? " · nube" : " · local")).tag(kind)
             }
         }
-        .frame(width: 260)
+        .frame(width: DS.Layout.Control.pickerWideWidth)
         if let status = env.ai.statuses[env.ai.selectedProvider] {
             ProviderStatusPill(status: status)
             if !status.effortLevels.isEmpty {
@@ -50,7 +50,7 @@ extension AnalysisRunBar {
                     ForEach(status.effortLevels, id: \.self) { Text("Esfuerzo: \(EffortLabel.text($0))").tag($0) }
                 }
                 .labelsHidden()
-                .frame(width: 190)
+                .frame(width: DS.Layout.Control.pickerNarrowWidth)
                 .help("Nivel de razonamiento del modelo. Más esfuerzo = respuesta más profunda, más lenta y con más consumo.")
             }
         }
@@ -120,11 +120,11 @@ struct PreviousMeetingsPicker: View {
                     }
                 }
             }
-            .frame(height: 320)
+            .frame(height: DS.Layout.Sheet.listHeight)
             HStack { Spacer(); Button("Listo") { dismiss() }.buttonStyle(.dsPrimary).keyboardShortcut(.defaultAction) }
         }
         .padding(DS.Space.xl)
-        .frame(width: 480)
+        .frame(width: DS.Layout.Sheet.m)
         .task { rows = (try? env.database.meetingRows()) ?? [] }
     }
 }
@@ -238,7 +238,7 @@ struct ItemsSection: View {
         VStack(alignment: .leading, spacing: DS.Space.s) {
             SectionHeader(title: category.displayName, subtitle: "\(items.count)")
             SurfaceCard(padding: DS.Space.xs) {
-                VStack(spacing: 0) {
+                VStack(spacing: DS.Space.none) {
                     ForEach(items) { item in
                         ItemRow(item: item, showsCompletion: showsCompletion,
                                 onSeek: { t in model.player.seek(to: t, play: true) },
@@ -286,7 +286,7 @@ struct ItemRow: View {
                 .foregroundStyle(DS.Color.textSecondary)
                 evidence
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: DS.Space.none)
         }
         .padding(DS.Space.m)
     }
@@ -305,8 +305,8 @@ struct ItemRow: View {
         if item.evidenceStatus == .verified, let start = item.evidenceStartTime {
             Button { onSeek(start) } label: {
                 HStack(alignment: .top, spacing: DS.Space.s) {
-                    Rectangle().fill(DS.Color.accent.opacity(0.5)).frame(width: 2)
-                    VStack(alignment: .leading, spacing: 2) {
+                    Rectangle().fill(DS.Color.evidenceRule).frame(width: DS.Stroke.emphasis)
+                    VStack(alignment: .leading, spacing: DS.Space.xxs) {
                         Text("\(Timecode.hms(start)) · \(item.evidenceSpeakerName ?? "")")
                             .font(DS.Font.mono).foregroundStyle(DS.Color.accent)
                         if let quote = item.evidenceQuote {
@@ -376,7 +376,7 @@ struct RemoteConsentSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.l) {
             HStack(spacing: DS.Space.m) {
-                Image(systemName: "icloud.and.arrow.up").font(.system(size: 24)).foregroundStyle(DS.Color.warning)
+                Image(systemName: "icloud.and.arrow.up").font(DS.Font.headerIcon).foregroundStyle(DS.Color.warning)
                 VStack(alignment: .leading) {
                     Text("Enviar a \(request.provider.displayName)").font(DS.Font.title)
                     Text("El CLI se ejecuta en tu Mac, pero el modelo procesa los datos en la nube del proveedor.")
@@ -399,6 +399,6 @@ struct RemoteConsentSheet: View {
             }
         }
         .padding(DS.Space.xl)
-        .frame(width: 520)
+        .frame(width: DS.Layout.Sheet.l)
     }
 }

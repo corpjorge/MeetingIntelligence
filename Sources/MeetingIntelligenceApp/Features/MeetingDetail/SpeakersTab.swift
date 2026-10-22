@@ -56,7 +56,7 @@ struct SpeakersTab: View {
             VStack(alignment: .leading, spacing: DS.Space.m) {
                 HStack(spacing: DS.Space.m) {
                     SpeakerAvatar(name: participant?.displayName ?? speaker.defaultLabel,
-                                  colorIndex: participant.map { StableHash.index($0.id) } ?? index, size: 36,
+                                  colorIndex: participant.map { StableHash.index($0.id) } ?? index, size: DS.Size.avatarMedium,
                                   isUnknown: participant == nil)
                     VStack(alignment: .leading, spacing: DS.Space.xxs) {
                         HStack(spacing: DS.Space.s) {
@@ -216,6 +216,6 @@ struct NewParticipantSheet: View {
             }
         }
         .padding(DS.Space.xl)
-        .frame(width: 380)
+        .frame(width: DS.Layout.Sheet.s)
     }
 }

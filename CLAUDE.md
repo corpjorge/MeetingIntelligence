@@ -9,6 +9,8 @@ Lee `ARCHITECTURE.md` (módulos y flujos) y `TECHNICAL_DECISIONS.md` (por qué) 
 scripts/swiftw build                      # usa el SDK adecuado (26.5 con solo CLT; ver TD-02)
 scripts/test.sh [--filter X]              # pruebas (fija la ruta del plugin de Swift Testing, TD-03)
 scripts/build-app.sh [release|debug]      # bundle firmado en build/
+scripts/package-release.sh                # dist/: DMG, ZIP, firma de actualización (.zip.sig), sumas (TD-29)
+scripts/publish-release.sh docs/releases/<versión>.md [--prerelease]   # tag + release en GitHub
 scripts/generate-fixtures.sh              # fixtures sintéticos
 MI_SNAPSHOT_DIR=/tmp/s open -n -W --env MI_SNAPSHOT_DIR=/tmp/s "build/Meeting Intelligence.app"   # capturas de UI
 ```
@@ -35,6 +37,8 @@ léela en `.build/checkouts/FluidAudio/Sources` (la documentación a veces difie
 - Biometría: cifrada, nunca exportada/enviada/expuesta por MCP. Identidades solo por umbral calibrado o manual.
 - No registrar tokens, credenciales ni texto de reuniones en logs.
 - No declarar algo como funcional sin verificarlo; documentar limitaciones en `TECHNICAL_DECISIONS.md`.
+- Actualizaciones: nunca instalar sin confirmación ni durante una grabación; nunca quitar la cuarentena ni aceptar un
+  ZIP sin firma Ed25519 válida. La clave privada (`mi-release`) solo vive en el Llavero; nunca en el repositorio.
 
 ## Estado y próximas tareas
 Ver tabla de estado en `README.md` y `ROADMAP.md`. Pendientes inmediatos: prueba con llamada real de Teams,

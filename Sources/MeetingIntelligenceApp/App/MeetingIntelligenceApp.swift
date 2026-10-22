@@ -14,10 +14,10 @@ struct MeetingIntelligenceApp: App {
             RootView()
                 .environment(environment)
                 .environment(router)
-                .frame(minWidth: 1000, minHeight: 640)
+                .frame(minWidth: DS.Layout.Window.minWidth, minHeight: DS.Layout.Window.minHeight)
                 .tint(DS.Color.accent)
         }
-        .defaultSize(width: 1240, height: 800)
+        .defaultSize(width: DS.Layout.Window.defaultWidth, height: DS.Layout.Window.defaultHeight)
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands { AppCommands(router: router, environment: environment) }
 
@@ -97,6 +97,13 @@ struct AppCommands: Commands {
     let environment: AppEnvironment
 
     var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button("Buscar actualizaciones…") {
+                NSApp.activate()
+                Task { await environment.updates.check(userInitiated: true) }
+            }
+            .disabled(!environment.updates.isConfigured || environment.updates.phase == .installing)
+        }
         CommandGroup(after: .newItem) {
             Button("Nueva grabación") { router.section = .recording }
                 .keyboardShortcut("r", modifiers: [.command, .shift])

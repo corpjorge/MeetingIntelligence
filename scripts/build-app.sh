@@ -69,6 +69,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSSupportsSuddenTermination</key><false/>
   <key>NSMicrophoneUsageDescription</key>
   <string>$APP_NAME graba tu micrófono durante las reuniones que tú inicias, para transcribirlas localmente.</string>
+  <key>MIUpdateRepository</key><string>${UPDATE_REPOSITORY:-}</string>
+  <key>MIUpdatePublicKey</key><string>${UPDATE_PUBLIC_KEY:-}</string>
   <key>NSAudioCaptureUsageDescription</key>
   <string>$APP_NAME captura el audio de la app de llamada que elijas (o de todo el sistema, si lo eliges) durante las reuniones que tú inicias, para transcribirlas localmente.</string>
 </dict>

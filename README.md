@@ -15,6 +15,8 @@ apps y **local por defecto**.
   exportación TXT/Markdown/JSON/SRT/PDF y un **servidor MCP** de solo lectura para clientes como Claude Code y Codex.
 - **Actualiza los modelos** desde la app (solo descarga lo que cambió y verifica antes de reemplazar) y borra todo lo
   asociado a una reunión al eliminarla, devolviendo el espacio al disco.
+- **Se actualiza a sí misma**: avisa cuando hay una versión nueva en GitHub y, si lo confirmas, la descarga, verifica
+  su firma y se reinicia con ella.
 
 ## Capturas
 
@@ -43,6 +45,13 @@ apps y **local por defecto**.
 4. En el primer uso descarga los modelos locales (Parakeet Ultra ~630 MB y diarización ~22 MB) y pide permiso de
    **micrófono** y de **audio del sistema** cuando grabas por primera vez.
 
+**Actualizar:** desde la 0.2.0, la app avisa cuando hay una versión nueva. Pulsa **Actualizar** y luego **Reiniciar e
+instalar**. La descarga se verifica con la firma de la publicación antes de reemplazar nada, y nunca se instala
+mientras grabas o procesas. Puedes desactivar la búsqueda automática en **Ajustes › General**, y también buscar desde
+el menú **Meeting Intelligence › Buscar actualizaciones…**. La 0.1.0 no tiene actualizador: instala la 0.2.0 desde el
+DMG y reemplaza la anterior. Como la app no tiene firma de desarrollador, macOS puede volver a pedir los permisos de
+micrófono y de audio del sistema después de cada actualización.
+
 **Requisitos:** Mac con Apple Silicon (M1 o posterior) y macOS 26 o posterior. Los análisis con IA son opcionales y
 usan las CLIs que tengas instaladas (Claude Code, Codex, Antigravity) u Ollama.
 
@@ -58,7 +67,7 @@ Uso gratuito según [LICENSE](LICENSE); componentes de terceros en [THIRD_PARTY_
 
 | Área | Estado | Verificación |
 |---|---|---|
-| App macOS (SwiftUI, Design System, claro/oscuro) | ✅ Implementada | Compila; capturas de las 12 pantallas en ambos modos (modo instantánea) |
+| App macOS (SwiftUI, Design System, claro/oscuro) | ✅ Implementada | Compila; capturas de las 12 pantallas en ambos modos (modo instantánea); pruebas de la lógica de la app (preferencias, consentimiento de IA, cola de procesamiento, sugerencias de llamada) |
 | Importar WAV/M4A/MP3/MP4 | ✅ | Pruebas + CLI |
 | Transcripción Parakeet Ultra (local, ANE) | ✅ | Integración real: WER 0–9 % en fixtures sintéticos, RTFx 100–475× |
 | Transcripción provisional en vivo (ventanas deslizantes Ultra) | ✅ | Prueba de integración real |
@@ -83,9 +92,10 @@ Uso gratuito según [LICENSE](LICENSE); componentes de terceros en [THIRD_PARTY_
 | Borrar una reunión libera todo su espacio | ✅ | Pruebas: audio, filas, historial, vectores, muestras de voz opcionales, compactación de SQLite, restos huérfanos (TD-28) |
 | Frases cortas aisladas redecodificadas con contexto | ✅ | Pistas sintéticas: 74/80 frente a 67/76; también corrige frases pegadas por la compactación (TD-26) |
 | Servidor MCP (stdio, 2026-07-28 + 2025-11-25) | ✅ | Prueba stdio con el binario empaquetado |
+| Actualizaciones de la app (GitHub, firma Ed25519, reinicio) | ✅ | Pruebas + de punta a punta con la app real: 0.2.0 → 0.2.1 con servidor local; firma alterada rechazada (TD-29); **pendiente** primera actualización real en `/Applications` |
 | Exportación TXT/MD/JSON/SRT/PDF | ✅ | Pruebas |
 
-105 pruebas automatizadas pasan (`scripts/test.sh`), incluidas 7 de integración con los modelos reales. Otras 4
+136 pruebas automatizadas pasan (`scripts/test.sh`), incluidas 7 de integración con los modelos reales. Otras 4
 (mediciones de TD-24/TD-26, e5-small y actualización real desde Hugging Face) se activan bajo demanda; ver `TESTING.md`.
 
 ## Requisitos
@@ -110,6 +120,16 @@ scripts/generate-fixtures.sh    # regenera los audios sintéticos de prueba (voc
 
 Primera ejecución: la bienvenida pide tu nombre y descarga los modelos. macOS pedirá **Micrófono** y
 **Grabación de audio del sistema** al iniciar la primera grabación.
+
+Publicar una versión (TD-29): sube `VERSION` en `config/app.env` y ejecuta:
+
+```bash
+scripts/package-release.sh                               # DMG, ZIP, firma de actualización (.zip.sig) y sumas en dist/
+scripts/publish-release.sh docs/releases/<versión>.md    # tag + release en GitHub (añade --prerelease si aplica)
+```
+
+La firma de actualización usa una clave Ed25519 guardada en tu Llavero (`mi-release keygen`, una sola vez). Guarda una
+copia: sin ella, las versiones futuras no se podrán instalar desde la app.
 
 > Firma: por defecto el bundle se firma *ad hoc*, así que macOS vuelve a pedir permisos tras cada recompilación.
 > Para conservarlos, usa una identidad de firma propia: `SIGN_IDENTITY="Mi certificado" scripts/build-app.sh`.

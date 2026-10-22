@@ -77,8 +77,8 @@ struct DashboardView: View {
             recentMeetings
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: DS.Space.xl) {
-                    pendingItems.frame(minWidth: 300, maxWidth: .infinity)
-                    latestAnalyses.frame(minWidth: 300, maxWidth: .infinity)
+                    pendingItems.frame(minWidth: DS.Layout.dashboardColumnMinWidth, maxWidth: .infinity)
+                    latestAnalyses.frame(minWidth: DS.Layout.dashboardColumnMinWidth, maxWidth: .infinity)
                 }
                 VStack(spacing: DS.Space.xl) {
                     pendingItems
@@ -125,7 +125,7 @@ struct DashboardView: View {
                         Button("Importar audio") { router.section = .meetings; router.isImporting = true }.buttonStyle(.dsSecondary)
                     }
                 } else {
-                    VStack(spacing: 0) {
+                    VStack(spacing: DS.Space.none) {
                         ForEach(model.rows.prefix(6)) { row in
                             Button { router.openMeeting(row.id) } label: { MeetingRowView(row: row, compact: true) }
                                 .buttonStyle(.plain)
@@ -148,8 +148,8 @@ struct DashboardView: View {
                         ForEach(model.openItems) { item in
                             Button { router.openMeeting(item.meetingId, tab: .tasks) } label: {
                                 HStack(alignment: .top, spacing: DS.Space.s) {
-                                    Image(systemName: "circle").font(.system(size: 11)).foregroundStyle(DS.Color.textTertiary)
-                                        .padding(.top, 2)
+                                    Image(systemName: "circle").font(DS.Font.caption).foregroundStyle(DS.Color.textTertiary)
+                                        .padding(.top, DS.Space.xxs)
                                     VStack(alignment: .leading, spacing: DS.Space.xxs) {
                                         Text(item.text).font(DS.Font.callout).foregroundStyle(DS.Color.textPrimary).lineLimit(2)
                                         Text([item.ownerName, item.dueText].compactMap { $0 }.joined(separator: " · "))

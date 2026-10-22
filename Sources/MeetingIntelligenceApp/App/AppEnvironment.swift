@@ -25,6 +25,7 @@ final class AppEnvironment {
     let semantic: SemanticIndexController
     let modelUpdates: ModelUpdateController
     let calls: CallSuggestionController
+    let updates: AppUpdateController
 
     private(set) var startupError: String?
     private(set) var recoveredMeetings: [String] = []
@@ -64,6 +65,17 @@ final class AppEnvironment {
         modelUpdates = ModelUpdateController(asr: asr, diarizer: diarizer, booster: booster, semantic: semantic,
                                              settings: settings, processing: processing, recording: recording)
         modelUpdates.recoverInterruptedUpdates()
+        updates = AppUpdateController(configuration: AppUpdateConfiguration.fromMainBundle(), settings: settings,
+                                      busyReason: { [recording, processing, modelUpdates] in
+            if recording.isActive { return "se graba una reunión" }
+            if processing.active != nil || !processing.queue.isEmpty { return "se procesa una reunión" }
+            if modelUpdates.rows.contains(where: { if case .updating = $0.state { true } else { false } }) {
+                return "se actualiza un modelo"
+            }
+            return nil
+        })
+        updates.handleLaunch()
+        if SnapshotDriver.directory == nil { updates.startAutomaticChecks() }
         // The call monitor needs no permission; snapshot runs skip notifications.
         calls.start(requestNotifications: SnapshotDriver.directory == nil)
         recording.onFinished = { [processing, settings] meetingId in

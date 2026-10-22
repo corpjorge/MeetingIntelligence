@@ -14,7 +14,7 @@ struct SettingsView: View {
             PrivacySettings().tabItem { Label("Privacidad", systemImage: "lock.shield") }
             MCPSettings().tabItem { Label("MCP", systemImage: "point.3.connected.trianglepath.dotted") }
         }
-        .frame(width: 680, height: 560)
+        .frame(width: DS.Layout.Window.settingsWidth, height: DS.Layout.Window.settingsHeight)
     }
 }
 
@@ -56,6 +56,7 @@ struct GeneralSettings: View {
                 Toggle("Pedir confirmación de consentimiento antes de grabar", isOn: $settings.requireConsentConfirmation)
                 Toggle("Procesar automáticamente al terminar o importar", isOn: $settings.autoProcessAfterRecording)
             }
+            AppUpdateSettingsSection()
         }
         .onAppear { name = (try? env.database.localUser()?.displayName) ?? env.settings.localUserName }
     }

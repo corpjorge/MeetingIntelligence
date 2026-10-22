@@ -33,7 +33,7 @@ struct MenuBarContent: View {
             HStack {
                 Text(AppIdentity.displayName).font(DS.Font.headline)
                 Spacer()
-                if env.recording.isActive { RecordingDot(size: 8) }
+                if env.recording.isActive { RecordingDot(size: DS.Size.dotM) }
             }
             if env.recording.isActive {
                 VStack(alignment: .leading, spacing: DS.Space.s) {
@@ -41,11 +41,11 @@ struct MenuBarContent: View {
                         .font(DS.Font.bodyEmphasis).lineLimit(1)
                     Text(Timecode.compact(env.recording.elapsed)).font(DS.Font.metric)
                     HStack(spacing: DS.Space.s) {
-                        Label("Mic", systemImage: "mic.fill").font(DS.Font.caption).frame(width: 52, alignment: .leading)
+                        Label("Mic", systemImage: "mic.fill").font(DS.Font.caption).frame(width: DS.Layout.Control.meterCompactWidth, alignment: .leading)
                         LevelMeterView(level: env.recording.micLevel.normalized)
                     }
                     HStack(spacing: DS.Space.s) {
-                        Label("Remoto", systemImage: "speaker.wave.2.fill").font(DS.Font.caption).frame(width: 52, alignment: .leading)
+                        Label("Remoto", systemImage: "speaker.wave.2.fill").font(DS.Font.caption).frame(width: DS.Layout.Control.meterCompactWidth, alignment: .leading)
                         LevelMeterView(level: env.recording.remoteLevel.normalized, tint: DS.Color.info)
                     }
                     if env.recording.capturesMicrophone {
@@ -92,7 +92,7 @@ struct MenuBarContent: View {
             Button("Salir") { NSApp.terminate(nil) }.buttonStyle(.ds(.ghost, size: .small))
         }
         .padding(DS.Space.l)
-        .frame(width: 280)
+        .frame(width: DS.Layout.menuBarWidth)
     }
 
     private func showMainWindow() {

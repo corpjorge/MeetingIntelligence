@@ -15,6 +15,7 @@ import PackageDescription
 //   MeetingIntelligenceApp   SwiftUI application (executable).
 //   MeetingMCPServer         Read-only MCP server over stdio (executable).
 //   MeetingIntelligenceCLI   Headless diagnostics and processing (executable).
+//   MeetingReleaseTool       `mi-release`: signs update archives for publishing (not bundled).
 
 let strictConcurrency: [SwiftSetting] = [
     .enableUpcomingFeature("ExistentialAny"),
@@ -30,6 +31,8 @@ let package = Package(
         .executable(name: "MeetingIntelligence", targets: ["MeetingIntelligenceApp"]),
         .executable(name: "meeting-intelligence-mcp", targets: ["MeetingMCPServer"]),
         .executable(name: "mi", targets: ["MeetingIntelligenceCLI"]),
+        // Publisher-only: signs update archives (TD-29). Not bundled in the app.
+        .executable(name: "mi-release", targets: ["MeetingReleaseTool"]),
         .library(name: "MeetingCore", targets: ["MeetingCore"]),
     ],
     dependencies: [
@@ -87,6 +90,11 @@ let package = Package(
                            .product(name: "GRDB", package: "GRDB.swift")],
             swiftSettings: strictConcurrency
         ),
+        .executableTarget(
+            name: "MeetingReleaseTool",
+            dependencies: ["MeetingCore"],
+            swiftSettings: strictConcurrency
+        ),
         .testTarget(
             name: "MeetingCoreTests",
             dependencies: ["MeetingCore", .product(name: "GRDB", package: "GRDB.swift")],
@@ -106,6 +114,15 @@ let package = Package(
             name: "MeetingSemanticTests",
             dependencies: ["MeetingSemantic", "MeetingCore"],
             swiftSettings: strictConcurrency
+        ),
+        // App logic (services and settings); views are verified with snapshots (TD-15).
+        .testTarget(
+            name: "MeetingIntelligenceAppTests",
+            dependencies: ["MeetingIntelligenceApp", "MeetingCore", "MeetingAudio", "MeetingSpeech",
+                           .product(name: "GRDB", package: "GRDB.swift")],
+            swiftSettings: strictConcurrency + [
+                .defaultIsolation(MainActor.self),
+            ]
         ),
     ]
 )

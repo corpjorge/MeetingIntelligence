@@ -161,7 +161,7 @@ struct RecordingView: View {
                     }
                     sourcePicker
                     Toggle(isOn: $captureMicrophone) {
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: DS.Space.xxs) {
                             Text("Grabar mi micrófono").font(DS.Font.body)
                             Text(input.map { "\($0.name)\($0.transport.isBluetooth ? " · Bluetooth" : "")" } ?? "Sin dispositivo de entrada")
                                 .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
@@ -194,7 +194,7 @@ struct RecordingView: View {
             Text("La grabación nunca empieza sola. Mientras grabas, verás un indicador rojo en la barra de menús. macOS pedirá los permisos de Micrófono y de Grabación de audio del sistema la primera vez.")
                 .font(DS.Font.caption).foregroundStyle(DS.Color.textTertiary)
         }
-        .frame(maxWidth: 720, alignment: .leading)
+        .frame(maxWidth: DS.Layout.singleColumnMaxWidth, alignment: .leading)
     }
 
     private func start() {
@@ -220,7 +220,7 @@ struct RecordingView: View {
                 }
             }
             let visible = showAllApps ? options : Array(options.prefix(6))
-            VStack(spacing: 0) {
+            VStack(spacing: DS.Space.none) {
                 ForEach(visible) { option in
                     sourceRow(selected: isSelected(option),
                               icon: AnyView(AppIcon(path: option.bundlePath)),
@@ -237,10 +237,10 @@ struct RecordingView: View {
                         .padding(.vertical, DS.Space.xs)
                 }
                 Divider().padding(.vertical, DS.Space.xs)
-                sourceRow(selected: source == .systemWide, icon: AnyView(Image(systemName: "speaker.wave.3").frame(width: 22)),
+                sourceRow(selected: source == .systemWide, icon: AnyView(Image(systemName: "speaker.wave.3").frame(width: DS.Size.appIcon)),
                           title: "Todo el sistema", subtitle: "Cualquier app excepto esta (si la app no se puede aislar)",
                           badge: nil) { source = .systemWide }
-                sourceRow(selected: source == .microphoneOnly, icon: AnyView(Image(systemName: "mic").frame(width: 22)),
+                sourceRow(selected: source == .microphoneOnly, icon: AnyView(Image(systemName: "mic").frame(width: DS.Size.appIcon)),
                           title: "Ninguno (solo micrófono)", subtitle: "Conversaciones presenciales", badge: nil) {
                     source = .microphoneOnly
                 }
@@ -261,7 +261,7 @@ struct RecordingView: View {
                 Image(systemName: selected ? "largecircle.fill.circle" : "circle")
                     .foregroundStyle(selected ? DS.Color.accent : DS.Color.textTertiary)
                 icon
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: DS.Space.xxxs) {
                     Text(title).font(DS.Font.bodyEmphasis).foregroundStyle(DS.Color.textPrimary).lineLimit(1)
                     Text(subtitle).font(DS.Font.caption).foregroundStyle(DS.Color.textTertiary).lineLimit(1)
                 }
@@ -269,7 +269,7 @@ struct RecordingView: View {
                 if let badge { StatusPill(text: badge.0, tone: badge.1) }
             }
             .padding(.horizontal, DS.Space.s)
-            .padding(.vertical, DS.Space.xs + 1)
+            .padding(.vertical, DS.Space.xs + DS.Space.xxxs)
             .contentShape(Rectangle())
             .hoverHighlight(selected: selected)
         }
@@ -338,7 +338,7 @@ struct RecordingView: View {
                             Image(systemName: "pause.circle.fill").foregroundStyle(DS.Color.warning)
                             Text("En pausa").font(DS.Font.headline).foregroundStyle(DS.Color.warning)
                         } else {
-                            RecordingDot(size: 12)
+                            RecordingDot(size: DS.Size.dotL)
                             Text("Grabando").font(DS.Font.headline).foregroundStyle(DS.Color.recording)
                         }
                         Spacer()
@@ -383,7 +383,7 @@ struct RecordingView: View {
                         Text("Procesos de \(remoteName) capturados").font(DS.Font.headline)
                         ForEach(recording.remoteProcesses) { p in
                             HStack {
-                                Circle().fill(p.isRunningOutput ? DS.Color.success : DS.Color.border).frame(width: 7, height: 7)
+                                Circle().fill(p.isRunningOutput ? DS.Color.success : DS.Color.border).frame(width: DS.Size.dotS, height: DS.Size.dotS)
                                 Text(p.displayName).font(DS.Font.callout)
                                 Text(p.bundleID ?? "").font(DS.Font.caption).foregroundStyle(DS.Color.textTertiary)
                             }
@@ -398,7 +398,7 @@ struct RecordingView: View {
             }
             livePanel
         }
-        .frame(maxWidth: 720, alignment: .leading)
+        .frame(maxWidth: DS.Layout.singleColumnMaxWidth, alignment: .leading)
     }
 
     @ViewBuilder
@@ -446,19 +446,19 @@ struct RecordingView: View {
 
     private func meter(_ label: String, systemImage: String, level: AudioLevel, tint: Color, enabled: Bool) -> some View {
         HStack(spacing: DS.Space.m) {
-            Label(label, systemImage: systemImage).font(DS.Font.callout).frame(width: 190, alignment: .leading).lineLimit(1)
+            Label(label, systemImage: systemImage).font(DS.Font.callout).frame(width: DS.Layout.Control.meterLabelWidth, alignment: .leading).lineLimit(1)
             LevelMeterView(level: enabled ? level.normalized : 0, tint: tint)
             Text(enabled ? String(format: "%.0f dB", max(-60, level.rmsDB)) : "—")
-                .font(DS.Font.mono).foregroundStyle(DS.Color.textTertiary).frame(width: 52, alignment: .trailing)
+                .font(DS.Font.mono).foregroundStyle(DS.Color.textTertiary).frame(width: DS.Layout.Control.meterCompactWidth, alignment: .trailing)
         }
-        .opacity(enabled ? 1 : 0.5)
+        .opacity(enabled ? 1 : DS.Opacity.disabled)
     }
 }
 
 /// App icon from its bundle path (generic icon when unknown).
 struct AppIcon: View {
     let path: String?
-    var size: CGFloat = 22
+    var size: CGFloat = DS.Size.appIcon
 
     var body: some View {
         Group {

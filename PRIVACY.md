@@ -1,6 +1,8 @@
 # Privacidad y seguridad
 
-Principio: **local primero**. Nada sale del Mac salvo que lo autorices explícitamente para un análisis de IA en la nube.
+Principio: **local primero**. Ningún dato de tus reuniones sale del Mac salvo que lo autorices explícitamente para un
+análisis de IA en la nube. Las únicas consultas automáticas a internet buscan versiones nuevas de la app y no llevan
+datos tuyos (ver «Actualizaciones»).
 
 ## Qué se guarda y dónde
 
@@ -45,12 +47,22 @@ No se registran tokens, credenciales ni texto de transcripciones en los logs del
 - Ollama solo acepta endpoints locales (127.0.0.1/localhost).
 - Se envía solo texto (transcripción o extractos); nunca audio ni datos biométricos.
 - Los agentes se ejecutan sin herramientas ni permisos de sistema y la transcripción se trata como contenido no
-  confiable: las instrucciones que aparezcan en ella no se ejecutan.
+  confiable: las instrucciones que aparezcan en ella no se ejecutan. Codex se ejecuta sin cargar tu `config.toml`
+  (servidores MCP, plugins, hooks, búsqueda web) y sin poder ejecutar comandos (TD-12).
 
 ## MCP
 
 Deshabilitado por defecto. Solo lectura. Puede limitarse a reuniones concretas. Ten en cuenta que el cliente MCP
 (Claude Code, Codex…) envía a su modelo lo que consulte.
+
+## Actualizaciones de la app
+
+- Al abrir la app y una vez al día, consulta la lista pública de releases de GitHub (`api.github.com`). No envía nada
+  de tus reuniones; GitHub ve tu dirección IP como en cualquier visita. Se desactiva en **Ajustes › General**.
+- Nunca descarga ni instala nada sin tu confirmación. Antes de reemplazar la app comprueba la firma Ed25519 de la
+  publicación, la versión, el identificador y la firma de código (TD-29).
+- La descarga se guarda en `~/Library/Caches/dev.meetingintelligence.app/Updates` y se borra al arrancar la versión
+  nueva, igual que la copia de la versión anterior.
 
 ## Eliminación
 

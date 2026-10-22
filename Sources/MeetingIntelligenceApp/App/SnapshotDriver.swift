@@ -43,6 +43,7 @@ enum SnapshotDriver {
                         CallMuteReminderBanner(appName: nil, onPauseMicrophone: {}, onDismiss: {})
                     }
                 }
+                captureUpdateStates(suffix: suffix, in: dir, env: env)
                 // MI_SNAPSHOT_MEETING picks a specific meeting id; default is the first ready one.
                 let wanted = ProcessInfo.processInfo.environment["MI_SNAPSHOT_MEETING"]
                 // The Settings scene is a separate window; render its pages standalone.
@@ -120,6 +121,42 @@ enum SnapshotDriver {
         if let png = rep.representation(using: .png, properties: [:]) {
             try? png.write(to: dir.appendingPathComponent("\(name).png"))
         }
+    }
+
+    /// App update banner and sheet in their main states, with a fixed fake release (no network).
+    @MainActor
+    static func captureUpdateStates(suffix: String, in dir: URL, env: AppEnvironment) {
+        let notes = """
+        ## Novedades
+        - **Actualizaciones desde la app**: avisa cuando hay una versión nueva, la descarga y la instala.
+        - La descarga se verifica con una firma Ed25519 antes de reemplazar nada.
+        - Codex se ejecuta sin tu `config.toml` y sin poder ejecutar comandos.
+
+        ## Instalación
+        | Archivo | Uso |
+        """
+        let asset = AppRelease.Asset(name: "Meeting-Intelligence-9.9.9.zip",
+                                     url: URL(string: "https://example.invalid/a.zip")!, size: 23_500_000)
+        let release = AppRelease(version: AppVersion("9.9.9")!, versionString: "9.9.9", tag: "v9.9.9",
+                                 title: "Meeting Intelligence 9.9.9", notes: notes,
+                                 pageURL: URL(string: "https://github.com/corpjorge/MeetingIntelligence/releases")!,
+                                 publishedAt: Date(timeIntervalSince1970: 1_792_670_400), isPrerelease: false,
+                                 archive: asset, signature: asset)
+        let fake = AppUpdateController(configuration: nil, settings: AppSettings(
+            defaults: UserDefaults(suiteName: "dev.meetingintelligence.snapshot.updates") ?? .standard),
+            bundleURL: Bundle.main.bundleURL)
+        let states: [(String, AppUpdateController.Phase)] = [
+            ("available", .available), ("downloading", .downloading(0.42)), ("ready", .ready),
+            ("failed", .failed(AppUpdateError.invalidSignature.localizedDescription)),
+        ]
+        for (name, phase) in states {
+            fake.showForSnapshot(release, phase: phase)
+            captureComponent("update-banner-\(name)-\(suffix)", in: dir) { AppUpdateBannerContent(updates: fake) }
+            captureComponent("update-sheet-\(name)-\(suffix)", in: dir) { AppUpdatePanel(updates: fake) }
+        }
+        fake.showForSnapshot(nil, phase: .upToDate)
+        captureComponent("update-sheet-uptodate-\(suffix)", in: dir) { AppUpdatePanel(updates: fake) }
+        captureWindowContent("settings-general-\(suffix)", in: dir) { GeneralSettings().environment(env) }
     }
 
     /// The composited window as the user sees it (this process's own window only).

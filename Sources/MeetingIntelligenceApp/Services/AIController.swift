@@ -19,16 +19,21 @@ final class AIController {
     private(set) var lastError: String?
     var pendingConsent: ConsentRequest?
     var selectedProvider: AIProviderKind {
-        didSet { UserDefaults.standard.set(selectedProvider.rawValue, forKey: "aiProvider") }
+        didSet { defaults.set(selectedProvider.rawValue, forKey: "aiProvider") }
     }
 
     private let database: AppDatabase
+    private let defaults: UserDefaults
+    private let providerFor: (AIProviderKind) -> any AIProvider
     private var tasks: [String: Task<Void, Never>] = [:]
     private let logger = Logger(subsystem: "dev.meetingintelligence", category: "ai")
 
-    init(database: AppDatabase) {
+    init(database: AppDatabase, defaults: UserDefaults = .standard,
+         providerFor: @escaping (AIProviderKind) -> any AIProvider = AIProviders.provider(for:)) {
         self.database = database
-        selectedProvider = AIProviderKind(rawValue: UserDefaults.standard.string(forKey: "aiProvider") ?? "") ?? .claudeCode
+        self.defaults = defaults
+        self.providerFor = providerFor
+        selectedProvider = AIProviderKind(rawValue: defaults.string(forKey: "aiProvider") ?? "") ?? .claudeCode
     }
 
     func configuration(for kind: AIProviderKind) -> AIProviderConfiguration {
@@ -44,7 +49,8 @@ final class AIController {
         configurationRevision += 1
         // Ollama's levels depend on the selected model.
         if configuration.provider == .ollama {
-            Task { statuses[.ollama] = await AIProviders.provider(for: .ollama).detect(configuration: configuration) }
+            let provider = providerFor(.ollama)
+            Task { statuses[.ollama] = await provider.detect(configuration: configuration) }
         }
     }
 
@@ -55,7 +61,8 @@ final class AIController {
         await withTaskGroup(of: ProviderStatus.self) { group in
             for kind in AIProviderKind.allCases {
                 let config = configuration(for: kind)
-                group.addTask { await AIProviders.provider(for: kind).detect(configuration: config) }
+                let provider = providerFor(kind)
+                group.addTask { await provider.detect(configuration: config) }
             }
             for await status in group {
                 statuses[status.kind] = status
@@ -105,9 +112,10 @@ final class AIController {
                                prepared: MeetingAnalysisService.PreparedPrompt, consent: Bool) {
         runningAnalyses.insert(meetingId)
         let service = MeetingAnalysisService(database: database)
+        let provider = providerFor(kind)
         tasks[meetingId] = Task { [weak self] in
             do {
-                try await service.run(meetingId: meetingId, provider: AIProviders.provider(for: kind),
+                try await service.run(meetingId: meetingId, provider: provider,
                                       configuration: config, prepared: prepared, consentGiven: consent)
             } catch is CancellationError {
             } catch {
@@ -140,7 +148,7 @@ final class AIController {
             guard confirmed else { return chat.localAnswer(question: question, retrieval: retrieval) }
         }
         do {
-            return try await chat.answer(question: question, retrieval: retrieval, provider: AIProviders.provider(for: kind),
+            return try await chat.answer(question: question, retrieval: retrieval, provider: providerFor(kind),
                                          configuration: config, consentGiven: true)
         } catch {
             lastError = error.localizedDescription
