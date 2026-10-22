@@ -147,9 +147,16 @@ extension AppDatabase {
         }
     }
 
-    /// Deletes the meeting row (cascading to every dependent row) and its audio folder.
-    public func deleteMeeting(id: String, paths: AppPaths) throws {
-        _ = try writer.write { db in try Meeting.deleteOne(db, key: id) }
+    /// Deletes the meeting row (cascading to every dependent row: transcripts, speakers,
+    /// analyses, chat, vectors…) and its audio folder. Voice samples enrolled from it stay on
+    /// the participant's profile unless `includeVoiceSamples`.
+    public func deleteMeeting(id: String, paths: AppPaths, includeVoiceSamples: Bool = false) throws {
+        _ = try writer.write { db in
+            if includeVoiceSamples {
+                try db.execute(sql: "DELETE FROM voiceSample WHERE meetingId = ?", arguments: [id])
+            }
+            try Meeting.deleteOne(db, key: id)
+        }
         let dir = paths.meetingDirectory(id)
         if FileManager.default.fileExists(atPath: dir.path) {
             try FileManager.default.removeItem(at: dir)

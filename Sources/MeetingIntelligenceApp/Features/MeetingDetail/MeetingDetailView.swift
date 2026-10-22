@@ -259,17 +259,9 @@ struct MeetingDetailView: View {
 
     private func confirmDelete() {
         guard let meeting = model.detail?.meeting else { return }
-        let alert = NSAlert()
-        alert.messageText = "¿Eliminar “\(meeting.title)”?"
-        alert.informativeText = "Se eliminarán el audio, la transcripción, los hablantes y los análisis. No se puede deshacer."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Eliminar")
-        alert.addButton(withTitle: "Cancelar")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        model.player.stop()
-        env.processing.cancel(meetingId)
-        try? env.database.deleteMeeting(id: meetingId, paths: env.paths)
-        router.meetingPath = []
+        if MeetingDeletion.confirmAndDelete(meeting, env: env, beforeDeleting: { model.player.stop() }) {
+            router.meetingPath = []
+        }
     }
 }
 

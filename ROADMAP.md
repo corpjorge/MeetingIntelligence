@@ -27,6 +27,9 @@
 5. Validar con grabaciones reales autorizadas la búsqueda semántica (TD-25), el refuerzo del diccionario (TD-24) y la
    redecodificación de frases cortas (TD-26); hoy solo están medidos con voces sintéticas.
 
+Hecho el 22-oct-2026: actualización verificada de modelos y limpieza de los que no se usan (TD-27); borrar una reunión
+libera todo su espacio (TD-28); capturas en el README.
+
 Hecho el 21-oct-2026: historial persistente del chat, búsqueda semántica local opcional (TD-25), refuerzo acústico
 del diccionario opcional (TD-24), frases cortas con contexto y palabras que ya no se estiran sobre huecos (TD-26),
 marca de fragmentos de baja confianza (TD-22).

@@ -31,6 +31,22 @@ final class SemanticIndexController {
 
     var modelDirectory: URL { engine.modelDirectory }
 
+    var managedModel: ManagedModel { engine.managedModel(inUse: settings.semanticSearch) }
+
+    /// Stops indexing and releases the model (before an update or a delete).
+    func unloadModel() async {
+        task?.cancel()
+        task = nil
+        await engine.unload()
+    }
+
+    /// Loads the model files as search will, then resumes indexing if enabled.
+    func verifyModel() async throws {
+        try await engine.prepare()
+        if !settings.semanticSearch { await engine.unload() }
+        refresh()
+    }
+
     /// Applies the current setting: starts indexing when enabled, stops when disabled.
     func refresh() {
         guard settings.semanticSearch else {

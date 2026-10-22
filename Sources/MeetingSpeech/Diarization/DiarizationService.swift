@@ -1,5 +1,6 @@
 public import Foundation
 @preconcurrency import FluidAudio
+public import MeetingCore
 import OSLog
 
 /// One speaker turn produced by diarization (file timeline, seconds).
@@ -63,6 +64,13 @@ public actor DiarizationService {
     /// FluidAudio's cache folder for the diarizer repo (`<models>/speaker-diarization`).
     public nonisolated var cacheDirectory: URL {
         MLModelConfigurationUtils.defaultModelsDirectory(for: .diarizer)
+    }
+
+    /// Pinned by FluidAudio to one commit: it only changes with a FluidAudio upgrade (TD-27).
+    public nonisolated var managedModel: ManagedModel {
+        ManagedModel(id: "speaker-diarization", displayName: "Diarización · pyannote + WeSpeaker",
+                     repository: Repo.diarizer.remotePath, revision: .from(Repo.diarizer.revision),
+                     directory: cacheDirectory)
     }
 
     public func isModelCached() -> Bool {

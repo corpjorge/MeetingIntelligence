@@ -49,11 +49,12 @@ uso: mi <comando> [opciones]
   show <meetingId>               Muestra la transcripción con hablantes y timestamps
   search <consulta> [--meeting ID] [--speaker NOMBRE] [--semantic]
   semantic-index                 Descarga e5-small (una vez) e indexa los fragmentos para --semantic
+  models [update <id>]           Versiones de los modelos (consulta Hugging Face) y actualización verificada
   export <meetingId> --format txt|markdown|json|srt|pdf [--out ruta]
   ai-providers                   Detecta proveedores de IA (versión, sesión, modelos)
   analyze <meetingId> --provider claude|codex|agy|ollama [--model M] [--effort E] [--share]
                                  Analiza con IA; los proveedores en la nube exigen --share
-  ask <pregunta> [--meeting ID] [--provider P] [--share] [--semantic]
+  ask <pregunta> [--meeting ID] [--provider P] [--share] [--semantic] [--save]
                                  Pregunta sobre reuniones (búsqueda local + IA opcional)
   evaluate <audio> [--reference ref.txt] [--rttm ref.rttm] [--no-diarize]
                                  Mide WER/DER/RTFx sin modificar la biblioteca
@@ -79,6 +80,7 @@ struct MeetingIntelligenceCLI {
             case "show": try Commands.show(args, paths: paths)
             case "search": try await Commands.search(args, paths: paths)
             case "semantic-index": try await Commands.semanticIndex(paths: paths)
+            case "models": try await Commands.models(args, paths: paths)
             case "export": try Commands.export(args, paths: paths)
             case "ai-providers": await Commands.aiProviders(paths: paths)
             case "analyze": try await Commands.analyze(args, paths: paths)

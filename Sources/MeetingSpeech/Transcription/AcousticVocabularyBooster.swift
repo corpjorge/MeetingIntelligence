@@ -1,7 +1,7 @@
 public import Foundation
 import AVFoundation
 @preconcurrency import FluidAudio
-import MeetingCore
+public import MeetingCore
 import NaturalLanguage
 import OSLog
 
@@ -45,6 +45,19 @@ public actor AcousticVocabularyBooster {
     public nonisolated var cacheDirectory: URL { CtcModels.defaultCacheDirectory(for: Self.variant) }
 
     public nonisolated func isModelCached() -> Bool { CtcModels.modelsExist(at: cacheDirectory) }
+
+    public nonisolated func managedModel(inUse: Bool) -> ManagedModel {
+        ManagedModel(id: "parakeet-ctc-110m", displayName: "Parakeet CTC 110M · refuerzo del diccionario",
+                     repository: Self.variant.repo.remotePath, revision: .from(Self.variant.repo.revision),
+                     directory: cacheDirectory,
+                     unusedReason: inUse ? nil : "El refuerzo acústico del diccionario está desactivado")
+    }
+
+    /// Releases the CTC model (before an update swaps its files).
+    public func unload() {
+        models = nil
+        session = nil
+    }
 
     /// Downloads (first time, ~97.5 MB) and loads the CTC model.
     public func prepare() async throws {
@@ -109,12 +122,41 @@ public actor AcousticVocabularyBooster {
 
     // MARK: Pure helpers (tested)
 
-    /// A one-word original that is an ordinary word of the meeting language is kept.
-    /// Multi-word originals ("Si Amara" → "Xiomara") are split renderings of the term.
+    /// Minimum spelling similarity between the replaced text and the term. Measured (TD-24):
+    /// genuine fixes 0.60–1.00 ("Neki" → "Nequi", "Si Amara" → "Xiomara"); with a small dictionary
+    /// the rescorer also swapped whole phrases of common words, all ≤ 0.36 ("¿Algo más?" → "Bancolombia").
+    static let minSpellingSimilarity = 0.5
+
+    /// Kept: a one-word original that is an ordinary word of the meeting language, and any
+    /// original that does not look like the term. Multi-word originals that do ("Si Amara" →
+    /// "Xiomara") are split renderings of the term.
     static func isAllowed(_ replacement: Replacement, isLanguageWord: (String) -> Bool) -> Bool {
         let originals = replacement.original.split(separator: " ").map { comparable(String($0)) }.filter { !$0.isEmpty }
-        guard !originals.isEmpty, originals.joined(separator: " ") != comparable(replacement.replacement) else { return false }
+        let term = comparable(replacement.replacement)
+        // A span that already contains the term would only lose its neighbours
+        // ("Jonathan, ¿puedes" → "Jonathan").
+        guard !originals.isEmpty, !originals.contains(term), originals.joined() != term else { return false }
+        guard spellingSimilarity(originals.joined(), term) >= minSpellingSimilarity else { return false }
         return originals.count > 1 || !isLanguageWord(originals[0])
+    }
+
+    /// 1 − Levenshtein distance / longer length, on letters and digits only.
+    static func spellingSimilarity(_ a: String, _ b: String) -> Double {
+        let a = Array(a.folding(options: .diacriticInsensitive, locale: nil)),
+            b = Array(b.folding(options: .diacriticInsensitive, locale: nil))
+        guard !a.isEmpty || !b.isEmpty else { return 1 }
+        var row = Array(0...b.count)
+        for i in 1...max(1, a.count) where !a.isEmpty {
+            var previous = row[0]
+            row[0] = i
+            for j in stride(from: 1, through: b.count, by: 1) {
+                let current = row[j]
+                row[j] = min(row[j] + 1, row[j - 1] + 1, previous + (a[i - 1] == b[j - 1] ? 0 : 1))
+                previous = current
+            }
+        }
+        let distance = a.isEmpty ? b.count : row[b.count]
+        return 1 - Double(distance) / Double(max(a.count, b.count))
     }
 
     /// Replaces the first matching word span of each replacement, keeping the

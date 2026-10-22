@@ -23,6 +23,7 @@ final class AppEnvironment {
     let models: ModelStatusModel
     let ai: AIController
     let semantic: SemanticIndexController
+    let modelUpdates: ModelUpdateController
     let calls: CallSuggestionController
 
     private(set) var startupError: String?
@@ -60,6 +61,9 @@ final class AppEnvironment {
         ai = AIController(database: database)
         semantic = SemanticIndexController(paths: paths, database: database, settings: settings)
         calls = CallSuggestionController(settings: settings, recording: recording)
+        modelUpdates = ModelUpdateController(asr: asr, diarizer: diarizer, booster: booster, semantic: semantic,
+                                             settings: settings, processing: processing, recording: recording)
+        modelUpdates.recoverInterruptedUpdates()
         // The call monitor needs no permission; snapshot runs skip notifications.
         calls.start(requestNotifications: SnapshotDriver.directory == nil)
         recording.onFinished = { [processing, settings] meetingId in
@@ -81,6 +85,12 @@ final class AppEnvironment {
             recoveredMeetings = ids
             try database.enforceProfileRetention()
             try AudioRetention(database: database, paths: paths).apply(days: settings.audioRetentionDays)
+            // Files left behind by an interrupted delete or a crash mid-transcription.
+            let orphans = try StorageMaintenance.removeOrphanedRecordings(database: database, paths: paths)
+            let temporary = StorageMaintenance.sweepTemporaryFiles()
+            if orphans.removedItems + temporary.removedItems > 0 {
+                Self.logger.notice("Removed \(orphans.removedItems + temporary.removedItems) leftover item(s), \(orphans.freedBytes + temporary.freedBytes) bytes")
+            }
         } catch {
             Self.logger.error("Recovery failed: \(error.localizedDescription, privacy: .public)")
         }

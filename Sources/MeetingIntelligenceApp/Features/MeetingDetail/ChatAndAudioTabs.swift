@@ -39,7 +39,8 @@ struct ChatPanel: View {
                     .frame(maxWidth: DS.Layout.readingMaxWidth + 120, alignment: .leading)
                     .frame(maxWidth: .infinity)
                 }
-                .onChange(of: messages.count) { if let last = messages.last { proxy.scrollTo(last.id, anchor: .bottom) } }
+                // Start of the newest message: its question stays in view above a long answer.
+                .onChange(of: messages.count) { if let last = messages.last { proxy.scrollTo(last.id, anchor: .top) } }
             }
             if let historyError {
                 InlineBanner(tone: .warning, systemImage: "exclamationmark.triangle", title: historyError)
@@ -145,7 +146,7 @@ struct ChatPanel: View {
                                     .font(DS.Font.caption).foregroundStyle(DS.Color.textTertiary)
                             }
                         }
-                        Text(text).font(DS.Font.reading).textSelection(.enabled)
+                        Text(Self.formatted(text)).font(DS.Font.reading).textSelection(.enabled)
                         if !answer.citations.isEmpty {
                             Text("Fuentes").font(DS.Font.captionEmphasis).foregroundStyle(DS.Color.textSecondary)
                             ForEach(answer.citations) { citation($0) }
@@ -163,6 +164,15 @@ struct ChatPanel: View {
                 }
             }
         }
+    }
+
+    /// AI answers use inline Markdown (bold, lists as text). Links are removed: the answer is
+    /// derived from untrusted transcript text and must not open URLs.
+    static func formatted(_ text: String) -> AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        guard var attributed = try? AttributedString(markdown: text, options: options) else { return AttributedString(text) }
+        for run in attributed.runs where run.link != nil { attributed[run.range].link = nil }
+        return attributed
     }
 
     private func citation(_ c: MeetingChatService.Citation) -> some View {

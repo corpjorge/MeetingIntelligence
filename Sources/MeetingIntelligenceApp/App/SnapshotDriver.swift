@@ -1,10 +1,13 @@
 import AppKit
 import MeetingCore
+import ScreenCaptureKit
 import SwiftUI
 
 /// UI verification aid: when `MI_SNAPSHOT_DIR` is set, the app visits every
-/// screen (light and dark), renders its own window to PNG with
-/// `cacheDisplay` (no screen-recording permission involved) and quits.
+/// screen (light and dark), saves its own window as PNG and quits. The window is
+/// captured with ScreenCaptureKit's current-process content (no screen-recording
+/// permission: only this app's windows), which renders vibrancy such as the sidebar;
+/// `cacheDisplay` is the fallback.
 /// Inactive in normal use.
 enum SnapshotDriver {
     static var directory: URL? {
@@ -16,19 +19,22 @@ enum SnapshotDriver {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         env.settings.hasCompletedOnboarding = ProcessInfo.processInfo.environment["MI_SNAPSHOT_ONBOARDING"] == nil
         Task { @MainActor in
+            // Frontmost, so the window is drawn active (traffic lights, sidebar selection).
+            NSApp.activate(ignoringOtherApps: true)
+            NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
             try? await Task.sleep(for: .seconds(2))
             for appearance in [NSAppearance.Name.aqua, .darkAqua] {
                 NSApp.appearance = NSAppearance(named: appearance)
                 let suffix = appearance == .aqua ? "light" : "dark"
                 if !env.settings.hasCompletedOnboarding {
-                    capture("00-onboarding-\(suffix)", in: dir, sheet: true)
+                    await capture("00-onboarding-\(suffix)", in: dir, sheet: true)
                     continue
                 }
                 for section in AppRouter.Section.allCases {
                     router.meetingPath = []
                     router.section = section
                     try? await Task.sleep(for: .seconds(1.5))
-                    capture("\(section.rawValue)-\(suffix)", in: dir)
+                    await capture("\(section.rawValue)-\(suffix)", in: dir)
                 }
                 // Live-recording banners need a real capture; render the component standalone.
                 captureComponent("recording-mute-reminder-\(suffix)", in: dir) {
@@ -40,6 +46,10 @@ enum SnapshotDriver {
                 // MI_SNAPSHOT_MEETING picks a specific meeting id; default is the first ready one.
                 let wanted = ProcessInfo.processInfo.environment["MI_SNAPSHOT_MEETING"]
                 // The Settings scene is a separate window; render its pages standalone.
+                // MI_SNAPSHOT_CHECK_MODELS=1 queries Hugging Face first so versions show their state.
+                if ProcessInfo.processInfo.environment["MI_SNAPSHOT_CHECK_MODELS"] == "1", appearance == .aqua {
+                    await env.modelUpdates.checkForUpdates()
+                }
                 captureWindowContent("settings-transcription-\(suffix)", in: dir) { TranscriptionSettings().environment(env) }
                 captureWindowContent("settings-models-\(suffix)", in: dir) { ModelSettings().environment(env) }
                 if let first = try? env.database.meetingRows().first(where: {
@@ -48,7 +58,7 @@ enum SnapshotDriver {
                     for tab in MeetingDetailTab.allCases {
                         router.openMeeting(first.id, tab: tab)
                         try? await Task.sleep(for: .seconds(1.5))
-                        capture("meeting-\(tab.rawValue)-\(suffix)", in: dir)
+                        await capture("meeting-\(tab.rawValue)-\(suffix)", in: dir)
                     }
                     // Low-confidence rows are usually below the fold; render the first one standalone.
                     if let detail = try? env.database.meetingDetail(id: first.id),
@@ -66,14 +76,18 @@ enum SnapshotDriver {
     }
 
     @MainActor
-    static func capture(_ name: String, in dir: URL, sheet: Bool = false) {
+    static func capture(_ name: String, in dir: URL, sheet: Bool = false) async {
         let windows = NSApp.windows.filter { $0.isVisible && $0.contentView != nil && !($0 is NSPanel) }
         guard let window = sheet ? (windows.compactMap(\.attachedSheet).first ?? windows.first) : windows.first(where: { $0.attachedSheet == nil }) ?? windows.first,
               let view = window.contentView?.superview ?? window.contentView,
               let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
-        view.cacheDisplay(in: view.bounds, to: rep)
-        if let png = rep.representation(using: .png, properties: [:]) {
-            try? png.write(to: dir.appendingPathComponent("\(name).png"))
+        let file = dir.appendingPathComponent("\(name).png")
+        if let image = await screenCapture(window),
+           let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) {
+            try? png.write(to: file)
+        } else {
+            view.cacheDisplay(in: view.bounds, to: rep)
+            if let png = rep.representation(using: .png, properties: [:]) { try? png.write(to: file) }
         }
         // Structural check that does not depend on offscreen rendering.
         var lines: [String] = []
@@ -108,11 +122,24 @@ enum SnapshotDriver {
         }
     }
 
+    /// The composited window as the user sees it (this process's own window only).
+    static func screenCapture(_ window: NSWindow) async -> CGImage? {
+        guard let content = try? await SCShareableContent.currentProcess,
+              let target = content.windows.first(where: { $0.windowID == CGWindowID(window.windowNumber) }) else { return nil }
+        let filter = SCContentFilter(desktopIndependentWindow: target)
+        let config = SCStreamConfiguration()
+        config.width = Int(filter.contentRect.width * CGFloat(filter.pointPixelScale))
+        config.height = Int(filter.contentRect.height * CGFloat(filter.pointPixelScale))
+        config.showsCursor = false
+        config.ignoreShadowsSingleWindow = true
+        return try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+    }
+
     /// Renders a full-height page (e.g. a settings Form) in an offscreen window.
     @MainActor
     static func captureWindowContent(_ name: String, in dir: URL, @ViewBuilder _ content: () -> some View) {
-        let host = NSHostingView(rootView: content().frame(width: 720, height: 1100))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 1100),
+        let host = NSHostingView(rootView: content().frame(width: 720, height: 1500))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 1500),
                               styleMask: [.borderless], backing: .buffered, defer: false)
         window.appearance = NSApp.appearance
         window.contentView = host

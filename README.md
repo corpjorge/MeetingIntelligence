@@ -11,8 +11,22 @@ apps y **local por defecto**.
   registrados **solo con consentimiento** y umbrales **calibrados con tus propios datos**.
 - Analiza reuniones con **Claude Code CLI, Codex CLI, Antigravity CLI u Ollama** — opcional, con confirmación explícita
   y **evidencia verificable** (cita exacta + timestamp) para cada hallazgo.
-- Búsqueda local **SQLite FTS5**, chat entre reuniones con citas, exportación TXT/Markdown/JSON/SRT/PDF y un
-  **servidor MCP** de solo lectura para clientes como Claude Code y Codex.
+- Búsqueda local **SQLite FTS5** (y por significado, opcional), chat entre reuniones con citas e historial,
+  exportación TXT/Markdown/JSON/SRT/PDF y un **servidor MCP** de solo lectura para clientes como Claude Code y Codex.
+- **Actualiza los modelos** desde la app (solo descarga lo que cambió y verifica antes de reemplazar) y borra todo lo
+  asociado a una reunión al eliminarla, devolviendo el espacio al disco.
+
+## Capturas
+
+> Datos de demostración **sintéticos**: voces del sistema (`say`) y personas ficticias. El análisis y la respuesta del
+> chat son reales (Codex CLI sobre esa reunión de demostración); la transcripción y la diarización son las de la app.
+
+| | |
+|---|---|
+| ![Inicio](docs/images/inicio.png) **Inicio**: reuniones recientes y compromisos con evidencia. | ![Grabar](docs/images/grabar.png) **Grabar**: cualquier app de llamada + tu micrófono, en pistas separadas. |
+| ![Transcripción](docs/images/transcripcion.png) **Transcripción** local con hablantes, ediciones y marcas de revisión. | ![Participantes](docs/images/participantes.png) **Participantes**: nombres solo si los asignas o por un perfil de voz calibrado. |
+| ![Resumen](docs/images/resumen.png) **Resumen** generado por IA, con proveedor, modelo y versión del prompt. | ![Tareas](docs/images/tareas-oscuro.png) **Tareas** con la cita exacta y el momento de la reunión (modo oscuro). |
+| ![Chat](docs/images/chat.png) **Chat entre reuniones**: búsqueda local y respuesta con fuentes verificables. | ![Modelos](docs/images/modelos.png) **Modelos**: versión, tamaño y actualización verificada. |
 
 > El nombre es provisional: cámbialo en `config/app.env` (`APP_NAME`); no requiere tocar código Swift.
 
@@ -40,13 +54,15 @@ apps y **local por defecto**.
 | Chat entre reuniones (FTS5 + IA opcional) | ✅ | Pruebas |
 | Historial persistente del chat (por reunión y entre reuniones) | ✅ | Pruebas de persistencia y de borrado de reuniones citadas; carga verificada en capturas |
 | Búsqueda semántica local opcional (multilingual-e5-small) | ✅ Implementada | Prueba con el modelo real; de punta a punta 13/16 preguntas frente a 5/16 con FTS5 en fixtures sintéticos (TD-25); **pendiente** validar con reuniones reales |
-| Refuerzo acústico del diccionario opcional (Parakeet CTC 110M) | ✅ Implementado | Pipeline real con voces sintéticas: 39/48 términos frente a 20/48, 0 palabras comunes dañadas (TD-24); **pendiente** con voces reales |
+| Refuerzo acústico del diccionario opcional (Parakeet CTC 110M) | ✅ Implementado | Pipeline real con voces sintéticas: 39/48 términos frente a 20/48, 0 palabras comunes dañadas; con un diccionario pequeño ya no reemplaza frases comunes (TD-24); **pendiente** con voces reales |
+| Actualización de modelos desde la app (Hugging Face, verificada, con vuelta atrás) | ✅ | Prueba real sobre una copia de CTC 110M y de e5-small (detecta, descarga solo lo cambiado, elimina obsoletos, carga); estado de los modelos reales verificado (TD-27) |
+| Borrar una reunión libera todo su espacio | ✅ | Pruebas: audio, filas, historial, vectores, muestras de voz opcionales, compactación de SQLite, restos huérfanos (TD-28) |
 | Frases cortas aisladas redecodificadas con contexto | ✅ | Pistas sintéticas: 74/80 frente a 67/76; también corrige frases pegadas por la compactación (TD-26) |
 | Servidor MCP (stdio, 2026-07-28 + 2025-11-25) | ✅ | Prueba stdio con el binario empaquetado |
 | Exportación TXT/MD/JSON/SRT/PDF | ✅ | Pruebas |
 
-97 pruebas automatizadas pasan (`scripts/test.sh`), incluidas 7 de integración con los modelos reales. Otras 3
-(mediciones de TD-24/TD-26 e integración de e5-small) se activan bajo demanda; ver `TESTING.md`.
+105 pruebas automatizadas pasan (`scripts/test.sh`), incluidas 7 de integración con los modelos reales. Otras 4
+(mediciones de TD-24/TD-26, e5-small y actualización real desde Hugging Face) se activan bajo demanda; ver `TESTING.md`.
 
 ## Requisitos
 

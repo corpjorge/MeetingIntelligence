@@ -9,7 +9,7 @@ scripts/generate-fixtures.sh    # regenera fixtures sintéticos (necesario para 
 Framework: **Swift Testing** (XCTest no está disponible con Command Line Tools). Las pruebas de integración con
 modelos reales se ejecutan solo si Parakeet Ultra y la diarización ya están en caché (nunca descargan en CI).
 
-## Inventario (97 pruebas, todas pasan al 21-oct-2026; 3 más bajo demanda)
+## Inventario (105 pruebas, todas pasan al 22-oct-2026; 4 más bajo demanda)
 
 | Suite | Cubre |
 |---|---|
@@ -33,6 +33,8 @@ modelos reales se ejecutan solo si Parakeet Ultra y la diarización ya están en
 | Historial del chat | hilos separados, respuesta nula (búsqueda fallida), borrar historial, borrar una reunión elimina su hilo y los mensajes que la citan |
 | Búsqueda semántica: índice y fusión | vectores ida y vuelta, coseno, pendientes por modelo, reindexado tras editar, cascada al borrar, alcance y umbral, fusión que no pierde resultados de FTS5 |
 | Refuerzo acústico: reglas | palabra común del idioma nunca reemplazada, varias palabras sí, puntuación conservada, solo el tramo coincidente |
+| Borrado y espacio en disco | resumen previo (tamaño, muestras, chat), muestras de voz conservadas o borradas, `VACUUM` devuelve el espacio, carpetas huérfanas y temporales viejos |
+| Actualización de modelos | hash de blob git, plan solo sobre lo descargado (variantes y ONNX ignorados), preparación aparte, intercambio, confirmación, vuelta atrás, recuperación tras un cierre, modelos fijados, paginación |
 | Tokens partidos por la compactación | "▁¿" y "." se pegan a su palabra; piezas con letras y palabras nuevas no se mueven |
 | Integración (modelos reales) | importar→Ultra→diarización→persistencia (2 hablantes, sin nombres inventados, WER < 15 %, diccionario), silencio → vacío, español + términos en inglés, frases cortas aisladas siguen en español con marcas en la línea de tiempo original (TD-22), transcripción en vivo, reprocesar conserva identidades manuales |
 
@@ -86,6 +88,8 @@ Los datos son voces sintéticas (`say`) generadas en una carpeta temporal; no se
 MI_BOOST_DATA=<dir con data/*.wav|txt y terms.txt> scripts/test.sh --filter VocabularyBoostExperiment   # → report-*.txt
 MI_LANG_DATA=<dir con data/*.wav|txt y ctx/v1..4.wav> scripts/test.sh --filter LanguageDriftExperiment  # → report.txt
 MI_E5_MODELS=<carpeta con models/intfloat/multilingual-e5-small> scripts/test.sh --filter SemanticEngineIntegrationTests
+MI_NETWORK_TESTS=1 scripts/test.sh --filter ModelUpdateIntegrationTests   # Hugging Face real, sobre una COPIA de CTC 110M
+mi models                                   # versiones de los modelos instalados (consulta Hugging Face)
 mi process <id> --boost-vocabulary        # refuerzo en el pipeline real
 mi semantic-index && mi ask "<pregunta>" --semantic
 ```
@@ -108,7 +112,15 @@ Resultados y conjuntos en `TECHNICAL_DECISIONS.md` (TD-24, TD-25, TD-26).
   silenciar/activar en Teams no cambiaron ninguna señal legible; Teams mantuvo el micrófono abierto. Por eso el aviso
   es un recordatorio estático. El componente se verifica con `MI_SNAPSHOT_DIR` (`recording-mute-reminder-light/dark.png`)
   porque la vista de grabación en vivo necesita una captura real.
-- Ajustes: el modo de capturas renderiza aparte las páginas Transcripción y Modelos (`settings-*-light/dark.png`).
+- Ajustes: el modo de capturas renderiza aparte las páginas Transcripción y Modelos (`settings-*-light/dark.png`);
+  con `MI_SNAPSHOT_CHECK_MODELS=1` consulta antes las versiones en Hugging Face.
+- Las ventanas se capturan con ScreenCaptureKit, limitado a las del propio proceso (`SCShareableContent.currentProcess`,
+  sin permiso de grabación de pantalla), para que se vean la barra lateral y la vibrancia; `cacheDisplay` es la
+  alternativa.
+- Capturas del README (`docs/images/`): biblioteca aparte (`MEETING_INTELLIGENCE_HOME`) con 3 reuniones sintéticas
+  (`say`, personas ficticias) procesadas con `mi import` y `mi process --boost-vocabulary`. Los nombres se asignaron a
+  mano. Hay un análisis real con `mi analyze --provider codex --share` y preguntas del chat con `mi ask … --save`. Las
+  preferencias del modo de capturas son una suite propia de UserDefaults.
 - Baja confianza del ASR: `MI_SNAPSHOT_MEETING=<id>` elige la reunión de las capturas; la primera fila marcada se
   renderiza aparte (`transcript-low-confidence-light/dark.png`) porque suele quedar fuera de la primera pantalla.
 - API de Teams para apps de terceros (TD-23): no aparece en Configuración › Privacidad de la cuenta de prueba, que es

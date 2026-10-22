@@ -1,7 +1,7 @@
 public import Foundation
 @preconcurrency import FluidAudio
 import MeetingAudio
-import MeetingCore
+public import MeetingCore
 import OSLog
 
 /// FluidAudio + Parakeet Ultra (`FluidInference/parakeet-ultra-coreml`).
@@ -34,6 +34,13 @@ public actor ParakeetUltraProvider: ASRProvider {
 
     public nonisolated var cacheDirectory: URL {
         AsrModels.defaultCacheDirectory(for: Self.modelVersion)
+    }
+
+    /// For in-app updates (TD-27): FluidAudio downloads this repository's `main`.
+    public nonisolated var managedModel: ManagedModel {
+        ManagedModel(id: descriptor.id, displayName: "Parakeet Ultra · transcripción",
+                     repository: Repo.parakeetUltra.remotePath, revision: .from(Repo.parakeetUltra.revision),
+                     directory: cacheDirectory)
     }
 
     public func isModelCached() async -> Bool {

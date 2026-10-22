@@ -82,6 +82,9 @@ enum Commands {
         options.acousticVocabularyBoost = args.flags.contains("boost-vocabulary")
         let summary = try await makeProcessor(database: db, paths: paths)
             .process(meetingId: meetingId, options: options, progress: progressPrinter())
+        // Like the app: new segments join the semantic index when the model is present.
+        let semantic = SemanticSearchEngine(modelsDirectory: paths.modelsDirectory)
+        if semantic.isModelCached() { try await semantic.indexPending(database: db) }
         for t in summary.tracks {
             let rtfx = t.asrSeconds > 0 ? t.audioSeconds / t.asrSeconds : 0
             print(String(format: "%@: %.1f s audio · ASR %.2f s (RTFx %.0f×)%@ · %d palabras · %d segmentos · %d hablantes%@",
@@ -136,6 +139,13 @@ enum Commands {
         let service = SearchService(reader: db.reader)
         var hits = try service.search(query, scope: scope, speakerName: args.options["speaker"])
         if let semantic = try await semanticQuery(query, args: args, paths: paths) {
+            // --floor <x>: diagnostic, shows semantic hits down to that similarity with their score.
+            if let floor = args.options["floor"].flatMap(Float.init) {
+                for h in try service.semanticSearch(semantic, scope: scope, limit: 10, minSimilarity: floor) {
+                    print(String(format: "%.3f  %@ · %@ · %@", -h.rank, h.meetingTitle, Timecode.hms(h.startTime), h.text))
+                }
+                return
+            }
             hits = SearchService.merge(semantic: try service.semanticSearch(semantic, scope: scope), keyword: hits, limit: 50)
         }
         if hits.isEmpty { print("Sin resultados."); return }
@@ -226,6 +236,7 @@ enum Commands {
         let semantic = try await semanticQuery(question, args: args, paths: paths)
         guard let providerName = args.options["provider"] else {
             let retrieval = try chat.retrieve(question: question, scope: scope, model: nil, timeout: 60, semantic: semantic)
+            try save(chat.localAnswer(question: question, retrieval: retrieval), args: args, db: db)
             if retrieval.excerpts.isEmpty { print("Sin resultados locales.") }
             for c in retrieval.excerpts { print("\(c.reference) \(c.meetingTitle) · \(Timecode.hms(c.startTime)) · \(c.speakerName): \(c.text)") }
             return
@@ -240,8 +251,81 @@ enum Commands {
         }
         let answer = try await chat.answer(question: question, retrieval: retrieval, provider: AIProviders.provider(for: kind),
                                            configuration: config, consentGiven: args.flags.contains("share"))
+        try save(answer, args: args, db: db)
         print("\nRespuesta (IA, \(kind.displayName)): \(answer.text ?? "")")
         for c in answer.citations { print("  \(c.reference) \(c.meetingTitle) · \(Timecode.hms(c.startTime)) · \(c.speakerName): \(c.text)") }
+    }
+
+    /// `--save` keeps the question in the same chat history as the app (per meeting with `--meeting`).
+    static func save(_ answer: MeetingChatService.Answer, args: Arguments, db: AppDatabase) throws {
+        guard args.flags.contains("save") else { return }
+        let meeting = args.options["meeting"]
+        try db.appendChatMessage(ChatHistoryMessage(question: answer.question, answer: answer,
+                                                    scopeMeetingIds: meeting.map { [$0] }),
+                                 thread: meeting.map { .meeting($0) } ?? .library)
+    }
+
+    // MARK: models
+
+    static func managedModels(paths: AppPaths) -> [ManagedModel] {
+        [ParakeetUltraProvider().managedModel, DiarizationService().managedModel,
+         AcousticVocabularyBooster().managedModel(inUse: true),
+         SemanticSearchEngine(modelsDirectory: paths.modelsDirectory).managedModel(inUse: true)]
+    }
+
+    /// `mi models` lists versions (queries Hugging Face); `mi models update <id>` applies one.
+    static func models(_ args: Arguments, paths: AppPaths) async throws {
+        let installer = ModelInstaller()
+        let models = managedModels(paths: paths)
+        for model in models { installer.recoverInterrupted(model) }
+        if args.positional.first == "update" {
+            guard let id = args.positional.dropFirst().first, let model = models.first(where: { $0.id == id }) else {
+                throw CLIError(message: "Indica el modelo: " + models.map(\.id).joined(separator: ", "))
+            }
+            guard case .updateAvailable(let plan) = try await installer.check(model) else {
+                print("\(model.id): no hay actualización."); return
+            }
+            print("Descargando \(plan.changed.count) archivo(s), \(ByteCountFormatter.string(fromByteCount: plan.downloadBytes, countStyle: .file))")
+            let staging = try await installer.stage(model, plan: plan) { _, _ in }
+            try installer.swapIn(model, staging: staging)
+            do {
+                switch model.id {
+                case "parakeet-ultra": try await ParakeetUltraProvider().prepare { _ in }
+                case "parakeet-ctc-110m": try await AcousticVocabularyBooster().prepare()
+                case "multilingual-e5-small": try await SemanticSearchEngine(modelsDirectory: paths.modelsDirectory).prepare()
+                default: try await DiarizationService().prepare()
+                }
+                installer.commit(model)
+                print("\(model.id): actualizado a \(plan.revision.prefix(7)) y verificado.")
+            } catch {
+                try installer.rollback(model)
+                throw CLIError(message: "La versión nueva no cargó; se restauró la anterior: \(error.localizedDescription)")
+            }
+            return
+        }
+        for model in models {
+            let size = ByteCountFormatter.string(fromByteCount: StorageMaintenance.size(of: model.directory), countStyle: .file)
+            let state: String
+            do {
+                switch try await installer.check(model) {
+                case .notInstalled: state = "no descargado"
+                case .upToDate(let revision): state = "al día (\(revision.prefix(7)))"
+                case .pinned(let revision): state = "fijado por FluidAudio (\(revision.prefix(7)))"
+                case .updateAvailable(let plan):
+                    state = "actualización: \(plan.changed.count) archivo(s), "
+                        + ByteCountFormatter.string(fromByteCount: plan.downloadBytes, countStyle: .file)
+                        + (plan.obsolete.isEmpty ? "" : ", \(plan.obsolete.count) obsoleto(s)")
+                }
+            } catch {
+                state = "error: \(error.localizedDescription)"
+            }
+            print("\(model.id.padding(toLength: 24, withPad: " ", startingAt: 0)) \(size.padding(toLength: 10, withPad: " ", startingAt: 0)) \(state)")
+        }
+        let root = ParakeetUltraProvider().cacheDirectory.deletingLastPathComponent()
+        let used = Set(models.prefix(3).map(\.directory))
+        for folder in ModelInventory.unusedFolders(in: root, used: used) {
+            print("sin uso: \(folder.url.lastPathComponent) (\(ByteCountFormatter.string(fromByteCount: folder.bytes, countStyle: .file)))")
+        }
     }
 
     // MARK: semantic search

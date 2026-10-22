@@ -228,6 +228,7 @@ struct ModelSettings: View {
                 Button("Descargar / verificar modelos") { Task { await env.models.prepareAll() } }
                     .disabled({ if case .preparing = env.models.asrStatus { return true } else { return false } }())
             }
+            ModelVersionsSection()
         }
         .task { await env.models.refresh() }
     }

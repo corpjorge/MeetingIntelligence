@@ -15,6 +15,13 @@ struct VocabularyBoostTests {
         // A split rendering of the term is accepted even if its pieces are words.
         #expect(Booster.isAllowed(.init(original: "Si Amara", replacement: "Xiomara"), isLanguageWord: isWord))
         #expect(!Booster.isAllowed(.init(original: "katty", replacement: "Katty"), isLanguageWord: isWord))
+        // Whole phrases that do not look like the term are never replaced (seen with a small dictionary).
+        #expect(!Booster.isAllowed(.init(original: "Algo más", replacement: "Bancolombia"), isLanguageWord: isWord))
+        #expect(!Booster.isAllowed(.init(original: "de responsa", replacement: "Katty"), isLanguageWord: isWord))
+        #expect(Booster.isAllowed(.init(original: "David Vienda", replacement: "Davivienda"), isLanguageWord: isWord))
+        #expect(abs(Booster.spellingSimilarity("neki", "nequi") - 0.6) < 1e-9)
+        #expect(!Booster.isAllowed(.init(original: "Jonathan, ¿puedes", replacement: "Jonathan"), isLanguageWord: isWord))
+        #expect(!Booster.isAllowed(.init(original: "Bancolombia la", replacement: "Bancolombia"), isLanguageWord: isWord))
     }
 
     @Test func replacementKeepsPunctuationAndTouchesOnlyTheSpan() throws {

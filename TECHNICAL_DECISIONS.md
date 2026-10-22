@@ -254,6 +254,17 @@ que pertenece al idioma de la reunión (lista de 42.337 palabras de `NLEmbedding
 nombres propios). Los reemplazos de varias palabras se aceptan ("Si Amara" → "Xiomara", "David Vienda" →
 "Davivienda"). Costo: términos parecidos a palabras comunes no se corrigen ("gira" → "Jira", "firma" → "Figma").
 
+**Diccionario pequeño** (22-oct-2026, demo de 3 reuniones con 7 términos: Katty, Jonathan, Mónica, Nequi…). El rescoring
+reemplazó frases enteras de palabras comunes: "Yo me encargo de documentar los campos…" → "Yo Mónica Mónica Katty
+Katty Grafana", "¿Algo más?" → "¿Bancolombia?". Además borraba vecinos de un término ya correcto ("Jonathan,
+¿puedes" → "Jonathan"). Se añadieron dos reglas:
+- Similitud ortográfica de al menos 0,5 entre el original y el término. Los aciertos medidos están entre 0,60 y 1,00
+  y estos errores entre 0,00 y 0,36.
+- No se reemplaza un tramo que ya contiene el término.
+
+Resultado: en la demo queda solo "Neki" → "Nequi" (antes 7 cambios, 6 erróneos). En el conjunto de 3 voces sigue igual:
+39/48, sin términos insertados de más, WER 4,4 %.
+
 **Integración**: opcional (Ajustes › Transcripción › Diccionario; `mi process --boost-vocabulary`), descarga el modelo
 la primera vez. Se ejecuta por segmento sobre su propio audio; el resultado va a `vocabularyText` (con el diccionario
 determinista encima) y `asrText` no cambia. Si algo falla, el procesamiento sigue sin refuerzo. Limitación: dentro de
@@ -315,6 +326,56 @@ del hueco, y la palabra se estiraba 17 s y pegaba dos frases en un segmento (4 c
 Los 6 errores restantes no son de idioma ("Allí" por "Ahí", "Togamía", "Un momento…" cortado). Costo: ~0,1 s por
 frase corta (pista de 390 s con 20 frases: ASR de 0,6 s a 2,5 s). Una pista con una sola frase no tiene contexto y
 queda igual. `asrText` guarda la decodificación elegida. Mediciones: `LanguageDriftExperiment` (`MI_LANG_DATA`).
+
+## TD-27 · Actualizar modelos desde la app y borrar los que no se usan (comprobado)
+FluidAudio 0.17.7 descarga Parakeet Ultra y CTC 110M desde la rama `main` de Hugging Face. Una vez en caché, no vuelve
+a mirar si hay cambios. La diarización está fijada al commit `df2625a`. swift-embeddings descarga e5-small una vez.
+
+**Detección.** Se compara contra la API pública de Hugging Face (`/api/models/<repo>/revision/main` y
+`/tree/<sha>?recursive=true`). Solo se consulta al pulsar «Buscar actualizaciones» y no se envía nada de las
+reuniones. Los archivos locales coinciden byte a byte con los publicados: SHA-256 en los archivos LFS y hash de blob
+git en el resto. Calcular el del codificador de Ultra (594 MB) tarda alrededor de 1 s. Cada biblioteca baja solo una
+parte del repositorio, así que cuenta un archivo remoto solo si existe en local o si pertenece a un paquete Core ML
+(`.mlmodelc`/`.mlpackage`) presente en local. Así no aparecen como faltantes las variantes, los ONNX ni los README.
+Una primera versión contaba la carpeta `onnx/` entera de e5 y pedía 829 MB. El commit verificado se guarda en
+`.mi-revision`. No se toca `.fluidaudio-revision`: FluidAudio daría por obsoleta una caché de `main` con esa marca.
+Los modelos fijados por la biblioteca no se actualizan desde la app.
+
+**Actualización.** `ModelInstaller` sigue estos pasos:
+1. Copia la carpeta (en APFS es un clon) a `.<modelo>.mi-staging`.
+2. Borra ahí los obsoletos y descarga solo los archivos cambiados de ese commit, verificando tamaño y hash.
+3. Mueve la versión actual a `.<modelo>.mi-backup` y pone la nueva en su lugar.
+4. La carga como lo hará el procesamiento: si carga, borra el respaldo; si no, restaura la anterior.
+
+Un cierre a mitad se deshace al arrancar. No se puede actualizar mientras se graba o se procesa.
+
+**Obsoletos.** Se borran los archivos que ya no existen en la revisión, pero solo dentro de entradas que el
+repositorio sigue publicando. Un archivo suelto que no publica podría ser de la biblioteca y no se toca. Además se
+listan los modelos sin uso: CTC con el refuerzo apagado, e5 con la búsqueda semántica apagada y las carpetas de la
+caché compartida de FluidAudio que esta app no usa. Se borran solo con confirmación, porque otra app con FluidAudio
+podría usarlas.
+
+**Verificado.** Contra Hugging Face real: Ultra (95eaa59) y CTC 110M (accdafd) al día, diarización fijada. Sobre una
+copia de CTC 110M con un archivo de la raíz alterado, otro dentro de un paquete alterado y un sobrante, se detectó,
+se descargaron 2 archivos (< 1 MB), se eliminó el sobrante y el modelo cargó. Sobre una copia de e5 con `config.json`
+alterado, la app mostró «1 archivo(s), 655 bytes» y `mi models update` lo restauró idéntico al publicado. Ultra carga
+con la marca nueva sin volver a descargar. El botón «Actualizar» de la app no se pulsó en esta verificación: el flujo
+se probó con la CLI y con pruebas, que usan el mismo `ModelInstaller`.
+
+## TD-28 · Borrar una reunión libera todo su espacio (comprobado)
+Antes ya se borraban en cascada las filas de la reunión y su carpeta de audio. Faltaba lo siguiente, y se añadió:
+- **Archivo de SQLite.** Con `auto_vacuum = 0`, las páginas borradas quedan libres dentro del archivo, que nunca se
+  encoge (`secure_delete` las sobrescribe, pero no las devuelve). Después de borrar, `compactStorage()` ejecuta
+  `VACUUM` y trunca el WAL, en segundo plano. En la prueba, el archivo queda por debajo de la mitad.
+- **Muestras de voz.** Las tomadas de la reunión se conservaban en el perfil del participante (`meetingId` pasa a
+  NULL). La confirmación ofrece borrarlas también y, por defecto, se conservan. El centroide se calcula al vuelo, así
+  que el perfil no necesita recalcularse.
+- **Confirmación única** para la lista y el detalle: muestra el tamaño que se libera y cuántos mensajes del chat se
+  borran, cancela el procesamiento de esa reunión y muestra los errores (antes se ignoraban con `try?`).
+- **Al arrancar:** se borran las carpetas `Recordings/<id>` sin reunión y los temporales propios (`mi-asr-*`,
+  `mi-ai-*`, `mi-enroll-*`) de más de 1 h.
+
+No se borra lo que el usuario exportó: son archivos suyos, en una carpeta que él eligió.
 
 ## Limitaciones comprobadas
 - ASR monocanal pierde palabras en habla **superpuesta** (fixture: 2 de 16 palabras).

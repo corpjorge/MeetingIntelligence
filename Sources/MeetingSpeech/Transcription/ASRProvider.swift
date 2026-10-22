@@ -78,3 +78,8 @@ public enum ASRProviderError: LocalizedError, Sendable {
         }
     }
 }
+
+extension ManagedModel.Revision {
+    /// FluidAudio's `Repo.revision`: "main" or a pinned commit.
+    static func from(_ revision: String) -> Self { revision == "main" ? .followsMain : .pinned(revision) }
+}

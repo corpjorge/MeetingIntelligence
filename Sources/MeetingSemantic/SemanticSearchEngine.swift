@@ -32,6 +32,13 @@ public actor SemanticSearchEngine {
         downloadBase.appendingPathComponent("models/\(Self.modelId)", isDirectory: true)
     }
 
+    public nonisolated func managedModel(inUse: Bool) -> ManagedModel {
+        ManagedModel(id: "multilingual-e5-small", displayName: "multilingual-e5-small · búsqueda semántica",
+                     repository: Self.modelId, revision: .followsMain, directory: modelDirectory,
+                     ignoredEntries: [".cache"],
+                     unusedReason: inUse ? nil : "La búsqueda semántica está desactivada")
+    }
+
     public nonisolated func isModelCached() -> Bool {
         FileManager.default.fileExists(atPath: modelDirectory.appendingPathComponent("model.safetensors").path)
     }

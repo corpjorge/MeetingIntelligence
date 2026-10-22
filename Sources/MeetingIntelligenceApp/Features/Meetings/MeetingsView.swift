@@ -222,15 +222,7 @@ struct MeetingsView: View {
     }
 
     private func confirmDelete(_ meeting: Meeting) {
-        let alert = NSAlert()
-        alert.messageText = "¿Eliminar “\(meeting.title)”?"
-        alert.informativeText = "Se eliminarán el audio, la transcripción, los hablantes y los análisis de esta reunión. Esta acción no se puede deshacer."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Eliminar")
-        alert.addButton(withTitle: "Cancelar")
-        if alert.runModal() == .alertFirstButtonReturn {
-            try? env.database.deleteMeeting(id: meeting.id, paths: env.paths)
-        }
+        MeetingDeletion.confirmAndDelete(meeting, env: env)
     }
 
     private func importFiles(_ urls: [URL]) {

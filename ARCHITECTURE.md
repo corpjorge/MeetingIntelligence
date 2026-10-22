@@ -16,7 +16,8 @@ MeetingCore              Dominio, persistencia (GRDB/SQLite WAL + FTS5), búsque
   │                      MeetingAnalysisService, MeetingChatService
   ├─ MCP/                MCPServerCore (JSON-RPC dual-era), MCPTools, MCPAccessPolicy
   ├─ Security/           KeychainStore, BiometricVault (AES-GCM)
-  ├─ Storage/            AppIdentity, AppPaths
+  ├─ Storage/            AppIdentity, AppPaths, StorageMaintenance (borrado completo, VACUUM, restos; TD-28)
+  ├─ Models/             ManagedModel, ModelInstaller, HuggingFaceHub, ModelInventory (actualizaciones; TD-27)
   └─ Utilities/          Timecode, TextNormalization, VocabularyCorrector, Metrics (WER/DER)
 
 MeetingAudio             Captura y DSP. Depende de MeetingCore.
@@ -44,7 +45,7 @@ MeetingIntelligenceApp   SwiftUI (aislamiento por defecto MainActor).
   │                      MenuBarExtra, SnapshotDriver (verificación de UI)
   ├─ DesignSystem/       Tokens (tipografía, color, espaciado, radios, elevación, movimiento) + componentes
   ├─ Services/           ProcessingCoordinator, RecordingController, ModelStatusModel, AIController,
-  │                      MeetingAudioPlayer, SemanticIndexController
+  │                      MeetingAudioPlayer, SemanticIndexController, ModelUpdateController
   └─ Features/           Dashboard, Meetings, MeetingDetail (7 pestañas), Recording, Participants,
                          Intelligence, Settings, Onboarding
 
