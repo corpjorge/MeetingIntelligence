@@ -93,7 +93,7 @@ Uso gratuito según [LICENSE](LICENSE); componentes de terceros en [THIRD_PARTY_
 | Borrar una reunión libera todo su espacio | ✅ | Pruebas: audio, filas, historial, vectores, muestras de voz opcionales, compactación de SQLite, restos huérfanos (TD-28) |
 | Frases cortas aisladas redecodificadas con contexto | ✅ | Pistas sintéticas: 74/80 frente a 67/76; también corrige frases pegadas por la compactación (TD-26) |
 | Servidor MCP (stdio, 2026-07-28 + 2025-11-25) | ✅ | Prueba stdio con el binario empaquetado |
-| Actualizaciones de la app (GitHub, firma Ed25519, reinicio) | ✅ | Pruebas + de punta a punta con la app real: 0.2.0 → 0.2.1 con servidor local; firma alterada rechazada (TD-29); **pendiente** primera actualización real en `/Applications` |
+| Actualizaciones de la app (GitHub, firma Ed25519, reinicio) | ✅ | Pruebas + de punta a punta con la app real: 0.2.0 → 0.2.1 con servidor local; firma alterada rechazada; primera actualización real en `/Applications`: reemplazo correcto, el reinicio fallaba con la hoja abierta (corregido en 0.2.2, TD-29) |
 | Exportación TXT/MD/JSON/SRT/PDF | ✅ | Pruebas |
 
 138 pruebas automatizadas pasan (`scripts/test.sh`), incluidas 7 de integración con los modelos reales. Otras 4

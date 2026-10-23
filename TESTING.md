@@ -142,11 +142,14 @@ Resultados y conjuntos en `TECHNICAL_DECISIONS.md` (TD-24, TD-25, TD-26).
   reemplazó y reinició en aproximadamente 1 s. La 0.2.1 registró «installed» y borró la anterior; sin cuarentena y
   con firma válida. Con una 0.2.2 de firma alterada no cambió nada. El aviso y la hoja tienen capturas
   (`update-banner-*`, `update-sheet-*`, `settings-general-*`).
+  Limitación de esa prueba: `MI_UPDATE_E2E=1` instala sin la hoja abierta. En la actualización real 0.2.0 → 0.2.1
+  desde la hoja, la app se quedó en «Instalando y reiniciando…»: AppKit ignora `NSApp.terminate` mientras hay una
+  hoja adjunta. Ahora se cierra la hoja antes de salir; reproducido y verificado con una hoja SwiftUI mínima.
 
 ## Pruebas manuales pendientes (requieren permisos o condiciones del usuario)
 
-- Primera actualización real desde `/Applications` (una copia aprobada con «Abrir de todos modos»): confirmar que
-  macOS no bloquea el reemplazo (protección «Gestión de apps») y qué permisos vuelve a pedir.
+- Actualización real 0.2.1 → 0.2.2 desde `/Applications` usando la hoja: confirmar que se cierra y reinicia sola (en la
+  0.2.0 → 0.2.1 el reemplazo funcionó pero el reinicio no, TD-29) y qué permisos vuelve a pedir macOS.
 
 - Detección de llamadas: unirse a una llamada en Teams, Zoom y Meet (Chrome) y comprobar la sugerencia de grabar y,
   al colgar, la sugerencia de detener; registrar qué procesos usan el micrófono en cada app.

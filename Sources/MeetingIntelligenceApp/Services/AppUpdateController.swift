@@ -50,7 +50,7 @@ final class AppUpdateController {
          source: (any AppUpdateSource)? = nil, workDirectory: URL? = nil,
          busyReason: @escaping () -> String? = { nil },
          relaunch: @escaping (URL, Int32) throws -> Void = { try AppUpdateInstaller.relaunch(bundleURL: $0, afterExitOf: $1) },
-         quit: @escaping () -> Void = { NSApp.terminate(nil) }) {
+         quit: @escaping () -> Void = { AppUpdateController.terminateClosingSheets() }) {
         self.configuration = configuration
         self.settings = settings
         self.bundleURL = bundleURL
@@ -211,7 +211,17 @@ final class AppUpdateController {
             return
         }
         logger.notice("Installed \(prepared.release.versionString, privacy: .public); relaunching")
+        isSheetPresented = false
         quit()
+    }
+
+    /// AppKit silently ignores `terminate` while a sheet is attached (the update sheet is one), so close
+    /// every sheet first and quit on the next turn of the run loop.
+    static func terminateClosingSheets() {
+        for window in NSApp.windows {
+            if let sheet = window.attachedSheet { window.endSheet(sheet) }
+        }
+        DispatchQueue.main.async { NSApp.terminate(nil) }
     }
 
     func skipRelease() {

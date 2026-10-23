@@ -478,6 +478,13 @@ sin permiso de escritura. En esos casos se explica el motivo y se ofrece la desc
 - Con una 0.2.2 de firma alterada: la detectó, la rechazó y no cambió nada.
 - El aviso y la hoja se verificaron con capturas en modo claro y oscuro.
 
+**Primera actualización real (23-oct-2026), 0.2.0 → 0.2.1 en `/Applications` desde la hoja.** El reemplazo funcionó
+(macOS no lo bloqueó), pero la app se quedó en «Instalando y reiniciando…». AppKit ignora `NSApp.terminate` mientras
+hay una hoja adjunta, y la prueba de punta a punta instalaba sin la hoja abierta. Desde la 0.2.2 se cierran las hojas
+antes de salir (comprobado con una hoja SwiftUI mínima: sin el cambio el proceso sigue vivo; con él termina en
+~0,3 s). La 0.2.1 todavía tiene el fallo: al actualizar desde ella hay que usar «Reiniciar e instalar» del aviso, sin
+abrir la hoja, o cerrar y abrir la app a mano (la versión nueva ya queda instalada).
+
 **No verificado.** Reemplazar en `/Applications` una copia aprobada con «Abrir de todos modos»: en este Mac la app no
 está instalada ahí. La protección de macOS «Gestión de apps» podría pedir permiso. Se comprobará con la primera
 actualización real después de la 0.2.0. La 0.1.0 no tiene actualizador, así que la 0.2.0 se instala a mano.

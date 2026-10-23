@@ -178,8 +178,11 @@ struct AppUpdateControllerTests {
         #expect(UpdateFixture.version(at: updates.bundleURL) == "0.2.0")
 
         busy = nil
+        updates.isSheetPresented = true
         updates.installAndRelaunch()
         #expect(UpdateFixture.version(at: updates.bundleURL) == "0.3.0")
+        // AppKit ignores `terminate` while a sheet is attached, so the update sheet closes before quitting.
+        #expect(!updates.isSheetPresented)
         #expect(box.relaunched?.0 == updates.bundleURL && box.relaunched?.1 == getpid())
         #expect(box.quitCount == 1)
         #expect(settings.pendingAppUpdateVersion == "0.3.0")
