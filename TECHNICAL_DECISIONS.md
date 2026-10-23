@@ -524,3 +524,16 @@ El mínimo baja de macOS 26 a **macOS 15 (Sequoia)** sin cambios de código.
 - **Sin verificar en un Mac con macOS 15**: aspecto de SwiftUI, captura de audio del sistema (process taps,
   macOS 14.2+), Neural Engine y permisos. `LSMinimumSystemVersion` = 15.0 y el actualizador lo comprueba (TD-29).
 
+
+## TD-32 · El chat con IA responde aunque la búsqueda no encuentre nada (pruebas comprobadas; IA real pendiente)
+Antes, si la búsqueda local no devolvía extractos (un saludo como «Hola», o «¿de qué se habló?», que son solo
+palabras vacías), el chat respondía «No encontré información…» sin llamar al proveedor, con cualquier IA.
+- `Retrieval.excerpts` sigue siendo solo el resultado de la búsqueda (lo usan la respuesta local y la CLI);
+  `Retrieval.context` es lo que se envía a la IA.
+- Sin coincidencias en reuniones concretas (chat de una reunión o reuniones seleccionadas), `context` es una muestra
+  cronológica de su transcripción (`SearchService.transcriptSample`, hasta 150 segmentos repartidos). La IA puede
+  citarlos y el resumen del consentimiento lo indica.
+- Sin coincidencias en toda la biblioteca solo se envía la pregunta, y el resumen del consentimiento lo dice.
+- Prompt `chat-v2`: ante un saludo responde breve y ofrece ayuda (`found=false`, sin citas).
+- Verificado con pruebas usando un proveedor falso. **Sin verificar con un proveedor real**: no se enviaron reuniones a
+  la nube para probarlo.

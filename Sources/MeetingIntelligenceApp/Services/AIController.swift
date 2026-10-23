@@ -157,7 +157,7 @@ final class AIController {
         if asksConsent(for: kind) {
             let confirmed = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
                 pendingConsent = ConsentRequest(provider: kind, summary: retrieval.sharedSummary,
-                                                characterCount: retrieval.excerpts.reduce(0) { $0 + $1.text.count },
+                                                characterCount: retrieval.context.reduce(0) { $0 + $1.text.count } + question.count,
                                                 onConfirm: { continuation.resume(returning: true) })
                 consentCancellation = { continuation.resume(returning: false) }
             }

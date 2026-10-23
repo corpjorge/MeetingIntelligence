@@ -130,6 +130,34 @@ struct AIAnalysisTests {
         #expect(answer.citations.first?.startTime == 10)
     }
 
+    @Test func chatWithoutMatchesStillAsksTheProvider() async throws {
+        let db = try AppDatabase.inMemory()
+        let (meeting, _, _, _) = try Fixture.meeting(db, texts: [("El indicador de ingresos validados", 10, 14),
+                                                                 ("Revisamos el despliegue del viernes", 20, 24)])
+        let chat = MeetingChatService(database: db)
+        let fake = FakeProvider(answer: #"{"answer":"Se habló del indicador [C1].","citations":["C1"],"found":true}"#)
+
+        let scoped = try chat.retrieve(question: "Hola", scope: .meetings([meeting.id]), model: nil, timeout: 30)
+        #expect(scoped.excerpts.isEmpty)
+        #expect(scoped.isTranscriptSample)
+        #expect(scoped.context.count == 2)
+        #expect(chat.localAnswer(question: "Hola", retrieval: scoped).notFound)
+        let answer = try await chat.answer(question: "Hola", retrieval: scoped, provider: fake,
+                                           configuration: AIProviderConfiguration(provider: .ollama), consentGiven: true)
+        #expect(fake.lastRequest?.input.contains("Revisamos el despliegue") == true)
+        #expect(answer.text == "Se habló del indicador [C1].")
+        #expect(answer.citations.first?.startTime == 10)
+
+        let library = try chat.retrieve(question: "Hola", scope: .allMeetings, model: nil, timeout: 30)
+        #expect(library.context.isEmpty)
+        #expect(library.sharedSummary.contains("solo la pregunta"))
+        let greeting = FakeProvider(answer: #"{"answer":"¡Hola! Pregúntame sobre tus reuniones.","citations":[],"found":false}"#)
+        let reply = try await chat.answer(question: "Hola", retrieval: library, provider: greeting,
+                                          configuration: AIProviderConfiguration(provider: .ollama), consentGiven: true)
+        #expect(greeting.lastRequest != nil)
+        #expect(reply.text == "¡Hola! Pregúntame sobre tus reuniones.")
+    }
+
     @Test func processRunnerEnforcesTimeout() async throws {
         let result = try await ProcessRunner.run(executable: URL(fileURLWithPath: "/bin/sleep"), arguments: ["10"], timeout: 0.5)
         #expect(result.timedOut)

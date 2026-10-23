@@ -94,4 +94,33 @@ public struct SearchService: Sendable {
             return Array(hits.prefix(limit))
         }
     }
+
+    public func transcriptSample(meetingIds: [String], limit: Int) throws -> [SearchHit] {
+        guard !meetingIds.isEmpty, limit > 0 else { return [] }
+        return try reader.read { db in
+            let sql = """
+                SELECT s.id AS segmentId, s.meetingId, m.title AS meetingTitle,
+                       COALESCE(m.startedAt, m.createdAt) AS meetingDate,
+                       s.startTime, s.endTime,
+                       COALESCE(s.editedText, s.vocabularyText, s.asrText) AS text,
+                       \(Self.speakerNameSQL) AS speakerName
+                FROM transcriptSegment s
+                JOIN transcript t ON t.id = s.transcriptId AND t.supersededAt IS NULL
+                JOIN meeting m ON m.id = s.meetingId
+                LEFT JOIN participant p ON p.id = s.participantId
+                LEFT JOIN meetingSpeaker ms ON ms.id = s.meetingSpeakerId
+                WHERE s.meetingId IN (\(meetingIds.map { _ in "?" }.joined(separator: ",")))
+                ORDER BY meetingDate, s.meetingId, s.startTime
+                """
+            let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(meetingIds))
+            let picked = rows.count <= limit ? rows : (0..<limit).map { rows[$0 * rows.count / limit] }
+            return picked.map { row in
+                let text: String = row["text"]
+                return SearchHit(segmentId: row["segmentId"], meetingId: row["meetingId"],
+                                 meetingTitle: row["meetingTitle"], meetingDate: row["meetingDate"],
+                                 startTime: row["startTime"], endTime: row["endTime"],
+                                 speakerName: row["speakerName"], text: text, snippet: text, rank: 0)
+            }
+        }
+    }
 }
