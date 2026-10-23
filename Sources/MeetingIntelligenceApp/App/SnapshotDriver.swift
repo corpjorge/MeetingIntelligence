@@ -44,6 +44,11 @@ enum SnapshotDriver {
                     }
                 }
                 captureUpdateStates(suffix: suffix, in: dir, env: env)
+                captureComponent("ai-consent-sheet-\(suffix)", in: dir) {
+                    RemoteConsentSheet(request: .init(provider: .codex, summary: "Se compartirán la pregunta y 13 extractos de transcripción de 1 reunión(es) (texto, hablante y marca de tiempo). No se comparte audio ni perfiles de voz.",
+                                                      characterCount: 1_914, onConfirm: {}))
+                        .environment(env)
+                }
                 // Provider cards (local detection only; the Intelligence screen runs it too).
                 if env.ai.statuses.isEmpty { await env.ai.refreshStatuses() }
                 captureWindowContent("intelligence-providers-\(suffix)", in: dir) { ProvidersPane().environment(env) }

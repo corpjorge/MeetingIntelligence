@@ -42,6 +42,38 @@ struct AIControllerTests {
         #expect(try analysisCount(db, meeting.id) == 1)
     }
 
+    @Test func dontAskAgainIsPerProviderPersistsAndCanBeRevoked() async throws {
+        let suite = try IsolatedDefaults()
+        defer { suite.remove() }
+        let db = try AppDatabase.inMemory()
+        let meeting = try AppFixture.meeting(db)
+        let provider = CountingProvider(kind: .codex)
+        let ai = AIController(database: db, defaults: suite.defaults, providerFor: { _ in provider })
+        ai.selectedProvider = .codex
+
+        ai.analyze(meetingId: meeting.id)
+        #expect(ai.pendingConsent != nil)
+        ai.confirmConsent(remember: true)
+        try await waitUntil { !ai.isAnalyzing(meeting.id) }
+        #expect(provider.calls == 1)
+
+        // Survives a relaunch and only applies to that provider.
+        let reopened = AIController(database: db, defaults: suite.defaults, providerFor: { _ in provider })
+        #expect(!reopened.asksConsent(for: .codex))
+        #expect(reopened.asksConsent(for: .claudeCode))
+        reopened.selectedProvider = .codex
+        reopened.analyze(meetingId: meeting.id)
+        #expect(reopened.pendingConsent == nil)
+        try await waitUntil { !reopened.isAnalyzing(meeting.id) }
+        #expect(provider.calls == 2)
+
+        reopened.setAsksConsent(true, for: .codex)
+        reopened.analyze(meetingId: meeting.id)
+        #expect(reopened.pendingConsent != nil)
+        reopened.declineConsent()
+        #expect(provider.calls == 2)
+    }
+
     @Test func localProviderRunsWithoutAsking() async throws {
         let suite = try IsolatedDefaults()
         defer { suite.remove() }

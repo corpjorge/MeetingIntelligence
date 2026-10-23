@@ -42,7 +42,9 @@ No se registran tokens, credenciales ni texto de transcripciones en los logs del
 ## Proveedores de IA
 
 - Opcionales y opt-in. Antes de cada envío a un proveedor en la nube (Claude Code, Codex, Antigravity, GitHub Copilot) se muestra
-  **exactamente qué se compartirá**; sin confirmación no se envía nada.
+  **exactamente qué se compartirá**; sin confirmación no se envía nada. Con «No volver a preguntar» autorizas los
+  envíos siguientes a **ese** proveedor sin la confirmación; se revierte en Inteligencia › Proveedores («Confirmar
+  antes de enviar»). El envío sigue empezando solo cuando pulsas «Analizar» o preguntas en el chat con IA.
 - Ejecutar un CLI en tu Mac **no** implica que el modelo sea local: esos modelos procesan los datos en la nube.
 - Ollama solo acepta endpoints locales (127.0.0.1/localhost).
 - Se envía solo texto (transcripción o extractos); nunca audio ni datos biométricos.

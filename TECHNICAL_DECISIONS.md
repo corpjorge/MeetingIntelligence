@@ -503,3 +503,12 @@ hay que publicar una versión, firmada con la clave antigua, que ya traiga la nu
 - Bluetooth en llamadas usa perfil de banda estrecha (se advierte en UI).
 - Apps en navegador: no se puede aislar una pestaña; se graba todo el audio del navegador.
 - Silenciarte en la app de la llamada no pausa tu micrófono aquí, y la app no puede detectarlo (TD-23).
+
+## TD-30 · Consentimiento permanente por proveedor en la nube (comprobado)
+La confirmación antes de enviar a un proveedor en la nube tiene la casilla «No volver a preguntar». Se guarda por
+proveedor (`aiConsentSkipped` en UserDefaults), así que autorizar Codex no autoriza Claude ni Copilot. Cada tarjeta de
+Inteligencia › Proveedores tiene «Confirmar antes de enviar» para revertirlo. Sin la confirmación, el análisis y el
+chat se registran igualmente con consentimiento dado (`consentGiven`), porque el usuario lo concedió de forma
+explícita y duradera; el envío sigue empezando solo por una acción suya. Ollama (local) nunca pide confirmación.
+Verificado con una prueba del controlador (por proveedor, persiste al reabrir, se revierte) y con capturas de la hoja
+y de las tarjetas.

@@ -96,7 +96,7 @@ Uso gratuito según [LICENSE](LICENSE); componentes de terceros en [THIRD_PARTY_
 | Actualizaciones de la app (GitHub, firma Ed25519, reinicio) | ✅ | Pruebas + de punta a punta con la app real: 0.2.0 → 0.2.1 con servidor local; firma alterada rechazada; primera actualización real en `/Applications`: reemplazo correcto, el reinicio fallaba con la hoja abierta (corregido en 0.2.2, TD-29) |
 | Exportación TXT/MD/JSON/SRT/PDF | ✅ | Pruebas |
 
-138 pruebas automatizadas pasan (`scripts/test.sh`), incluidas 7 de integración con los modelos reales. Otras 4
+143 pruebas automatizadas pasan (`scripts/test.sh`), incluidas 7 de integración con los modelos reales. Otras 4
 (mediciones de TD-24/TD-26, e5-small y actualización real desde Hugging Face) se activan bajo demanda; ver `TESTING.md`.
 
 ## Requisitos

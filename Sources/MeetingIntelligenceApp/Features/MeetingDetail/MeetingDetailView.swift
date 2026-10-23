@@ -85,6 +85,7 @@ struct MeetingDetailView: View {
     @State private var tab: MeetingDetailTab = .transcript
     @State private var editingTitle = false
     @State private var titleDraft = ""
+    @FocusState private var titleFocused: Bool
 
     var body: some View {
         Group {
@@ -129,13 +130,18 @@ struct MeetingDetailView: View {
         VStack(alignment: .leading, spacing: DS.Space.s) {
             HStack(alignment: .firstTextBaseline, spacing: DS.Space.m) {
                 if editingTitle {
-                    TextField("Título", text: $titleDraft, onCommit: commitTitle)
+                    TextField("Título", text: $titleDraft)
                         .textFieldStyle(.plain).font(DS.Font.display)
+                        .focused($titleFocused)
+                        .onSubmit(commitTitle)
                         .onExitCommand { editingTitle = false }
+                        .onChange(of: titleFocused) { _, focused in if !focused && editingTitle { commitTitle() } }
+                    IconButton(systemImage: "checkmark", help: "Guardar el nombre", action: commitTitle)
                 } else {
                     Text(detail.meeting.title).font(DS.Font.display).foregroundStyle(DS.Color.textPrimary)
-                        .onTapGesture(count: 2) { titleDraft = detail.meeting.title; editingTitle = true }
+                        .onTapGesture(count: 2) { beginEditingTitle(detail.meeting.title) }
                         .help("Doble clic para renombrar")
+                    IconButton(systemImage: "pencil", help: "Renombrar la reunión") { beginEditingTitle(detail.meeting.title) }
                 }
                 Spacer()
                 MeetingStatusPill(meeting: detail.meeting, busy: env.processing.isBusy(meetingId))
@@ -185,9 +191,20 @@ struct MeetingDetailView: View {
         }
     }
 
+    private func beginEditingTitle(_ current: String) {
+        titleDraft = current
+        editingTitle = true
+        titleFocused = true
+    }
+
+    /// Empty names are ignored (keeps the previous one); every rename is a `CorrectionEvent`.
     private func commitTitle() {
-        try? env.database.renameMeeting(id: meetingId, title: titleDraft)
         editingTitle = false
+        do {
+            try env.database.renameMeeting(id: meetingId, title: titleDraft)
+        } catch {
+            NSAlert(error: error).runModal()
+        }
     }
 
     // MARK: Content

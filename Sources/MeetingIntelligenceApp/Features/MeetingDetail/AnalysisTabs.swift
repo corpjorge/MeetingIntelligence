@@ -372,6 +372,7 @@ struct AnalysisItemsTab: View {
 struct RemoteConsentSheet: View {
     let request: AIController.ConsentRequest
     @Environment(AppEnvironment.self) private var env
+    @State private var dontAskAgain = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.l) {
@@ -393,9 +394,12 @@ struct RemoteConsentSheet: View {
             Text("La IA se ejecuta sin herramientas ni permisos de sistema; el texto de la reunión se trata como datos no confiables.")
                 .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
             HStack {
+                Toggle("No volver a preguntar", isOn: $dontAskAgain)
+                    .toggleStyle(.checkbox).font(DS.Font.callout)
+                    .help("No se volverá a pedir confirmación para \(request.provider.displayName). Se puede volver a activar en Inteligencia › Proveedores.")
                 Spacer()
                 Button("Cancelar") { env.ai.declineConsent() }.buttonStyle(.dsSecondary).keyboardShortcut(.cancelAction)
-                Button("Compartir y analizar") { env.ai.confirmConsent() }.buttonStyle(.dsPrimary).keyboardShortcut(.defaultAction)
+                Button("Compartir y analizar") { env.ai.confirmConsent(remember: dontAskAgain) }.buttonStyle(.dsPrimary).keyboardShortcut(.defaultAction)
             }
         }
         .padding(DS.Space.xl)

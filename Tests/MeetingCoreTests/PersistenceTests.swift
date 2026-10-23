@@ -57,6 +57,25 @@ struct PersistenceTests {
         #expect(detail.speakerName(for: detail.segments[0]) == "Sin identificar")
     }
 
+    @Test func renamingTrimsIgnoresEmptyAndRecordsHistory() throws {
+        let db = try AppDatabase.inMemory()
+        let (meeting, _, _, _) = try Fixture.meeting(db, texts: [("Hola", 0, 1)])
+        func title() throws -> String? { try db.meetingDetail(id: meeting.id)?.meeting.title }
+        func events() throws -> [Row] {
+            try db.reader.read { try Row.fetchAll($0, sql: "SELECT previousValue, newValue FROM correctionEvent WHERE field = 'title'") }
+        }
+
+        try db.renameMeeting(id: meeting.id, title: "  Comité de arquitectura \n")
+        #expect(try title() == "Comité de arquitectura")
+        try db.renameMeeting(id: meeting.id, title: "   ")
+        try db.renameMeeting(id: meeting.id, title: "Comité de arquitectura")
+        #expect(try title() == "Comité de arquitectura")
+        let history = try events()
+        #expect(history.count == 1)
+        #expect(history.first?["previousValue"] as String? == meeting.title)
+        #expect(history.first?["newValue"] as String? == "Comité de arquitectura")
+    }
+
     @Test func editingPreservesOriginalASRAndRecordsHistory() throws {
         let db = try AppDatabase.inMemory()
         let (meeting, _, _, segments) = try Fixture.meeting(db, texts: [("el servicio de viavilidad inicial", 0, 3)])

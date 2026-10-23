@@ -21,6 +21,11 @@ final class AIController {
     var selectedProvider: AIProviderKind {
         didSet { defaults.set(selectedProvider.rawValue, forKey: "aiProvider") }
     }
+    /// Remote providers whose share confirmation the user turned off ("No volver a preguntar");
+    /// revocable per provider in Inteligencia › Proveedores.
+    private(set) var consentSkipped: Set<AIProviderKind> {
+        didSet { defaults.set(consentSkipped.map(\.rawValue).sorted(), forKey: "aiConsentSkipped") }
+    }
 
     private let database: AppDatabase
     private let defaults: UserDefaults
@@ -34,6 +39,16 @@ final class AIController {
         self.defaults = defaults
         self.providerFor = providerFor
         selectedProvider = AIProviderKind(rawValue: defaults.string(forKey: "aiProvider") ?? "") ?? .claudeCode
+        consentSkipped = Set((defaults.stringArray(forKey: "aiConsentSkipped") ?? []).compactMap(AIProviderKind.init(rawValue:)))
+    }
+
+    /// Whether sending to `kind` shows the confirmation with the summary of what is shared.
+    func asksConsent(for kind: AIProviderKind) -> Bool {
+        kind.sendsDataToRemoteService && !consentSkipped.contains(kind)
+    }
+
+    func setAsksConsent(_ asks: Bool, for kind: AIProviderKind) {
+        if asks { consentSkipped.remove(kind) } else { consentSkipped.insert(kind) }
     }
 
     func configuration(for kind: AIProviderKind) -> AIProviderConfiguration {
@@ -96,11 +111,13 @@ final class AIController {
         let start: () -> Void = { [weak self] in
             self?.startAnalysis(meetingId: meetingId, kind: kind, config: config, prepared: prepared, consent: true)
         }
-        if kind.sendsDataToRemoteService {
+        if asksConsent(for: kind) {
             pendingConsent = ConsentRequest(provider: kind, summary: prepared.sharedSummary,
                                             characterCount: prepared.characterCount, onConfirm: start)
         } else {
-            startAnalysis(meetingId: meetingId, kind: kind, config: config, prepared: prepared, consent: false)
+            // Standing consent for a remote provider counts as given; local providers need none.
+            startAnalysis(meetingId: meetingId, kind: kind, config: config, prepared: prepared,
+                          consent: kind.sendsDataToRemoteService)
         }
     }
 
@@ -137,7 +154,7 @@ final class AIController {
                                                  effort: config.effort, timeout: config.timeoutSeconds,
                                                  semantic: semantic) else { return nil }
         guard useAI else { return chat.localAnswer(question: question, retrieval: retrieval) }
-        if kind.sendsDataToRemoteService {
+        if asksConsent(for: kind) {
             let confirmed = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
                 pendingConsent = ConsentRequest(provider: kind, summary: retrieval.sharedSummary,
                                                 characterCount: retrieval.excerpts.reduce(0) { $0 + $1.text.count },
@@ -158,8 +175,10 @@ final class AIController {
 
     private var consentCancellation: (() -> Void)?
 
-    func confirmConsent() {
+    /// `remember` stops asking for this provider until re-enabled in its card.
+    func confirmConsent(remember: Bool = false) {
         let request = pendingConsent
+        if remember, let request { setAsksConsent(false, for: request.provider) }
         pendingConsent = nil
         consentCancellation = nil
         request?.onConfirm()

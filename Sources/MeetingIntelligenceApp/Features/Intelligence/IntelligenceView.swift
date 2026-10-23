@@ -87,7 +87,7 @@ struct ProvidersPane: View {
                 HStack {
                     InlineBanner(tone: .info, systemImage: "lock.shield",
                                  title: "Ejecutar un CLI en tu Mac no significa que el modelo sea local",
-                                 message: "Claude Code, Codex, Antigravity y GitHub Copilot envían el texto a la nube de su proveedor; la app te pedirá confirmación cada vez. Ollama procesa todo en este Mac. Los agentes se ejecutan sin herramientas ni permisos de sistema.")
+                                 message: "Claude Code, Codex, Antigravity y GitHub Copilot envían el texto a la nube de su proveedor; la app te pide confirmación cada vez, salvo que la desactives para ese proveedor. Ollama procesa todo en este Mac. Los agentes se ejecutan sin herramientas ni permisos de sistema.")
                 }
                 HStack {
                     Spacer()
@@ -143,6 +143,11 @@ struct ProviderCard: View {
                     ForEach(status.notes, id: \.self) { note in
                         Label(note, systemImage: "info.circle").font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
                     }
+                }
+                if kind.sendsDataToRemoteService {
+                    Toggle("Confirmar antes de enviar (con el resumen de lo que se comparte)", isOn: Binding(
+                        get: { env.ai.asksConsent(for: kind) }, set: { env.ai.setAsksConsent($0, for: kind) }))
+                        .font(DS.Font.callout)
                 }
                 if let binding = configBinding {
                     HStack(spacing: DS.Space.m) {

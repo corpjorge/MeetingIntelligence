@@ -66,6 +66,8 @@ struct MeetingsView: View {
     @Environment(AppRouter.self) private var router
     @State private var model = MeetingsModel()
     @State private var dropTargeted = false
+    @State private var renaming: Meeting?
+    @State private var renameDraft = ""
 
     var body: some View {
         @Bindable var model = model
@@ -92,6 +94,16 @@ struct MeetingsView: View {
                 contentResults
             }
             list
+        }
+        .alert("Renombrar reunión", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("Título", text: $renameDraft)
+            Button("Cancelar", role: .cancel) { renaming = nil }
+            Button("Renombrar") {
+                if let meeting = renaming {
+                    do { try env.database.renameMeeting(id: meeting.id, title: renameDraft) } catch { NSAlert(error: error).runModal() }
+                }
+                renaming = nil
+            }
         }
         .fileImporter(isPresented: $router.isImporting,
                       allowedContentTypes: [.audio, .movie, .mpeg4Movie, .mpeg4Audio, .mp3, .wav],
@@ -215,6 +227,7 @@ struct MeetingsView: View {
     @ViewBuilder
     private func rowMenu(_ row: MeetingSummaryRow) -> some View {
         Button("Abrir") { router.openMeeting(row.id) }
+        Button("Renombrar…") { renameDraft = row.meeting.title; renaming = row.meeting }
         Button(row.meeting.status == .ready ? "Volver a procesar" : "Procesar") { env.processing.enqueue(row.id) }
             .disabled(env.processing.isBusy(row.id))
         Divider()
