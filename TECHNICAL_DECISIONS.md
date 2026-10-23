@@ -512,3 +512,15 @@ chat se registran igualmente con consentimiento dado (`consentGiven`), porque el
 explícita y duradera; el envío sigue empezando solo por una acción suya. Ollama (local) nunca pide confirmación.
 Verificado con una prueba del controlador (por proveedor, persiste al reabrir, se revierte) y con capturas de la hoja
 y de las tarjetas.
+
+## TD-31 · Requisito mínimo macOS 15 (compilación comprobada; ejecución en macOS 15 pendiente)
+El mínimo baja de macOS 26 a **macOS 15 (Sequoia)** sin cambios de código.
+- Dependencias: FluidAudio y swift-embeddings piden macOS 14; GRDB y el resto, menos.
+- Con macOS 14.2 no compila: la búsqueda semántica (swift-embeddings / `MLTensor`: `XLMRoberta.ModelBundle`,
+  `EncodeOptions`) y `AVAudioFile.close()` (en `SilenceCompactor`) son de macOS 15. Bajar a 14.2 exigiría ocultar la
+  búsqueda semántica y condicionar ese cierre; se descartó.
+- Con `.macOS(.v15)` compila todo el paquete sin errores ni avisos de disponibilidad y pasan todas las pruebas
+  (ejecutadas en macOS 27). Se sigue compilando con el SDK 26.5 (TD-02).
+- **Sin verificar en un Mac con macOS 15**: aspecto de SwiftUI, captura de audio del sistema (process taps,
+  macOS 14.2+), Neural Engine y permisos. `LSMinimumSystemVersion` = 15.0 y el actualizador lo comprueba (TD-29).
+

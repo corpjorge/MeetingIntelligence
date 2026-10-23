@@ -148,6 +148,9 @@ Resultados y conjuntos en `TECHNICAL_DECISIONS.md` (TD-24, TD-25, TD-26).
 
 ## Pruebas manuales pendientes (requieren permisos o condiciones del usuario)
 
+- Instalar y usar la app en un Mac con **macOS 15** (requisito mínimo desde la 0.2.3, TD-31): grabar con micrófono y
+  audio del sistema, procesar, búsqueda semántica y actualizar desde la app.
+
 - Actualización real 0.2.1 → 0.2.2 desde `/Applications` usando la hoja: confirmar que se cierra y reinicia sola (en la
   0.2.0 → 0.2.1 el reemplazo funcionó pero el reinicio no, TD-29) y qué permisos vuelve a pedir macOS.
 

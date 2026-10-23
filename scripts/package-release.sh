@@ -61,7 +61,7 @@ $APP_NAME $VERSION
    junto a "Se bloqueó $APP_NAME". Confirma con tu contraseña y pulsa "Abrir". Solo hace falta la primera vez.
 4. Al primer uso descarga los modelos locales (~650 MB) y pide permiso de micrófono y de audio del sistema.
 
-Requisitos: Mac con Apple Silicon y macOS 26 o posterior.
+Requisitos: Mac con Apple Silicon y macOS 15 (Sequoia) o posterior.
 Más información: https://github.com/corpjorge/MeetingIntelligence
 TXT
 swift "$ROOT/scripts/make-dmg-background.swift" "$STAGE/.background/bg.png" "$STAGE/.background/bg@2x.png"

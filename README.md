@@ -52,7 +52,7 @@ el menú **Meeting Intelligence › Buscar actualizaciones…**. La 0.1.0 no tie
 DMG y reemplaza la anterior. Como la app no tiene firma de desarrollador, macOS puede volver a pedir los permisos de
 micrófono y de audio del sistema después de cada actualización.
 
-**Requisitos:** Mac con Apple Silicon (M1 o posterior) y macOS 26 o posterior. Los análisis con IA son opcionales y
+**Requisitos:** Mac con Apple Silicon (M1 o posterior) y macOS 15 (Sequoia) o posterior. Los análisis con IA son opcionales y
 usan las CLIs que tengas instaladas (Claude Code, Codex, Antigravity, GitHub Copilot) u Ollama.
 
 **Desinstalar:** borra la app y, si quieres eliminar también tus datos, la carpeta
@@ -101,7 +101,7 @@ Uso gratuito según [LICENSE](LICENSE); componentes de terceros en [THIRD_PARTY_
 
 ## Requisitos
 
-- Mac con Apple Silicon, **macOS 26 o posterior** (desarrollado en macOS 27.0.1).
+- Mac con Apple Silicon, **macOS 15 (Sequoia) o posterior** (desarrollado en macOS 27.0.1; no probado en un Mac con macOS 15).
 - **Command Line Tools** (Swift 6.4) — Xcode no es obligatorio. Con solo CLT se compila contra el SDK macOS 26.5
   incluido (ver `TECHNICAL_DECISIONS.md` › TD-02).
 - ~1 GB libre para modelos (Parakeet Ultra ≈ 630 MB + diarización), descargados una vez desde Hugging Face.

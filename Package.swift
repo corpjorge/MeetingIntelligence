@@ -25,7 +25,7 @@ let strictConcurrency: [SwiftSetting] = [
 let package = Package(
     name: "MeetingIntelligence",
     platforms: [
-        .macOS(.v26),
+        .macOS(.v15),
     ],
     products: [
         .executable(name: "MeetingIntelligence", targets: ["MeetingIntelligenceApp"]),
