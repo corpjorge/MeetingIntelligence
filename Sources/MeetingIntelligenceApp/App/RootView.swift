@@ -42,6 +42,9 @@ struct RootView: View {
             await env.models.refresh()
             SnapshotDriver.runIfRequested(router: router, env: env)
         }
+        // Processing and live transcription load the models on first use; reflect a download done there.
+        .onChange(of: env.processing.active == nil) { _, idle in if idle { Task { await env.models.refresh() } } }
+        .onChange(of: env.recording.isActive) { _, active in if !active { Task { await env.models.refresh() } } }
         .alert("Error de la biblioteca", isPresented: .constant(env.startupError != nil)) {
             Button("Entendido", role: .cancel) {}
         } message: {

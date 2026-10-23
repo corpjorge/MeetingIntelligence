@@ -200,19 +200,24 @@ struct ModelSetupBanner: View {
     @Environment(AppEnvironment.self) private var env
 
     var body: some View {
-        switch env.models.asrStatus {
-        case .preparing(let text, let fraction):
+        // Both models count: after Parakeet is ready the diarization models are still being prepared.
+        if env.models.allReady {
+            InlineBanner(tone: .success, systemImage: "checkmark.circle.fill", title: "Modelos locales listos",
+                         message: "Parakeet Ultra y la diarización están descargados. Todo funciona sin conexión.") {
+                EmptyView()
+            }
+        } else if let step = env.models.preparingStep {
             InlineBanner(tone: .info, systemImage: "arrow.down.circle",
                          title: "Preparando modelos locales",
-                         message: "\(text)\(fraction.map { " · \(Int($0 * 100))%" } ?? "")") {
+                         message: "\(step.model) · \(step.text)\(step.fraction.map { " · \(Int($0 * 100))%" } ?? "")") {
                 ProgressView().controlSize(.small)
             }
-        case .failed(let message):
+        } else if let failure = env.models.failure {
             InlineBanner(tone: .danger, systemImage: "exclamationmark.triangle.fill",
-                         title: "Parakeet Ultra no está disponible", message: message) {
+                         title: "\(failure.model) no está disponible", message: failure.message) {
                 Button("Reintentar") { Task { await env.models.prepareAll() } }.buttonStyle(.ds(.secondary, size: .small))
             }
-        default:
+        } else {
             InlineBanner(tone: .warning, systemImage: "cpu",
                          title: "Descarga los modelos locales",
                          message: "Parakeet Ultra (~630 MB) y la diarización se descargan una sola vez y se ejecutan en el Neural Engine. Después todo funciona sin conexión.") {

@@ -44,6 +44,7 @@ enum SnapshotDriver {
                     }
                 }
                 captureUpdateStates(suffix: suffix, in: dir, env: env)
+                captureComponent("model-setup-banner-\(suffix)", in: dir) { ModelSetupBanner().environment(env) }
                 captureComponent("ai-consent-sheet-\(suffix)", in: dir) {
                     RemoteConsentSheet(request: .init(provider: .codex, summary: "Se compartirán la pregunta y 13 extractos de transcripción de 1 reunión(es) (texto, hablante y marca de tiempo). No se comparte audio ni perfiles de voz.",
                                                       characterCount: 1_914, onConfirm: {}))
@@ -80,7 +81,8 @@ enum SnapshotDriver {
                     }
                 }
             }
-            NSApp.terminate(nil)
+            // The onboarding sheet would make AppKit ignore a plain terminate.
+            AppUpdateController.terminateClosingSheets()
         }
     }
 
