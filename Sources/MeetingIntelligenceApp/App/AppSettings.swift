@@ -35,7 +35,18 @@ final class AppSettings {
     var systemNotifications: Bool { didSet { defaults.set(systemNotifications, forKey: "systemNotifications") } }
     /// App group keys never suggested (e.g. a music or dictation app).
     var ignoredCallApps: [String] { didSet { defaults.set(ignoredCallApps, forKey: "ignoredCallApps") } }
-    var microphoneVoiceProcessing: Bool { didSet { defaults.set(microphoneVoiceProcessing, forKey: "voiceProcessing") } }
+    var microphoneEchoCancellation: Bool {
+        didSet {
+            defaults.set(microphoneEchoCancellation, forKey: "microphoneEchoCancellation")
+            if microphoneEchoCancellation && microphoneVoiceProcessing { microphoneVoiceProcessing = false }
+        }
+    }
+    var microphoneVoiceProcessing: Bool {
+        didSet {
+            defaults.set(microphoneVoiceProcessing, forKey: "appleVoiceProcessing")
+            if microphoneVoiceProcessing && microphoneEchoCancellation { microphoneEchoCancellation = false }
+        }
+    }
     var autoProcessAfterRecording: Bool { didSet { defaults.set(autoProcessAfterRecording, forKey: "autoProcess") } }
     var detectMultipleLocalSpeakers: Bool { didSet { defaults.set(detectMultipleLocalSpeakers, forKey: "localDiarization") } }
     var flagEcho: Bool { didSet { defaults.set(flagEcho, forKey: "flagEcho") } }
@@ -72,7 +83,15 @@ final class AppSettings {
         suggestStop = defaults.object(forKey: "suggestStop") as? Bool ?? true
         systemNotifications = defaults.object(forKey: "systemNotifications") as? Bool ?? true
         ignoredCallApps = defaults.stringArray(forKey: "ignoredCallApps") ?? []
-        microphoneVoiceProcessing = defaults.object(forKey: "voiceProcessing") as? Bool ?? false
+        // The old voiceProcessing preference enabled Apple VPIO. Do not migrate it:
+        // this setting controls a separate, recording-only software filter (TD-33).
+        let recordingAEC = defaults.object(forKey: "microphoneEchoCancellation") as? Bool ?? true
+        let appleVoiceProcessing = defaults.bool(forKey: "appleVoiceProcessing") && !recordingAEC
+        microphoneEchoCancellation = recordingAEC
+        microphoneVoiceProcessing = appleVoiceProcessing
+        // Normalize conflicting stored choices; turning recording AEC off later
+        // must not silently reactivate a previously suppressed Apple preference.
+        if !appleVoiceProcessing { defaults.set(false, forKey: "appleVoiceProcessing") }
         autoProcessAfterRecording = defaults.object(forKey: "autoProcess") as? Bool ?? true
         detectMultipleLocalSpeakers = defaults.object(forKey: "localDiarization") as? Bool ?? true
         flagEcho = defaults.object(forKey: "flagEcho") as? Bool ?? true

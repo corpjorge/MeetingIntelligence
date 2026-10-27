@@ -92,7 +92,8 @@ final class RecordingController {
                                                       language: settings.language)
             let config = RecordingConfiguration(
                 directory: paths.meetingDirectory(meeting.id), remoteTarget: target,
-                captureMicrophone: captureMicrophone, microphoneVoiceProcessing: settings.microphoneVoiceProcessing)
+                captureMicrophone: captureMicrophone, microphoneEchoCancellation: settings.microphoneEchoCancellation,
+                microphoneVoiceProcessing: settings.microphoneVoiceProcessing)
             let session = RecordingSession(configuration: config)
             self.session = session
             self.meeting = meeting

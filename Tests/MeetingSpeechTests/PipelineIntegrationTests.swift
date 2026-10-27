@@ -129,6 +129,10 @@ struct PipelineIntegrationTests {
         #expect(micDiarization.detail?.contains("Sin voz suficiente") == true)
         let micSegments = detail.segments.filter { $0.source == .localMicrophone }
         #expect(!micSegments.isEmpty)
+        let reference = try String(contentsOf: shortReply.deletingPathExtension().appendingPathExtension("txt"),
+                                   encoding: .utf8)
+        #expect(Metrics.wordErrorRate(reference: reference, hypothesis: micSegments.map(\.asrText).joined(separator: " ")).wer == 0)
+        #expect(micSegments.allSatisfy { $0.startTime >= 7.5 && $0.endTime <= 10 })
         #expect(micSegments.allSatisfy { $0.attribution == .localUserTrack && $0.participantId == me.id })
         #expect(detail.segments.contains { $0.source == .remoteSystemAudio && $0.attribution == .diarized })
         let audit = try db.assignments(meetingId: meeting.id)
@@ -168,6 +172,21 @@ struct PipelineIntegrationTests {
         // Word timings are monotonic and within the file.
         #expect(zip(result.words, result.words.dropFirst()).allSatisfy { $0.start <= $1.start })
         #expect((result.words.last?.end ?? 0) <= result.audioDurationSeconds + 0.1)
+    }
+
+    @Test func isolatedMicrophoneReplyUsesRemoteContextWithoutCopyingItsWords() async throws {
+        let provider = ParakeetUltraProvider()
+        let remoteURL = IntegrationEnvironment.fixtures.appendingPathComponent("es_single_speaker.wav")
+        let replyURL = IntegrationEnvironment.fixtures.appendingPathComponent("es_context_reply.wav")
+        try #require(FileManager.default.fileExists(atPath: replyURL.path), "scripts/generate-fixtures.sh")
+        let remote = try await provider.transcribe(fileURL: remoteURL, languageHint: "es-CO") { _ in }
+        let reference = try String(contentsOf: replyURL.deletingPathExtension().appendingPathExtension("txt"), encoding: .utf8)
+        let result = try await provider.transcribe(
+            fileURL: replyURL, languageHint: "es-CO", timelineOffsetSeconds: remote.audioDurationSeconds + 1,
+            contextTracks: [ASRContextTrack(fileURL: remoteURL, tokens: remote.tokens, timelineOffsetSeconds: 0)]) { _ in }
+        #expect(Metrics.wordErrorRate(reference: reference, hypothesis: result.text).wer == 0, "\(result.text)")
+        #expect(!result.words.isEmpty)
+        #expect(result.words.allSatisfy { $0.start >= 0 && $0.end <= result.audioDurationSeconds + 0.3 })
     }
 }
 

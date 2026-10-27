@@ -28,7 +28,7 @@ MeetingAudio             Captura y DSP. Depende de MeetingCore.
   │                      ConversationApps (agrupación de procesos por app + catálogo descriptivo),
   │                      CallMonitor/CallDetector (detección de llamadas de cualquier app)
   ├─ Processing/         CrashSafeWAVWriter + WAVRepair, MonoResampler, Downmix, TimelineAligner, LevelMeter,
-  │                      SilenceCompactor
+  │                      SilenceCompactor, RecordingEchoCanceller (SpeexDSP 1.2.1)
   └─ Import/             AudioImporter (copia WAV/M4A/MP3; extrae audio de MP4/MOV)
 
 MeetingSpeech            FluidAudio. Depende de MeetingCore y MeetingAudio.
@@ -65,9 +65,11 @@ App elegida (todos sus procesos: los del bundle .app que los contiene, p. ej. Te
              o un proceso compartido: servicio de audio de Chrome/Edge, WebKit GPU de Safari)
    │  CATapDescription(monoMixdownOfProcesses:)  → tap privado → aggregate device privado
    ▼
-IOProc (cola de tiempo real) ── copia + mezcla a mono ──► TrackRecorder(remote_system_audio)
-                                                             │ cola serial: remuestreo → alineación → WAV
-AVAudioEngine.inputNode (dispositivo por defecto) ─────────► TrackRecorder(local_microphone)
+IOProc ── copia + mezcla a mono ──► remuestreo + alineación ──► WAV remoto
+                                               │ referencia
+                                               ▼
+AVAudioEngine.inputNode ── copia ──► remuestreo + alineación ──► AEC ──► WAV micrófono
+                                           (cola serial compartida; AEC opcional)
 ```
 
 - **Reloj común** (`CaptureClock`): origen en host time; las pausas desplazan el origen para ambas pistas.
@@ -83,9 +85,19 @@ AVAudioEngine.inputNode (dispositivo por defecto) ─────────►
 - **Pausa del micrófono**: el `TrackRecorder` del micrófono escribe silencio mientras está en pausa (la línea de
   tiempo se conserva) y registra el intervalo (`recordingPause`). Silenciarse en la app de la llamada no es legible
   (TD-23): la vista de grabación muestra un recordatorio estático (`CallMuteReminder`) cuyo botón solo pausa.
-- **Eco/duplicación**: Teams no reproduce tu propia voz, así que no hay doble captura de ti en la pista remota. El eco
-  (altavoces → micrófono) se mitiga con (1) advertencia de altavoces, (2) Voice Processing opcional y
-  (3) `EchoDetector`, que marca como `probableEcho` los segmentos del micrófono que repiten el habla remota.
+- **Eco/duplicación** (TD-33): por defecto el micrófono se captura sin Voice Processing de Apple; no se modifican la ganancia,
+  el mute ni la configuración de Teams. Al capturar ambas pistas, `RecordingEchoCanceller` (SpeexDSP 1.2.1,
+  incluido en `CSpeexDSP`) recibe las muestras mono ya remuestreadas y alineadas de ambas fuentes en una cola
+  serial compartida. El audio remoto es referencia; solo se filtra el micrófono antes del WAV y de la transcripción
+  provisional. Tramas de 20 ms, referencia adelantada 80 ms para absorber diferencias de timestamps y filtro de
+  300 ms; no hay AGC ni puerta de ruido. Se conserva silencio exacto en pausas/huecos. La referencia se cierra primero
+  para vaciar el último bloque del micrófono sin cambiar su duración. Si falta referencia durante 0,5 s, se conserva
+  el micrófono sin filtrar y se avisa; los búferes de referencia se limitan a 2 s. La opción de reducción de eco está
+  activada por defecto y no se aplica a grabaciones de una sola fuente. `EchoDetector` sigue marcando texto como
+  defensa adicional; no sustituye la limpieza del audio. Se conserva Apple Voice Processing como alternativa
+  desactivada por defecto, con advertencia del conflicto observado en Teams. Ambos controles se excluyen: al
+  activar uno se apaga el otro y la configuración de captura también impide aplicarlos juntos. La preferencia
+  antigua no reactiva Apple automáticamente. Pendiente validar el AEC con altavoces en llamada real.
 
 ## Detección de llamadas
 

@@ -20,7 +20,7 @@ final class MicrophoneSource: @unchecked Sendable {
     private var observer: (any NSObjectProtocol)?
     private var running = false
 
-    init(recorder: TrackRecorder, voiceProcessing: Bool,
+    init(recorder: TrackRecorder, voiceProcessing: Bool = false,
          onDeviceChange: @escaping @Sendable (String) -> Void,
          onFailure: @escaping @Sendable (String) -> Void) {
         self.recorder = recorder
@@ -54,9 +54,10 @@ final class MicrophoneSource: @unchecked Sendable {
     private func startEngineLocked() throws {
         let engine = AVAudioEngine()
         let input = engine.inputNode
+        // VPIO is an explicit alternative, never combined with recording AEC.
+        // Default capture stays unprocessed to avoid the Teams conflict (TD-33).
         if voiceProcessing {
             try input.setVoiceProcessingEnabled(true)
-            // Keep Teams at full volume while echo cancellation is active.
             input.voiceProcessingOtherAudioDuckingConfiguration =
                 AVAudioVoiceProcessingOtherAudioDuckingConfiguration(enableAdvancedDucking: false, duckingLevel: .min)
         }

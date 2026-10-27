@@ -160,6 +160,7 @@ public actor MeetingProcessor {
         let localUser = try database.localUser()
         var summaries: [ProcessingSummary.TrackSummary] = []
         var remoteWords: [WordTiming] = []
+        var remoteContext: [ASRContextTrack] = []
 
         for track in tracks {
             try Task.checkCancellation()
@@ -174,7 +175,9 @@ public actor MeetingProcessor {
                 progress(.init(meetingId: meetingId, stage: .transcription, source: track.source, fraction: 0,
                                message: "Transcribiendo \(Self.label(track.source))"))
                 do {
-                    transcription = try await asr.transcribe(fileURL: url, languageHint: options.language) { f in
+                    transcription = try await asr.transcribe(
+                        fileURL: url, languageHint: options.language, timelineOffsetSeconds: track.timelineOffsetSeconds,
+                        contextTracks: track.source == .localMicrophone ? remoteContext : []) { f in
                         progress(.init(meetingId: meetingId, stage: .transcription, source: track.source, fraction: f,
                                        message: "Transcribiendo \(Self.label(track.source))"))
                     }
@@ -189,7 +192,11 @@ public actor MeetingProcessor {
                 WordTiming(word: $0.word, start: $0.start + track.timelineOffsetSeconds,
                            end: $0.end + track.timelineOffsetSeconds, confidence: $0.confidence)
             }
-            if track.source == .remoteSystemAudio { remoteWords = words }
+            if track.source == .remoteSystemAudio {
+                remoteWords = words
+                remoteContext.append(ASRContextTrack(fileURL: url, tokens: transcription.tokens,
+                                                    timelineOffsetSeconds: track.timelineOffsetSeconds))
+            }
 
             // 3. Diarization (skipped for empty tracks).
             var diarization: DiarizationOutput?

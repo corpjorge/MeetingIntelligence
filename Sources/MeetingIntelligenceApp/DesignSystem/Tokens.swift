@@ -73,6 +73,7 @@ enum DS {
             static let l: CGFloat = 520
             static let xl: CGFloat = 560
             static let listHeight: CGFloat = 320
+            static let reviewHeight: CGFloat = 560
         }
 
         enum Control {

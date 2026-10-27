@@ -28,6 +28,7 @@ public final class RecordingSession: @unchecked Sendable {
     private var scope: CaptureScope = .microphoneOnly
     private var tappedProcesses: [AudioProcessInfo] = []
     private var warnings: [RecordingWarning] = []
+    private let warningLock = NSLock()
     private var started = false
     private var stopped = false
     private var microphonePaused = false
@@ -63,6 +64,10 @@ public final class RecordingSession: @unchecked Sendable {
             let onWarning: @Sendable (RecordingWarning) -> Void = { [weak self] warning in
                 self?.report(warning)
             }
+            // Both converted streams and AEC state are confined to this queue.
+            let trackQueue = DispatchQueue(label: "mi.recording.tracks", qos: .userInitiated)
+            let echoCanceller = configuration.usesRecordingEchoCancellation
+                ? try RecordingEchoCanceller(sampleRate: Int(configuration.outputSampleRate)) : nil
 
             if configuration.captureMicrophone {
                 guard Self.microphonePermissionGranted() else { throw CaptureError.microphonePermissionDenied }
@@ -70,11 +75,12 @@ public final class RecordingSession: @unchecked Sendable {
                     source: .localMicrophone,
                     url: configuration.directory.appendingPathComponent(Self.microphoneFileName),
                     outputSampleRate: configuration.outputSampleRate, clock: clock,
+                    queue: trackQueue, echoCanceller: echoCanceller,
                     onLevel: onLevel, onWarning: onWarning)
                 recorder.onSamples = onSamples
                 micRecorder = recorder
                 let mic = MicrophoneSource(
-                    recorder: recorder, voiceProcessing: configuration.microphoneVoiceProcessing,
+                    recorder: recorder, voiceProcessing: configuration.usesAppleVoiceProcessing,
                     onDeviceChange: { [weak self] name in self?.report(.inputDeviceChanged(name)) },
                     onFailure: { [weak self] message in self?.report(.sourceFailed(.localMicrophone, message)) })
                 try mic.start()
@@ -89,6 +95,7 @@ public final class RecordingSession: @unchecked Sendable {
                     source: .remoteSystemAudio,
                     url: configuration.directory.appendingPathComponent(Self.remoteFileName),
                     outputSampleRate: configuration.outputSampleRate, clock: clock,
+                    queue: trackQueue, echoCanceller: echoCanceller,
                     onLevel: onLevel, onWarning: onWarning)
                 recorder.onSamples = onSamples
                 remoteRecorder = recorder
@@ -99,7 +106,7 @@ public final class RecordingSession: @unchecked Sendable {
 
             if configuration.captureMicrophone, configuration.remoteTarget != .none,
                let output = AudioDevices.defaultOutput(), output.isLikelySpeakers,
-               !configuration.microphoneVoiceProcessing {
+               !configuration.usesRecordingEchoCancellation, !configuration.usesAppleVoiceProcessing {
                 report(.speakerEchoRisk(output.dataSourceName ?? output.name))
             }
             continuation.yield(.remoteScope(scope))
@@ -121,19 +128,22 @@ public final class RecordingSession: @unchecked Sendable {
             tap?.stop()
             var stats: [TrackStatistics] = []
             var micPauses: [PauseInterval] = []
+            // Finish reference input first so the microphone can drain the AEC
+            // lookahead and its final partial frame before closing its WAV.
+            let remoteStats = remoteRecorder?.finish(atTimelineSeconds: end)
             if let micRecorder {
                 let micStats = micRecorder.finish(atTimelineSeconds: end)
                 micPauses = micStats.pauses
                 stats.append(micStats)
             }
-            if let remoteRecorder { stats.append(remoteRecorder.finish(atTimelineSeconds: end)) }
+            if let remoteStats { stats.append(remoteStats) }
             stopped = true
             continuation.finish()
             return RecordingResult(
                 durationSeconds: end, tracks: stats, captureScope: scope,
                 remoteProcessDescription: describe(tappedProcesses),
                 inputDeviceName: AudioDevices.defaultInput()?.name,
-                warnings: warnings,
+                warnings: warningLock.withLock { warnings },
                 sourceApp: { if case .application(let selector) = configuration.remoteTarget { selector } else { nil } }(),
                 microphonePauses: micPauses)
         }
@@ -236,14 +246,14 @@ public final class RecordingSession: @unchecked Sendable {
             report(.sourceFailed(.remoteSystemAudio, error.localizedDescription))
         }
         if configuration.captureMicrophone, let output = AudioDevices.defaultOutput(), output.isLikelySpeakers,
-           !configuration.microphoneVoiceProcessing {
+           !configuration.usesRecordingEchoCancellation, !configuration.usesAppleVoiceProcessing {
             report(.speakerEchoRisk(output.dataSourceName ?? output.name))
         }
     }
 
     private func report(_ warning: RecordingWarning) {
         logger.notice("\(warning.message, privacy: .public)")
-        control.async { [self] in
+        warningLock.withLock {
             if !warnings.contains(warning) { warnings.append(warning) }
         }
         continuation.yield(.warning(warning))

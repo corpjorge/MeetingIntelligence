@@ -40,6 +40,7 @@ modelos reales se ejecutan solo si Parakeet Ultra y la diarización ya están en
 | App: preferencias | valores por defecto seguros (solo sugerencias, consentimiento, descargas opcionales), persistencia entre arranques, "conservar siempre" = nil, modo de captura heredado, opciones de procesamiento |
 | App: consentimiento de IA | análisis en la nube espera confirmación (rechazar no envía nada ni guarda análisis), confirmar lo ejecuta, Ollama sin preguntar, chat: rechazar → respuesta local sin enviar, confirmar → respuesta con citas, proveedor elegido recordado |
 | App: cola de procesamiento | una reunión a la vez con el pipeline real, sin duplicados, cancelar una en cola, error informado por reunión |
+| App: compromisos del inicio | contador sin límite de ocho, lista completa de tareas/compromisos abiertos, títulos de las reuniones, completar/deshacer desde la lista, persistencia sin perder texto/evidencia y actualización al completar o renombrar |
 | App: sugerencias de llamada | sugerir grabar solo si está activado (nunca graba solo), fin de llamada limpia la sugerencia y no ofrece detener si no se graba, apps ignoradas persistidas, aceptar entrega la app al flujo del usuario |
 | Actualizaciones de la app | versiones (pre-releases, `1.0` = `1.0.0`, tags inválidos), lectura de releases de GitHub (borradores, sin firma o sin versión → ignorados; pre-releases incluidos; notas «Novedades» con líneas unidas como en Markdown, sobre `docs/releases/0.2.0.md`), firma Ed25519 (versión, ZIP y clave atados), preparación válida y rechazos (otra clave, versión o app distinta, macOS mínimo, tamaño), intercambio atómico y limpieza, ubicaciones no instalables (App Translocation, sin permiso), firma de código manipulada y ad hoc |
 | App: actualizaciones | aviso solo para búsquedas automáticas, «Ahora no» y «Omitir esta versión» (la búsqueda manual la ofrece igual), al día, fallo silencioso en segundo plano y visible al buscar, un fallo en segundo plano conserva la versión ya ofrecida, nunca descarga donde la app no se puede reemplazar, descarga → verificada → no se instala mientras se graba → instala, reinicia y cierra; el arranque siguiente informa y borra la versión anterior; búsqueda automática activada por defecto |
@@ -166,3 +167,26 @@ Resultados y conjuntos en `TECHNICAL_DECISIONS.md` (TD-24, TD-25, TD-26).
 ## Rendimiento
 
 Cada etapa queda registrada en `processingJob` (duración, segundos de audio → RTFx, memoria pico del proceso).
+
+## Regresión de captura compartida y eco (TD-33)
+
+Pruebas automáticas sin abrir dispositivos: `scripts/test.sh --filter RecordingEchoCancellerTests`.
+Verifican atenuación >20 dB de eco sintético una vez adaptado el filtro, conservación de la voz local durante
+habla simultánea (incluido inicio simultáneo), nivel de voz sin referencia acústica, silencio de pausas/huecos,
+trama final parcial, memoria limitada al perder una fuente y WAV filtrado idéntico al audio provisional.
+`AppSettingsTests` verifica la nueva reducción activada por defecto, Apple desactivado, exclusión mutua de
+ambas opciones y persistencia de la elección explícita. La preferencia antigua de VPIO no reactiva Apple.
+La configuración de captura también prioriza el AEC de grabación si un llamador solicita ambas opciones.
+
+Prueba manual pendiente, con una llamada de prueba autorizada y altavoces:
+
+1. Confirmar que el interlocutor escucha la voz con normalidad antes de grabar.
+2. Iniciar una grabación nueva con «Reducir eco de altavoces en la grabación» activado. Confirmar que Teams sigue
+   recibiendo voz y que el interlocutor oye al mismo nivel; no cambiar la configuración de Teams.
+3. Hablar por turnos y después a la vez. Detener y escuchar ambas pistas juntas: la voz remota debe atenuarse
+   en el micrófono y conservarse en su propia pista; la voz local debe permanecer durante el habla simultánea.
+4. Repetir pausando/reanudando el micrófono y después con audífonos, sin voz cortada ni desplazamientos de tiempo.
+5. Cambiar salida/entrada y comprobar recuperación; si falta referencia, el aviso debe aparecer y la voz local
+   debe conservarse. No aceptar reducción de eco a costa de perder habla local.
+
+Estas pruebas sintéticas no certifican acústica real ni interoperabilidad con una llamada de Teams.

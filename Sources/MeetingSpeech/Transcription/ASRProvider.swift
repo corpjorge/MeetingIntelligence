@@ -42,6 +42,19 @@ public struct ASRTranscription: Sendable {
     public var tokens: [ASRToken] = []
 }
 
+/// Already-transcribed audio from another track of the same meeting.
+public struct ASRContextTrack: Sendable {
+    public var fileURL: URL
+    public var tokens: [ASRToken]
+    public var timelineOffsetSeconds: Double
+
+    public init(fileURL: URL, tokens: [ASRToken], timelineOffsetSeconds: Double) {
+        self.fileURL = fileURL
+        self.tokens = tokens
+        self.timelineOffsetSeconds = timelineOffsetSeconds
+    }
+}
+
 /// Contract implemented by every speech-to-text engine. The primary engine is
 /// Parakeet Ultra; others can be added without touching the pipeline.
 public protocol ASRProvider: Sendable {
@@ -58,8 +71,20 @@ public protocol ASRProvider: Sendable {
     func transcribe(fileURL: URL, languageHint: String,
                     progress: @escaping @Sendable (Double) -> Void) async throws -> ASRTranscription
 
+    func transcribe(fileURL: URL, languageHint: String, timelineOffsetSeconds: Double,
+                    contextTracks: [ASRContextTrack],
+                    progress: @escaping @Sendable (Double) -> Void) async throws -> ASRTranscription
+
     /// Releases loaded models (memory pressure / settings change).
     func unload() async
+}
+
+public extension ASRProvider {
+    func transcribe(fileURL: URL, languageHint: String, timelineOffsetSeconds: Double,
+                    contextTracks: [ASRContextTrack],
+                    progress: @escaping @Sendable (Double) -> Void) async throws -> ASRTranscription {
+        try await transcribe(fileURL: fileURL, languageHint: languageHint, progress: progress)
+    }
 }
 
 public enum ASRProviderError: LocalizedError, Sendable {
