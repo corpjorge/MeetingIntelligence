@@ -20,16 +20,24 @@ nonisolated final class CountingProvider: AIProvider, @unchecked Sendable {
     let kind: AIProviderKind
     private let lock = NSLock()
     private var count = 0
+    private var request: AIRequest?
+    private let models: [String]
+    private let catalogLoaded: Bool
     var calls: Int { lock.withLock { count } }
+    var lastRequest: AIRequest? { lock.withLock { request } }
 
-    init(kind: AIProviderKind) { self.kind = kind }
+    init(kind: AIProviderKind, models: [String] = [], catalogLoaded: Bool = false) {
+        self.kind = kind; self.models = models; self.catalogLoaded = catalogLoaded
+    }
 
     func detect(configuration: AIProviderConfiguration) async -> ProviderStatus {
-        ProviderStatus(kind: kind, installed: true, version: "fake-1", authenticated: true)
+        var status = ProviderStatus(kind: kind, installed: true, version: "fake-1", authenticated: true, models: models)
+        status.modelCatalogLoaded = catalogLoaded
+        return status
     }
 
     func complete(_ request: AIRequest, configuration: AIProviderConfiguration) async throws -> AIResponse {
-        lock.withLock { count += 1 }
+        lock.withLock { count += 1; self.request = request }
         let answer = request.requiredKeys.contains("answer")
             ? #"{"answer":"Se validó el indicador [C1].","citations":["C1"],"found":true}"#
             : #"{"executiveSummary":"s","technicalSummary":"t","items":[]}"#

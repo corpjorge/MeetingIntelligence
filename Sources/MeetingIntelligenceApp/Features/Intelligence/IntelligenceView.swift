@@ -150,11 +150,16 @@ struct ProviderCard: View {
                         .font(DS.Font.callout)
                 }
                 if let binding = configBinding {
+                    let models = env.ai.modelChoices(for: kind)
                     HStack(spacing: DS.Space.m) {
-                        if let models = status?.models, !models.isEmpty {
+                        if !models.isEmpty || (kind == .copilotCLI && status?.modelCatalogLoaded == true) {
                             Picker("Modelo", selection: Binding(get: { binding.wrappedValue.model ?? "" },
-                                                                set: { binding.wrappedValue.model = $0.isEmpty ? nil : $0; save() })) {
-                                Text("Predeterminado").tag("")
+                                                                set: {
+                                if binding.wrappedValue.model != ($0.isEmpty ? nil : $0) { binding.wrappedValue.effort = nil }
+                                binding.wrappedValue.model = $0.isEmpty ? nil : $0
+                                save()
+                            })) {
+                                Text(kind == .copilotCLI ? "Automático" : "Predeterminado").tag("")
                                 ForEach(models, id: \.self) { Text($0).tag($0) }
                             }
                             .frame(maxWidth: DS.Layout.Control.fieldMaxWidth)
@@ -166,18 +171,23 @@ struct ProviderCard: View {
                                 .onSubmit(save)
                         }
                         if let levels = status?.effortLevels, !levels.isEmpty {
-                            Picker("Esfuerzo", selection: Binding(get: { binding.wrappedValue.effort ?? "" },
+                            Picker("Esfuerzo", selection: Binding(get: { binding.wrappedValue.compatibleEffortConfiguration.effort ?? "" },
                                                                   set: { binding.wrappedValue.effort = $0.isEmpty ? nil : $0; save() })) {
                                 Text("Predeterminado").tag("")
                                 ForEach(levels, id: \.self) { Text(EffortLabel.text($0)).tag($0) }
                             }
                             .frame(maxWidth: DS.Layout.Control.pickerWidth)
+                            .disabled(!binding.wrappedValue.supportsEffortSelection)
                             .help("Más esfuerzo = razonamiento más profundo, pero más lento y con más consumo.")
                         }
                         Stepper("Tiempo límite: \(Int(binding.wrappedValue.timeoutSeconds)) s",
                                 value: Binding(get: { binding.wrappedValue.timeoutSeconds },
                                                set: { binding.wrappedValue.timeoutSeconds = $0; save() }),
                                 in: 60...1800, step: 60)
+                    }
+                    if !binding.wrappedValue.supportsEffortSelection {
+                        Text("Con Copilot en Automático, el esfuerzo es Predeterminado. Elige un modelo concreto para cambiarlo.")
+                            .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
                     }
                     if kind == .ollama {
                         TextField("Endpoint local", text: Binding(get: { binding.wrappedValue.endpoint ?? OllamaProvider.defaultEndpoint },
@@ -193,6 +203,7 @@ struct ProviderCard: View {
             }
         }
         .onAppear { config = env.ai.configuration(for: kind) }
+        .onChange(of: env.ai.statuses[kind]) { config = env.ai.configuration(for: kind) }
     }
 
     private var configBinding: Binding<AIProviderConfiguration>? {
@@ -201,7 +212,10 @@ struct ProviderCard: View {
     }
 
     private func save() {
-        if let config { env.ai.save(config) }
+        if let config {
+            env.ai.save(config)
+            self.config = env.ai.configuration(for: kind)
+        }
     }
 }
 

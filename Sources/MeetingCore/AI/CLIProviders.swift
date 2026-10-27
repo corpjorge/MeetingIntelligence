@@ -172,6 +172,8 @@ public struct CodexProvider: AIProvider {
         status.effortLevels = Self.effortLevels
         do {
             _ = try Self.disabledFeatures(available: try await CodexFeatureCache.shared.names(executable: exe, environment: env))
+            status.models = try await CodexModelCatalog.load(executable: exe, environment: env)
+            status.modelCatalogLoaded = true
         } catch {
             status.notes.append(error.localizedDescription)
         }
@@ -223,9 +225,9 @@ public struct CodexProvider: AIProvider {
 // MARK: - GitHub Copilot CLI
 
 /// `copilot` (GitHub Copilot CLI) reading the prompt from stdin, isolated (TD-12):
-/// * a fresh, empty `COPILOT_HOME` per run, so the user's hooks, plugins, MCP servers, custom instructions and
-///   saved sessions are not loaded, and nothing of the meeting is persisted in `~/.copilot` (the session store
-///   and logs live in the temporary home and are deleted);
+/// * a fresh `COPILOT_HOME` per run, carrying only the selected account's identity for Keychain lookup;
+///   hooks, plugins, MCP servers, instructions and saved sessions are not imported. The session store and
+///   logs live in the temporary home and are deleted;
 /// * no tools at all: `--available-tools` lists only a name that does not exist, which hides every tool
 ///   (verified: Copilot reports "Disabled tools: bash, create, edit, …"); shell, writes and URLs are also denied;
 /// * any tool execution in the event stream discards the answer.
@@ -273,8 +275,14 @@ public struct CopilotCLIProvider: AIProvider {
             + "bloques de código, que cumpla este JSON Schema:\n" + request.jsonSchema + "\n\n" + request.input
     }
 
-    static func environment(_ base: [String: String], home: URL) -> [String: String] {
+    static func environment(_ base: [String: String], home: URL, account: CopilotAccount? = nil) -> [String: String] {
         var env = base.filter { !strippedEnvironment.contains($0.key) }
+        if let account {
+            for key in ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "COPILOT_SDK_AUTH_TOKEN"] {
+                env.removeValue(forKey: key)
+            }
+            env["COPILOT_GH_HOST"] = URL(string: account.host)?.host ?? account.host
+        }
         env["COPILOT_HOME"] = home.path
         env["COPILOT_AUTO_UPDATE"] = "false"
         env["NO_COLOR"] = "1"
@@ -327,12 +335,31 @@ public struct CopilotCLIProvider: AIProvider {
         }
         var status = ProviderStatus(kind: kind, installed: true, executablePath: exe.path, version: version,
                                     notes: ["Se ejecuta localmente, pero los modelos de GitHub Copilot procesan los datos en la nube.",
-                                            "Sin herramientas y sin cargar tu ~/.copilot (hooks, plugins, MCP, instrucciones); "
-                                            + "la sesión no se guarda.",
+                                            "Sin herramientas, hooks, plugins, MCP ni instrucciones personales. Solo se conserva "
+                                            + "la selección de cuenta de Copilot; la sesión de análisis no se guarda.",
                                             "Modelo vacío = auto. El esfuerzo solo se aplica con un modelo concreto. "
                                             + "Cada análisis cuenta como una solicitud de Copilot."])
         status.authDetail = "Usa la sesión de `copilot login` o de `gh auth login`; se comprueba al analizar."
         status.effortLevels = Self.effortLevels
+        do {
+            let catalog = try await CopilotModelCatalog.catalog(executable: exe, environment: env)
+            status.models = catalog.models
+            status.authenticated = true
+            status.accountLogin = catalog.login
+            status.authDetail = catalog.login.map { "Cuenta de Copilot: \($0)" } ?? "Sesión de Copilot autenticada"
+            status.modelCatalogLoaded = true
+            if status.models.isEmpty {
+                status.notes.append("El catálogo de esta sesión de Copilot ofrece Automático; no hay modelos de texto para elegir manualmente.")
+            }
+        } catch let error as AIProviderError {
+            if case .notAuthenticated = error {
+                status.authenticated = false
+                status.authDetail = error.localizedDescription
+            }
+            status.notes.append(error.localizedDescription)
+        } catch {
+            status.notes.append("No se pudo consultar el catálogo de modelos de Copilot. Puedes mantener Automático o un modelo ya guardado.")
+        }
         return status
     }
 
@@ -350,9 +377,16 @@ public struct CopilotCLIProvider: AIProvider {
         let home = workdir.appendingPathComponent("copilot-home", isDirectory: true)
         let runDir = workdir.appendingPathComponent("work", isDirectory: true)
         for dir in [home, runDir] { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) }
+        let account = try CopilotAuthentication.prepare(environment: env, temporaryHome: home)
+        let processEnvironment = Self.environment(env, home: home, account: account)
+        if account != nil {
+            // Verify the selected OAuth account before sending any meeting text.
+            _ = try await CopilotModelCatalog.catalog(executable: exe, environment: processEnvironment)
+        }
+        try Task.checkCancellation()
         let result = try await ProcessRunner.run(executable: exe, arguments: Self.arguments(for: request),
                                                  stdin: Data(Self.prompt(for: request).utf8),
-                                                 environment: Self.environment(env, home: home),
+                                                 environment: processEnvironment,
                                                  workingDirectory: runDir, timeout: request.timeoutSeconds)
         if result.timedOut { throw ProcessRunnerError.timedOut(request.timeoutSeconds) }
         let output = Self.parse(result.stdoutText)
