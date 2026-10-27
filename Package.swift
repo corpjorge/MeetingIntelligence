@@ -53,8 +53,14 @@ let package = Package(
             swiftSettings: strictConcurrency
         ),
         .target(
+            name: "CSpeexDSP",
+            exclude: ["COPYING", "README.md"],
+            publicHeadersPath: "include",
+            cSettings: [.define("FLOATING_POINT"), .define("USE_SMALLFT"), .define("EXPORT", to: "")]
+        ),
+        .target(
             name: "MeetingAudio",
-            dependencies: ["MeetingCore"],
+            dependencies: ["MeetingCore", "CSpeexDSP"],
             swiftSettings: strictConcurrency
         ),
         .target(

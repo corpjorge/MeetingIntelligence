@@ -6,8 +6,23 @@ import SwiftUI
 final class DashboardModel {
     var rows: [MeetingSummaryRow] = []
     var openItems: [AnalysisItem] = []
+    var meetingTitles: [String: String] = [:]
     var latestAnalyses: [(analysis: AIAnalysis, meetingTitle: String)] = []
     var loaded = false
+
+    /// Persist completion without replacing the item's text or evidence.
+    func setCompleted(_ id: String, completed: Bool, in database: AppDatabase) async throws {
+        try await database.writer.write { db in
+            guard var item = try AnalysisItem.fetchOne(db, key: id) else {
+                throw AppDatabaseError.notFound("compromiso")
+            }
+            guard item.category == .commitment || item.category == .actionItem else {
+                throw AppDatabaseError.invalidOperation("Este elemento no es una tarea ni un compromiso.")
+            }
+            item.completedAt = completed ? (item.completedAt ?? Date()) : nil
+            try item.update(db)
+        }
+    }
 
     func observe(_ db: AppDatabase) async {
         async let rowsTask: Void = observeRows(db)
@@ -25,21 +40,21 @@ final class DashboardModel {
     }
 
     private func observeItems(_ db: AppDatabase) async {
-        let observation = ValueObservation.tracking { db -> ([AnalysisItem], [(AIAnalysis, String)]) in
+        let observation = ValueObservation.tracking { db -> ([AnalysisItem], [(AIAnalysis, String)], [String: String]) in
             let items = try AnalysisItem
                 .filter([AnalysisCategory.actionItem.rawValue, AnalysisCategory.commitment.rawValue].contains(Column("category")))
                 .filter(Column("completedAt") == nil)
-                .order(Column("evidenceStartTime"))
-                .limit(8)
+                .order(Column("meetingId"), Column("orderIndex"), Column("id"))
                 .fetchAll(db)
             let analyses = try AIAnalysis.filter(Column("status") == AnalysisStatus.succeeded.rawValue)
                 .order(Column("startedAt").desc).limit(4).fetchAll(db)
             let titles = try Dictionary(uniqueKeysWithValues: Meeting.fetchAll(db).map { ($0.id, $0.title) })
-            return (items, analyses.map { ($0, titles[$0.meetingId] ?? "") })
+            return (items, analyses.map { ($0, titles[$0.meetingId] ?? "") }, titles)
         }
         do {
-            for try await (items, analyses) in observation.values(in: db.reader) {
+            for try await (items, analyses, titles) in observation.values(in: db.reader) {
                 openItems = items
+                meetingTitles = titles
                 latestAnalyses = analyses
             }
         } catch {}
@@ -50,6 +65,7 @@ struct DashboardView: View {
     @Environment(AppEnvironment.self) private var env
     @Environment(AppRouter.self) private var router
     @State private var model = DashboardModel()
+    @State private var showsOpenCommitments = false
 
     var body: some View {
         PageScaffold(title: greeting, subtitle: subtitle) {
@@ -87,6 +103,14 @@ struct DashboardView: View {
             }
         }
         .task { await model.observe(env.database) }
+        .sheet(isPresented: $showsOpenCommitments) {
+            OpenCommitmentsView(model: model, onSetCompleted: { item, completed in
+                try await model.setCompleted(item.id, completed: completed, in: env.database)
+            }) { item in
+                showsOpenCommitments = false
+                router.openMeeting(item.meetingId, tab: .tasks)
+            }
+        }
     }
 
     private var greeting: String {
@@ -107,7 +131,13 @@ struct DashboardView: View {
         return HStack(spacing: DS.Space.m) {
             MetricTile(title: "Reuniones", value: "\(model.rows.count)", caption: "\(ready.count) transcritas", systemImage: "rectangle.stack")
             MetricTile(title: "Tiempo grabado", value: Timecode.humanDuration(totalSeconds), caption: "audio local", systemImage: "waveform")
-            MetricTile(title: "Compromisos abiertos", value: "\(model.openItems.count)", caption: "de análisis con evidencia", systemImage: "checklist")
+            Button { showsOpenCommitments = true } label: {
+                MetricTile(title: "Compromisos abiertos", value: "\(model.openItems.count)",
+                           caption: "Ver todos con su reunión", systemImage: "checklist")
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Ver todos los compromisos abiertos")
         }
     }
 
@@ -138,20 +168,25 @@ struct DashboardView: View {
 
     private var pendingItems: some View {
         VStack(alignment: .leading, spacing: DS.Space.m) {
-            SectionHeader(title: "Compromisos pendientes")
+            SectionHeader(title: "Compromisos pendientes") {
+                Button("Ver todos") { showsOpenCommitments = true }
+                    .buttonStyle(.ds(.ghost, size: .small))
+            }
             SurfaceCard(padding: DS.Space.m) {
                 if model.openItems.isEmpty {
                     Text("Sin compromisos abiertos. Aparecerán al analizar reuniones con un proveedor de IA.")
                         .font(DS.Font.callout).foregroundStyle(DS.Color.textSecondary)
                 } else {
                     VStack(alignment: .leading, spacing: DS.Space.m) {
-                        ForEach(model.openItems) { item in
+                        ForEach(model.openItems.prefix(8)) { item in
                             Button { router.openMeeting(item.meetingId, tab: .tasks) } label: {
                                 HStack(alignment: .top, spacing: DS.Space.s) {
                                     Image(systemName: "circle").font(DS.Font.caption).foregroundStyle(DS.Color.textTertiary)
                                         .padding(.top, DS.Space.xxs)
                                     VStack(alignment: .leading, spacing: DS.Space.xxs) {
                                         Text(item.text).font(DS.Font.callout).foregroundStyle(DS.Color.textPrimary).lineLimit(2)
+                                        Text(model.meetingTitles[item.meetingId] ?? "Reunión")
+                                            .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary).lineLimit(1)
                                         Text([item.ownerName, item.dueText].compactMap { $0 }.joined(separator: " · "))
                                             .font(DS.Font.caption).foregroundStyle(DS.Color.textTertiary)
                                     }

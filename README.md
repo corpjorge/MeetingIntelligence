@@ -76,6 +76,7 @@ Uso gratuito según [LICENSE](LICENSE); componentes de terceros en [THIRD_PARTY_
 | Captura de cualquier app (process tap por app) + micrófono, pausa, recuperación | ✅ Implementado | Pruebas de WAV, alineación, remuestreo y agrupación de procesos reales (Teams, Zoom, Chrome, Edge, Safari); **pendiente** prueba con llamada real (requiere tus permisos de macOS) |
 | Detección de llamadas y sugerencias de inicio/fin | ✅ Implementado | Máquina de estados probada (inicio, prueba breve, cambio a AirPods, fin, cierre de app); lectura en vivo del HAL verificada con `afplay`; **pendiente** validar con llamada real |
 | Pausar mi micrófono (sin perder sincronía) | ✅ | Prueba: silencio escrito, línea de tiempo intacta, pausa registrada |
+| Reducción de eco de altavoces en el audio grabado (TD-33) | ✅ Implementado; validación real pendiente | AEC local con referencia remota por defecto; Apple opcional y desactivado; pruebas sintéticas de eco y doble habla, WAV y transcripción provisional; **pendiente** nueva llamada de Teams |
 | Aviso "silenciado en la llamada ≠ pausado aquí" | ⚠️ Recordatorio estático | El silencio de Teams no es legible con APIs públicas (sonda en llamada real, TD-23); la API de terceros de Teams está bloqueada por la organización en la cuenta de prueba; no aplica a Zoom/Meet; **pendiente** verlo en una grabación real |
 | Esfuerzo de IA por proveedor | ✅ | Flags verificados (`--effort` Claude/agy, `model_reasoning_effort` Codex, `think` Ollama por modelo) y probados |
 | Edición de transcripción con historial | ✅ | Pruebas de persistencia |

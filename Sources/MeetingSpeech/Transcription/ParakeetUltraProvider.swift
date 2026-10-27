@@ -115,6 +115,13 @@ public actor ParakeetUltraProvider: ASRProvider {
 
     public func transcribe(fileURL: URL, languageHint: String,
                            progress: @escaping @Sendable (Double) -> Void) async throws -> ASRTranscription {
+        try await transcribe(fileURL: fileURL, languageHint: languageHint, timelineOffsetSeconds: 0,
+                             contextTracks: [], progress: progress)
+    }
+
+    public func transcribe(fileURL: URL, languageHint: String, timelineOffsetSeconds: Double,
+                           contextTracks: [ASRContextTrack],
+                           progress: @escaping @Sendable (Double) -> Void) async throws -> ASRTranscription {
         let manager = try await loadedManager()
         if !gate.tryEnter() { await withCheckedContinuation { gate.enqueue($0) } }
         defer { gate.leave() }
@@ -159,10 +166,12 @@ public actor ParakeetUltraProvider: ASRProvider {
         }
         var tokens = Self.tokensOnFileTimeline(result.tokenTimings ?? [], compaction: compaction)
         var text = result.text
-        // Short isolated replies: re-decode after nearby speech of the same file (TD-26).
+        // Short isolated replies: prefer same-track speech, with remote context
+        // as a recovery aid for uncertain microphone replies (TD-26).
         do {
             let redecoded = try await ShortUtteranceContext.redecode(
-                tokens: tokens, fileURL: fileURL, manager: manager, language: Self.fluidLanguage(for: languageHint))
+                tokens: tokens, fileURL: fileURL, manager: manager, language: Self.fluidLanguage(for: languageHint),
+                timelineOffsetSeconds: timelineOffsetSeconds, contextTracks: contextTracks)
             if redecoded.replaced > 0 {
                 tokens = redecoded.tokens
                 text = tokens.map(\.piece).joined().replacingOccurrences(of: "▁", with: " ").trimmingCharacters(in: .whitespaces)

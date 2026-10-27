@@ -303,7 +303,8 @@ struct RecordingView: View {
 
     @ViewBuilder
     private var deviceWarnings: some View {
-        if captureMicrophone, source != .microphoneOnly, let output, output.isLikelySpeakers, !env.settings.microphoneVoiceProcessing {
+        if captureMicrophone, source != .microphoneOnly, let output, output.isLikelySpeakers,
+           !env.settings.microphoneEchoCancellation, !env.settings.microphoneVoiceProcessing {
             InlineBanner(tone: .warning, systemImage: "speaker.wave.2",
                          title: "Riesgo de eco: el audio sale por \(output.dataSourceName ?? output.name)",
                          message: "El micrófono puede captar las voces remotas. Usa audífonos o activa la cancelación de eco en Ajustes › Audio. Los fragmentos de eco se marcarán como “eco probable”.")

@@ -20,6 +20,8 @@ struct AppSettingsTests {
         #expect(settings.diarizationStepRatio == 0.1)
         #expect(settings.language == "es-CO")
         #expect(settings.ignoredCallApps.isEmpty)
+        #expect(settings.microphoneEchoCancellation)
+        #expect(!settings.microphoneVoiceProcessing)
     }
 
     @Test func preferencesPersistAcrossLaunches() throws {
@@ -34,6 +36,7 @@ struct AppSettingsTests {
         first.defaultProfileRetentionDays = 180
         first.diarizationStepRatio = 0.2
         first.semanticSearch = true
+        first.microphoneEchoCancellation = false
         first.hasCompletedOnboarding = true
 
         let second = AppSettings(defaults: suite.defaults)
@@ -44,6 +47,7 @@ struct AppSettingsTests {
         #expect(second.audioRetentionDays == 30 && second.defaultProfileRetentionDays == 180)
         #expect(second.diarizationStepRatio == 0.2)
         #expect(second.semanticSearch && second.hasCompletedOnboarding)
+        #expect(!second.microphoneEchoCancellation)
 
         // "Keep forever" is stored as 0 and read back as nil.
         second.audioRetentionDays = nil
@@ -55,6 +59,49 @@ struct AppSettingsTests {
         defer { suite.remove() }
         suite.defaults.set("teams", forKey: "captureMode") // stored before v2
         #expect(AppSettings(defaults: suite.defaults).defaultCaptureMode == .callApp)
+    }
+
+    @Test(arguments: [true, false])
+    func appleVoiceProcessingPreferenceCannotReactivateDeviceProcessing(legacyEnabled: Bool) throws {
+        let suite = try IsolatedDefaults()
+        defer { suite.remove() }
+        suite.defaults.set(legacyEnabled, forKey: "voiceProcessing")
+        let settings = AppSettings(defaults: suite.defaults)
+        #expect(settings.microphoneEchoCancellation)
+        #expect(!settings.microphoneVoiceProcessing)
+        settings.microphoneEchoCancellation = false
+        #expect(!AppSettings(defaults: suite.defaults).microphoneEchoCancellation)
+        #expect(!AppSettings(defaults: suite.defaults).microphoneVoiceProcessing)
+    }
+
+    @Test func echoOptionsAreMutuallyExclusiveAndPersistTheExplicitChoice() throws {
+        let suite = try IsolatedDefaults()
+        defer { suite.remove() }
+        let settings = AppSettings(defaults: suite.defaults)
+        settings.microphoneVoiceProcessing = true
+        #expect(settings.microphoneVoiceProcessing && !settings.microphoneEchoCancellation)
+        let apple = AppSettings(defaults: suite.defaults)
+        #expect(apple.microphoneVoiceProcessing && !apple.microphoneEchoCancellation)
+
+        apple.microphoneEchoCancellation = true
+        #expect(apple.microphoneEchoCancellation && !apple.microphoneVoiceProcessing)
+        let recording = AppSettings(defaults: suite.defaults)
+        #expect(recording.microphoneEchoCancellation && !recording.microphoneVoiceProcessing)
+
+        recording.microphoneEchoCancellation = false
+        let disabled = AppSettings(defaults: suite.defaults)
+        #expect(!disabled.microphoneEchoCancellation && !disabled.microphoneVoiceProcessing)
+    }
+
+    @Test func conflictingStoredChoicesPreferRecordingAECWithoutReactivatingAppleLater() throws {
+        let suite = try IsolatedDefaults()
+        defer { suite.remove() }
+        suite.defaults.set(true, forKey: "microphoneEchoCancellation")
+        suite.defaults.set(true, forKey: "appleVoiceProcessing")
+        let settings = AppSettings(defaults: suite.defaults)
+        #expect(settings.microphoneEchoCancellation && !settings.microphoneVoiceProcessing)
+        settings.microphoneEchoCancellation = false
+        #expect(!AppSettings(defaults: suite.defaults).microphoneVoiceProcessing)
     }
 
     @Test func processingOptionsFollowSettings() throws {

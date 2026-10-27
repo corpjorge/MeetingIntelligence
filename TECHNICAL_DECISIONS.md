@@ -369,8 +369,28 @@ del hueco, y la palabra se estiraba 17 s y pegaba dos frases en un segmento (4 c
 | Arreglo + redecodificación con contexto | **74/80** |
 
 Los 6 errores restantes no son de idioma ("Allí" por "Ahí", "Togamía", "Un momento…" cortado). Costo: ~0,1 s por
-frase corta (pista de 390 s con 20 frases: ASR de 0,6 s a 2,5 s). Una pista con una sola frase no tiene contexto y
-queda igual. `asrText` guarda la decodificación elegida. Mediciones: `LanguageDriftExperiment` (`MI_LANG_DATA`).
+frase corta (pista de 390 s con 20 frases: ASR de 0,6 s a 2,5 s). Una pista con una sola frase no tiene contexto
+propio. `asrText` guarda la decodificación elegida. Mediciones: `LanguageDriftExperiment` (`MI_LANG_DATA`).
+
+**Contexto remoto para respuestas sin otra voz local (27-oct-2026).** El pipeline pasa al micrófono el audio y los
+tokens de las pistas remotas de esa misma reunión. Si no hay contexto en la pista propia y la confianza original
+es < 0,7, se buscan hasta 8 s de voz remota a no más de 30 s de distancia, priorizando la anterior. Los offsets de
+ambas pistas se aplican al seleccionar el contexto; solo se guardan los tokens de la respuesta, en su tiempo local.
+No se usa voz simultánea ni otra reunión. Se mantiene la condición de confianza igual o mayor. Las respuestas de
+hasta 6 s / 16 palabras con confianza < 0,7 también se reintentan: una decodificación errónea puede expandir una
+frase breve por encima del límite anterior de seis palabras.
+
+La separación temporal entre contexto y respuesta necesita margen: cortar a 150 ms del inicio perdía la primera
+pieza de algunas palabras. Ahora se corta en el punto medio del silencio de 900 ms entre ambas partes (450 ms
+antes de la respuesta). Los tiempos anteriores al inicio de la porción original se limitan a ese inicio.
+
+Medición local con 24 audios sintéticos (4 voces × 4 frases en español y 2 en inglés), con otra voz en español como
+contexto: español exacto **13/16 → 15/16**; ningún acierto español se dañó. Los 5/8 aciertos ingleses conservaron su
+significado; uno cambió «Okay» por «Ok» (coincidencia literal 5/8 → 4/8). Persisten una respuesta sin tokens y tres
+«Thanks» mal reconocidos por voces españolas. No es un bloqueo del idioma ni garantiza resolver grabaciones reales.
+Regresión reproducible: `es_context_reply` («¿Ya está?», voz Mónica), `PipelineIntegrationTests` y
+`ShortUtteranceContextTests`. Medición opcional: `CrossTrackContextExperiment` con `MI_CROSS_TRACK_DATA` apuntando
+a un directorio de pares `.wav`/`.txt` sintéticos; escribe `report.txt` en ese directorio.
 
 ## TD-27 · Actualizar modelos desde la app y borrar los que no se usan (comprobado)
 FluidAudio 0.17.7 descarga Parakeet Ultra y CTC 110M desde la rama `main` de Hugging Face. Una vez en caché, no vuelve
@@ -537,3 +557,42 @@ palabras vacías), el chat respondía «No encontré información…» sin llama
 - Prompt `chat-v2`: ante un saludo responde breve y ofrece ayuda (`found=false`, sin citas).
 - Verificado con pruebas usando un proveedor falso. **Sin verificar con un proveedor real**: no se enviaron reuniones a
   la nube para probarlo.
+
+## TD-33 · AEC sobre la grabación por defecto; Apple como alternativa opcional
+La prueba A/B del usuario confirma el disparador: con Voice Processing de Apple activo, al iniciar la grabación
+Teams deja de transmitir su voz correctamente aunque Meeting Intelligence recibe el micrófono. En una grabación
+nueva con la opción desactivada, Teams vuelve a oírlo bien, pero las voces remotas quedan en las dos pistas al usar
+altavoces. Esto aísla la incompatibilidad en la ruta VPIO, **sin demostrar** que la causa interna sea doble AEC,
+AGC o un cambio de dispositivo. El consejo previo de desactivar la opción y ocultar texto duplicado no soluciona
+el audio grabado.
+
+Decisión: «Reducir eco de altavoces en la grabación» está activada por defecto; el micrófono se abre con
+`AVAudioEngine` sin procesamiento de voz. A petición del usuario se conserva «Cancelación de eco de Apple
+(Voice Processing)» como alternativa desactivada por defecto, con aviso del conflicto observado en Teams.
+Activar una opción desactiva la otra; la configuración de captura también impide combinarlas (si un llamador
+solicita ambas, se prioriza el AEC de grabación). SpeexDSP **1.2.1**, subconjunto AEC con FFT
+smallft, fuentes oficiales sin modificar y licencia BSD incluidas en `Sources/CSpeexDSP`, filtra únicamente las
+muestras copiadas del micrófono. Este filtro no utiliza dispositivos virtuales ni cambia ganancia, mute o ajustes
+de la llamada. La alternativa Apple conserva su procesamiento del sistema; no se considera resuelto su conflicto.
+La referencia es el audio remoto elegido por el usuario (no se amplía el alcance de captura). Se procesa después
+del remuestreo/alineación y antes del WAV/transcripción provisional, en una cola compartida por ambas pistas.
+
+Tramas de 20 ms, adelanto de referencia de 80 ms, filtro adaptativo de 300 ms con protección de doble habla de
+Speex. No se añade preprocesador/AGC: la salida conserva su posición temporal. El silencio digital de pausas y
+huecos sigue siendo cero. Espera máxima de referencia: 0,5 s; si falta, se conserva la voz sin filtrar y se avisa.
+Referencia retenida: hasta 2 s. Al detener se drena la referencia antes del micrófono, incluida su trama parcial.
+Los últimos bloques sin los 80 ms futuros de referencia se conservan sin filtrar; no se inventa una referencia
+de silencio ni se emite un aviso por el final normal de ambas pistas. Regresión con trama final completa y parcial.
+La preferencia `microphoneEchoCancellation` está activada por defecto. `appleVoiceProcessing` solo se activa
+al elegir explícitamente la alternativa Apple. La antigua `voiceProcessing` no reactiva VPIO automáticamente.
+Preferencias almacenadas contradictorias se normalizan priorizando el filtro de grabación, sin reactivar Apple
+si luego se apaga dicho filtro. El AEC de grabación no se aplica a una sola pista; Apple puede elegirse también
+para micrófono solo.
+
+Validación automática: señales sintéticas con eco retardado/reverberante, voces simultáneas, sin eco acústico,
+pausas de micrófono, referencia ausente, memoria limitada y escritura de WAV/transcripción provisional. La
+captura física y Teams no se abren en estas pruebas. **Pendiente prueba de la nueva implementación con llamada
+real**, volumen que reciben los demás, cambios de dispositivo y condiciones acústicas reales. El filtro necesita
+adaptarse; puede quedar eco con altavoces saturados, latencia/reverberación fuera del filtro, deriva o sonidos de
+otras aplicaciones que no estén en la referencia. No se promete eliminación total. Las grabaciones anteriores
+no se modifican automáticamente.

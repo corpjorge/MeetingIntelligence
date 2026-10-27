@@ -30,15 +30,28 @@ public struct RecordingConfiguration: Sendable {
     public var directory: URL
     public var remoteTarget: RemoteCaptureTarget
     public var captureMicrophone: Bool
-    /// Apple voice processing (echo cancellation) on the microphone.
+    /// Recording-only software AEC; requires both microphone and remote audio.
+    public var microphoneEchoCancellation: Bool
+    /// Optional Apple VPIO. Off by default; recording AEC takes precedence if
+    /// conflicting options are supplied by a caller.
     public var microphoneVoiceProcessing: Bool
     public var outputSampleRate: Double
 
+    var usesRecordingEchoCancellation: Bool {
+        microphoneEchoCancellation && captureMicrophone && remoteTarget != .none
+    }
+
+    var usesAppleVoiceProcessing: Bool {
+        captureMicrophone && microphoneVoiceProcessing && !microphoneEchoCancellation
+    }
+
     public init(directory: URL, remoteTarget: RemoteCaptureTarget = .systemWide, captureMicrophone: Bool = true,
-                microphoneVoiceProcessing: Bool = false, outputSampleRate: Double = 16_000) {
+                microphoneEchoCancellation: Bool = true, microphoneVoiceProcessing: Bool = false,
+                outputSampleRate: Double = 16_000) {
         self.directory = directory
         self.remoteTarget = remoteTarget
         self.captureMicrophone = captureMicrophone
+        self.microphoneEchoCancellation = microphoneEchoCancellation
         self.microphoneVoiceProcessing = microphoneVoiceProcessing
         self.outputSampleRate = outputSampleRate
     }
@@ -57,6 +70,8 @@ public enum RecordingWarning: Sendable, Equatable, Hashable {
     case systemWideCapture
     /// Long run of exact digital silence (often a missing permission).
     case prolongedDigitalSilence(AudioSource)
+    /// The reference stream is too late/missing; retain microphone speech.
+    case echoReferenceUnavailable
     case inputDeviceChanged(String)
     case outputDeviceChanged(String)
     case remoteTapRebuilt(String)
@@ -79,6 +94,8 @@ public enum RecordingWarning: Sendable, Equatable, Hashable {
             source == .remoteSystemAudio
                 ? "La pista remota está en silencio digital. Verifica el permiso 'Grabación de audio del sistema' y que la llamada esté activa."
                 : "El micrófono entrega silencio digital. Verifica el permiso de micrófono y el dispositivo de entrada."
+        case .echoReferenceUnavailable:
+            "No llega a tiempo el audio remoto para reducir el eco. Tu micrófono sigue grabándose, pero puede contener voces de los altavoces."
         case .inputDeviceChanged(let name): "Micrófono cambiado a \(name). La grabación continúa sincronizada."
         case .outputDeviceChanged(let name): "Salida de audio cambiada a \(name). Se reconfiguró la captura remota."
         case .remoteTapRebuilt(let reason): "Captura remota reconfigurada: \(reason)."

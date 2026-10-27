@@ -104,8 +104,11 @@ struct AudioSettings: View {
                 }
             }
             Section("Micrófono") {
+                Toggle("Reducir eco de altavoces en la grabación", isOn: $settings.microphoneEchoCancellation)
+                Text("Usa el audio remoto para reducir las voces de los altavoces que recoge tu micrófono. Se aplica solo a la grabación cuando capturas ambas pistas. Los cambios se aplican a la próxima grabación.")
+                    .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
                 Toggle("Cancelación de eco de Apple (Voice Processing)", isOn: $settings.microphoneVoiceProcessing)
-                Text("Útil si usas altavoces. Puede alterar ligeramente el timbre de tu voz. Con audífonos no es necesaria.")
+                Text("Alternativa desactivada por defecto. Puede impedir que te escuchen en Teams. Al activarla se desactiva la reducción de eco anterior; solo se utiliza una opción a la vez. Los cambios se aplican a la próxima grabación.")
                     .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
                 if let input = AudioDevices.defaultInput() {
                     LabeledContent("Entrada actual", value: "\(input.name) (\(input.transport.rawValue))")

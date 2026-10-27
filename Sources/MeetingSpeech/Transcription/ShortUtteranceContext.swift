@@ -4,8 +4,9 @@ import Foundation
 
 /// Short isolated utterances decoded alone often drift to another language ("¿Ya está?"
 /// → "Wie er ist da?", TD-26). Ultra has no language prompt, but its encoder does use
-/// context: re-decoding the utterance after nearby speech of the same track fixes most
-/// cases. The re-decode is kept only when it is non-empty and at least as confident,
+/// context: re-decoding the utterance after nearby speech fixes most cases. Prefer
+/// the same track; a microphone with no other speech can use the remote track.
+/// The re-decode is kept only when it is non-empty and at least as confident,
 /// which protects genuine short English phrases in mixed meetings.
 enum ShortUtteranceContext {
     static let isolationGap = 2.0
@@ -13,6 +14,49 @@ enum ShortUtteranceContext {
     static let maxUtteranceWords = 6
     static let maxContextSeconds = 8.0
     static let sampleRate = 16_000.0
+    static let maxCrossTrackGap = 30.0
+
+    struct ContextSpan {
+        var fileURL: URL
+        var start: Double
+        var end: Double
+    }
+
+    /// Nearby remote speech in meeting time, converted back to its own file time.
+    /// Prefer preceding speech, excluding distant or simultaneous utterances.
+    static func remoteSpans(start: Double, end: Double, contextTracks: [ASRContextTrack]) -> [ContextSpan] {
+        var candidates: [(span: ContextSpan, gap: Double, preceding: Bool)] = []
+        for track in contextTracks {
+            for range in utterances(track.tokens) {
+                let before = track.tokens[range].filter { $0.end + track.timelineOffsetSeconds <= start }
+                let after = track.tokens[range].filter { $0.start + track.timelineOffsetSeconds >= end }
+                let nearby = before.isEmpty ? after : before
+                guard let first = nearby.first?.start, let last = nearby.last?.end else { continue }
+                let meetingStart = first + track.timelineOffsetSeconds
+                let meetingEnd = last + track.timelineOffsetSeconds
+                let preceding = meetingEnd <= start
+                let gap = preceding ? start - meetingEnd : meetingStart - end
+                guard gap >= 0, gap <= maxCrossTrackGap, last > first else { continue }
+                candidates.append((ContextSpan(fileURL: track.fileURL, start: first, end: last), gap, preceding))
+            }
+        }
+        candidates.sort {
+            if $0.preceding != $1.preceding { return $0.preceding }
+            return $0.gap < $1.gap
+        }
+        var spans: [ContextSpan] = []
+        var remaining = maxContextSeconds
+        for candidate in candidates {
+            guard remaining > 0.2 else { break }
+            let take = min(candidate.span.end - candidate.span.start, remaining)
+            guard take > 0.2 else { continue }
+            var span = candidate.span
+            if candidate.preceding { span.start = span.end - take } else { span.end = span.start + take }
+            spans.append(span)
+            remaining -= take
+        }
+        return spans
+    }
 
     /// Token index ranges separated by at least `isolationGap` seconds.
     static func utterances(_ tokens: [ASRToken], gap: Double = isolationGap) -> [Range<Int>] {
@@ -31,6 +75,15 @@ enum ShortUtteranceContext {
         let duration = tokens[range.upperBound - 1].end - tokens[range.lowerBound].start
         let words = tokens[range].filter { $0.piece.hasPrefix("▁") }.count
         return duration <= maxUtteranceSeconds && max(1, words) <= maxUtteranceWords
+    }
+
+    static func needsContext(_ range: Range<Int>, in tokens: [ASRToken]) -> Bool {
+        if isShort(range, in: tokens) { return true }
+        let duration = tokens[range.upperBound - 1].end - tokens[range.lowerBound].start
+        let words = tokens[range].filter { $0.piece.hasPrefix("▁") }.count
+        // A misdecoded short reply can expand into many foreign words. Include
+        // low-confidence replies beyond the usual six-word limit, within a bound.
+        return duration <= 6 && words <= 16 && meanConfidence(tokens[range]) < 0.7
     }
 
     /// Other utterances of the track to use as context, nearest first (earlier before later), up to `maxSeconds`.
@@ -57,22 +110,37 @@ enum ShortUtteranceContext {
 
     /// Re-decodes every short isolated utterance with context; returns the final tokens and how many changed.
     static func redecode(tokens: [ASRToken], fileURL: URL, manager: AsrManager,
-                         language: Language?) async throws -> (tokens: [ASRToken], replaced: Int) {
+                         language: Language?, timelineOffsetSeconds: Double = 0,
+                         contextTracks: [ASRContextTrack] = []) async throws -> (tokens: [ASRToken], replaced: Int) {
         let ranges = utterances(tokens)
-        guard ranges.count > 1 else { return (tokens, 0) }
+        guard !ranges.isEmpty, ranges.count > 1 || !contextTracks.isEmpty else { return (tokens, 0) }
         let file = try AVAudioFile(forReading: fileURL)
         let converter = AudioConverter()
         var output: [ASRToken] = []
         var replaced = 0
         for (index, range) in ranges.enumerated() {
             let original = Array(tokens[range])
-            guard isShort(range, in: tokens) else { output += original; continue }
+            guard needsContext(range, in: tokens) else { output += original; continue }
             try Task.checkCancellation()
             var context: [Float] = []
             for span in contextSpans(for: index, in: ranges, tokens: tokens) {
                 context += try AudioSlice.samples(of: file, from: span.start - 0.2, to: span.end + 0.2, converter: converter)
                 context += silence(0.3)
             }
+            if context.isEmpty {
+                // Other voices are a recovery aid for uncertain replies, not a
+                // reason to rewrite a confident isolated phrase (including English).
+                guard meanConfidence(original) < 0.7 else { output += original; continue }
+                let spans = remoteSpans(start: original[0].start + timelineOffsetSeconds,
+                                        end: original[original.count - 1].end + timelineOffsetSeconds,
+                                        contextTracks: contextTracks)
+                for span in spans {
+                    let remote = try AVAudioFile(forReading: span.fileURL)
+                    context += try AudioSlice.samples(of: remote, from: span.start, to: span.end, converter: converter)
+                    context += silence(0.3)
+                }
+            }
+            guard !context.isEmpty else { output += original; continue }
             let sliceStart = max(0, original[0].start - 0.3)
             let phrase = try AudioSlice.samples(of: file, from: sliceStart, to: original[original.count - 1].end + 0.3,
                                                 converter: converter)
@@ -80,7 +148,10 @@ enum ShortUtteranceContext {
             let offset = Double(prefix.count) / sampleRate
             var state = TdtDecoderState.make(decoderLayers: await manager.decoderLayerCount)
             let result = try await manager.transcribe(prefix + phrase, decoderState: &state, language: language)
-            let candidate = (result.tokenTimings ?? []).filter { $0.startTime >= offset - 0.15 }.map {
+            // Token onsets can precede the acoustic boundary. The 0.9 s silence
+            // between context and phrase leaves a safe midpoint for extraction;
+            // a tighter cut can drop the first piece ("Listo" → "isto").
+            let candidate = (result.tokenTimings ?? []).filter { $0.startTime >= offset - 0.45 }.map {
                 ASRToken(piece: $0.token, tokenId: $0.tokenId, start: max(sliceStart, $0.startTime - offset + sliceStart),
                          end: max(sliceStart, $0.endTime - offset + sliceStart), confidence: $0.confidence)
             }

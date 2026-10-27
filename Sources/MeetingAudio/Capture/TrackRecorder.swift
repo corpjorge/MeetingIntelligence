@@ -67,6 +67,8 @@ public final class TrackRecorder: @unchecked Sendable {
     private let queue: DispatchQueue
     private let clock: CaptureClock
     private let writer: CrashSafeWAVWriter
+    /// If present, both track recorders and the AEC share this recorder's queue.
+    private let echoCanceller: RecordingEchoCanceller?
     private var aligner: TimelineAligner
     private var resampler: MonoResampler?
     private var seenRates: [Double] = []
@@ -85,6 +87,7 @@ public final class TrackRecorder: @unchecked Sendable {
     var onSamples: (@Sendable (AudioSource, [Float]) -> Void)?
 
     init(source: AudioSource, url: URL, outputSampleRate: Double, clock: CaptureClock,
+         queue: DispatchQueue? = nil, echoCanceller: RecordingEchoCanceller? = nil,
          onLevel: @escaping @Sendable (AudioSource, AudioLevel) -> Void,
          onWarning: @escaping @Sendable (RecordingWarning) -> Void) throws {
         self.source = source
@@ -92,9 +95,14 @@ public final class TrackRecorder: @unchecked Sendable {
         self.clock = clock
         self.writer = try CrashSafeWAVWriter(url: url, sampleRate: Int(outputSampleRate))
         self.aligner = TimelineAligner(sampleRate: outputSampleRate)
-        self.queue = DispatchQueue(label: "mi.track.\(source.rawValue)", qos: .userInitiated)
+        self.queue = queue ?? DispatchQueue(label: "mi.track.\(source.rawValue)", qos: .userInitiated)
+        self.echoCanceller = echoCanceller
         self.onLevel = onLevel
         self.onWarning = onWarning
+        if source == .localMicrophone {
+            echoCanceller?.onOutput = { [weak self] samples in self?.writeOutput(samples) }
+            echoCanceller?.onMissingReference = { onWarning(.echoReferenceUnavailable) }
+        }
     }
 
     /// - Parameters:
@@ -119,20 +127,50 @@ public final class TrackRecorder: @unchecked Sendable {
                 if !seenRates.contains(sampleRate) { seenRates.append(sampleRate) }
             }
             trackSilence(mono, sampleRate: sampleRate)
-            emitLevel(mono)
             var converted = try resampler!.process(mono)
             guard !converted.isEmpty else { return }
             if muted { converted = [Float](repeating: 0, count: converted.count) }
-            onSamples?(source, converted)
             let plan = aligner.plan(startSeconds: timelineSeconds, frameCount: converted.count)
-            if plan.padFrames > 0 { try writer.appendSilence(frames: plan.padFrames) }
+            if plan.padFrames > 0 { try appendSilence(frames: plan.padFrames) }
             if plan.dropFrames < converted.count {
-                try converted.withUnsafeBufferPointer { buffer in
-                    try writer.append(UnsafeBufferPointer(rebasing: buffer[plan.dropFrames...]))
-                }
+                let aligned = Array(converted.dropFirst(plan.dropFrames))
+                appendAligned(aligned)
             }
         } catch {
             onWarning(.writeFailed(source, error.localizedDescription))
+        }
+    }
+
+    private func appendAligned(_ samples: [Float]) {
+        if let echoCanceller, source == .localMicrophone {
+            echoCanceller.appendMicrophone(samples)
+        } else {
+            writeOutput(samples)
+            echoCanceller?.appendReference(samples)
+        }
+    }
+
+    private func writeOutput(_ samples: [Float]) {
+        emitLevel(samples)
+        do {
+            try writer.append(samples)
+            onSamples?(source, samples)
+        } catch {
+            onWarning(.writeFailed(source, error.localizedDescription))
+        }
+    }
+
+    private func appendSilence(frames: Int) throws {
+        if echoCanceller == nil {
+            try writer.appendSilence(frames: frames)
+            return
+        }
+        // Bound allocations for late starts and disconnected devices.
+        var remaining = frames
+        while remaining > 0 {
+            let count = min(remaining, Int(outputSampleRate) / 50)
+            appendAligned([Float](repeating: 0, count: count))
+            remaining -= count
         }
     }
 
@@ -178,9 +216,10 @@ public final class TrackRecorder: @unchecked Sendable {
                 let target = Int(end * outputSampleRate)
                 let missing = target - aligner.framesWritten
                 if missing > 0 {
-                    try? writer.appendSilence(frames: missing)
+                    try? appendSilence(frames: missing)
                     tailPaddedFrames = missing
                 }
+                if source == .localMicrophone { echoCanceller?.finish() }
                 try? writer.close()
                 finished = true
             }

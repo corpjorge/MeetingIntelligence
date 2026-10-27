@@ -26,6 +26,10 @@ enum SnapshotDriver {
             for appearance in [NSAppearance.Name.aqua, .darkAqua] {
                 NSApp.appearance = NSAppearance(named: appearance)
                 let suffix = appearance == .aqua ? "light" : "dark"
+                if ProcessInfo.processInfo.environment["MI_SNAPSHOT_COMMITMENTS_ONLY"] == "1" {
+                    captureOpenCommitments(suffix: suffix, in: dir)
+                    continue
+                }
                 if !env.settings.hasCompletedOnboarding {
                     await capture("00-onboarding-\(suffix)", in: dir, sheet: true)
                     continue
@@ -44,6 +48,7 @@ enum SnapshotDriver {
                     }
                 }
                 captureUpdateStates(suffix: suffix, in: dir, env: env)
+                captureOpenCommitments(suffix: suffix, in: dir)
                 captureComponent("model-setup-banner-\(suffix)", in: dir) { ModelSetupBanner().environment(env) }
                 captureComponent("ai-consent-sheet-\(suffix)", in: dir) {
                     RemoteConsentSheet(request: .init(provider: .codex, summary: "Se compartirán la pregunta y 13 extractos de transcripción de 1 reunión(es) (texto, hablante y marca de tiempo). No se comparte audio ni perfiles de voz.",
@@ -130,6 +135,30 @@ enum SnapshotDriver {
         host.cacheDisplay(in: host.bounds, to: rep)
         if let png = rep.representation(using: .png, properties: [:]) {
             try? png.write(to: dir.appendingPathComponent("\(name).png"))
+        }
+    }
+
+    /// Pending-items sheet with long text, more than eight rows, and the empty state.
+    @MainActor
+    static func captureOpenCommitments(suffix: String, in dir: URL) {
+        let model = DashboardModel()
+        model.meetingTitles = ["fixture": "FIXTURE · Seguimiento del proyecto"]
+        model.openItems = (0..<12).map { index in
+            AnalysisItem(analysisId: "fixture", meetingId: "fixture", category: .commitment,
+                         nature: index == 1 ? .interpretation : .fact,
+                         text: index == 0
+                            ? "Documentar las validaciones pendientes del servicio y compartir con el equipo el resultado de las pruebas antes de la próxima reunión de seguimiento."
+                            : "FIXTURE · Revisar el compromiso \(index + 1) con el equipo.",
+                         ownerName: "Equipo de desarrollo", dueText: "Antes del viernes",
+                         evidenceQuote: index == 0 ? "Compartimos el resultado antes de la próxima reunión." : nil,
+                         evidenceStatus: index == 0 ? .verified : .unconfirmed, orderIndex: index)
+        }
+        captureComponent("dashboard-open-commitments-\(suffix)", in: dir) {
+            OpenCommitmentsView(model: model, onSetCompleted: { _, _ in }, onOpenMeeting: { _ in })
+        }
+        model.openItems = []
+        captureComponent("dashboard-open-commitments-empty-\(suffix)", in: dir) {
+            OpenCommitmentsView(model: model, onSetCompleted: { _, _ in }, onOpenMeeting: { _ in })
         }
     }
 

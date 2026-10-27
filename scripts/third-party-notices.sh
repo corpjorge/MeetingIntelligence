@@ -25,6 +25,14 @@ CHECKOUTS="$ROOT/.build/checkouts"
   print "| [intfloat/multilingual-e5-small](https://huggingface.co/intfloat/multilingual-e5-small) | Búsqueda semántica (opcional) | MIT |"
   print
   print "## Bibliotecas"
+  print
+  print "### SpeexDSP 1.2.1 (cancelador de eco incluido en el repositorio)"
+  print
+  print "Fuente: https://downloads.xiph.org/releases/speex/speexdsp-1.2.1.tar.gz"
+  print
+  print '```'
+  cat "$ROOT/Sources/CSpeexDSP/COPYING"
+  print '```'
   python3 -I - "$ROOT/Package.resolved" <<'PY' | while IFS='|' read -r identity location version; do
 import json, sys
 for pin in sorted(json.load(open(sys.argv[1]))["pins"], key=lambda p: p["identity"]):
