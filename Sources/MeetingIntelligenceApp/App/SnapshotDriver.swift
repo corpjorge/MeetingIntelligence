@@ -26,6 +26,11 @@ enum SnapshotDriver {
             for appearance in [NSAppearance.Name.aqua, .darkAqua] {
                 NSApp.appearance = NSAppearance(named: appearance)
                 let suffix = appearance == .aqua ? "light" : "dark"
+                if ProcessInfo.processInfo.environment["MI_SNAPSHOT_ANALYSIS_ONLY"] == "1" {
+                    if env.ai.statuses.isEmpty { await env.ai.refreshStatuses() }
+                    captureAnalysisControls(suffix: suffix, in: dir, env: env)
+                    continue
+                }
                 if ProcessInfo.processInfo.environment["MI_SNAPSHOT_COMMITMENTS_ONLY"] == "1" {
                     captureOpenCommitments(suffix: suffix, in: dir)
                     continue
@@ -123,10 +128,11 @@ enum SnapshotDriver {
 
     /// Renders one component offscreen at the recording view's reading width (current `NSApp.appearance`).
     @MainActor
-    static func captureComponent(_ name: String, in dir: URL, @ViewBuilder _ content: () -> some View) {
+    static func captureComponent(_ name: String, in dir: URL, width: CGFloat = DS.Layout.readingMaxWidth,
+                                 @ViewBuilder _ content: () -> some View) {
         let host = NSHostingView(rootView: content()
             .padding(DS.Space.xl)
-            .frame(width: DS.Layout.readingMaxWidth, alignment: .leading)
+            .frame(width: width, alignment: .leading)
             .background(DS.Color.background))
         host.appearance = NSApp.appearance
         host.frame.size = host.fittingSize
@@ -135,6 +141,30 @@ enum SnapshotDriver {
         host.cacheDisplay(in: host.bounds, to: rep)
         if let png = rep.representation(using: .png, properties: [:]) {
             try? png.write(to: dir.appendingPathComponent("\(name).png"))
+        }
+    }
+
+    @MainActor
+    static func captureAnalysisControls(suffix: String, in dir: URL, env: AppEnvironment) {
+        let model = MeetingDetailModel()
+        let item = AnalysisItem(analysisId: "fixture", meetingId: "fixture", category: .actionItem, nature: .fact,
+                                text: "Documentar las validaciones pendientes y compartir el resultado de las pruebas con el equipo.",
+                                ownerName: "Equipo de desarrollo", dueText: "Antes del viernes",
+                                evidenceQuote: "Compartimos el resultado antes de la próxima reunión.",
+                                evidenceStartTime: 208, evidenceSpeakerName: "Hablante 1", evidenceStatus: .verified,
+                                orderIndex: 0)
+        for provider in [AIProviderKind.copilotCLI, .codex] {
+            env.ai.selectedProvider = provider
+            env.ai.selectModel(provider == .codex ? env.ai.modelChoices(for: provider).first ?? "" : "", for: provider)
+            for (name, width) in [("wide", DS.Layout.contentMaxWidth), ("narrow", DS.Layout.singleColumnMaxWidth)] {
+                captureComponent("analysis-models-copy-\(provider.rawValue)-\(name)-\(suffix)", in: dir, width: width) {
+                    VStack(alignment: .leading, spacing: DS.Space.xl) {
+                        AnalysisRunBar(meetingId: "fixture", hasTranscript: true)
+                        ItemsSection(category: .actionItem, items: [item], model: model, showsCompletion: true)
+                    }
+                    .environment(env)
+                }
+            }
         }
     }
 

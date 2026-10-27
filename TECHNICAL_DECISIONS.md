@@ -99,7 +99,7 @@ aparece en la transcripción → "Información no confirmada".
 - GitHub Copilot CLI (`copilot`, 1.0.101): `copilot --output-format json --no-auto-update --no-custom-instructions
   --no-ask-user --disable-builtin-mcps --disallow-temp-dir --no-remote-export --disable-client-telemetry
   --available-tools=mi_sin_herramientas --deny-tool=shell --deny-tool=write --deny-tool=url`. El prompt va por stdin
-  y se ejecuta con un `COPILOT_HOME` temporal y vacío. Comprobado el 22-oct-2026:
+  y se ejecuta con un `COPILOT_HOME` temporal, aislado de la configuración personal. Comprobado el 22-oct-2026:
   - **`--available-tools=` vacío no desactiva nada.** El modelo seguía viendo `bash`, `view`, `web_fetch` y
     subagentes, y usó una herramienta. Con un nombre inexistente en la lista, Copilot oculta todas («Disabled tools:
     bash, create, edit, glob, grep…»). Control con un archivo inocuo en el directorio de trabajo: sin restricciones
@@ -109,12 +109,47 @@ aparece en la transcripción → "Información no confirmada".
     carpetas de confianza del usuario. La sesión, el registro y los logs (que contienen la transcripción) se crean
     ahí y se borran al terminar. La autenticación sigue funcionando porque Copilot la toma del llavero o de `gh`. Se
     quitan `COPILOT_ALLOW_ALL`, `COPILOT_ASSISTED_APPROVAL` y `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` del entorno.
+    Corrección de cuentas independientes (27-oct-2026, CLI 1.0.104): se replica solo la identidad seleccionada
+    (`lastLoggedInUser`, entrada correspondiente de `loggedInUsers`: host/login/kind) para que la CLI consulte
+    su propio Llavero. No se copian credenciales, hooks, plugins, instrucciones ni carpetas de confianza. Se lee
+    el estado JSON5 sin modificarlo. Con una cuenta de Copilot seleccionada se retiran los tokens genéricos de
+    GitHub del entorno del hijo; la sesión global de `gh` no se cambia. Un `COPILOT_GITHUB_TOKEN` explícito
+    conserva su prioridad. No se fuerza `gh auth token` ni `--no-auto-login`. Antes del catálogo y del envío
+    de texto se verifica `auth.getStatus`: una cuenta distinta o fallback a gh produce error. La interfaz
+    muestra el usuario verificado. Prueba real sin inferencia: cuenta empresarial con 20 modelos + Automático,
+    mientras `gh` conserva la personal. Adaptador del estado interno comprobado en esta versión; si no se puede
+    leer o verificar la cuenta se informa del fallo.
   - No tiene `--json-schema`: el esquema va en el prompt y `JSONExtraction` toma el objeto con las claves esperadas
     del último `assistant.message` del JSONL, que también indica el modelo usado. Los errores solo usan stderr,
     porque el JSONL repite el prompt, es decir, la transcripción.
   - El catálogo de modelos depende del plan: con la cuenta personal de prueba solo «auto» estaba disponible
     (`--model X` → «is not available»). Modelo vacío = «auto».
   - Otra herramienta también se llama `copilot` (AWS Copilot CLI): solo se usa si `--version` dice «GitHub Copilot».
+  - Regresión de configuración (27-oct-2026): la interfaz permitía guardar modelo automático + esfuerzo medio;
+    el proveedor rechazaba la combinación antes del envío. La app normaliza esa preferencia a esfuerzo
+    predeterminado al leer y guardar, y desactiva el selector con modelo automático. El esfuerzo explícito se
+    conserva con modelos concretos. El error del análisis ahora se muestra también en Decisiones y Compromisos.
+    Pruebas de controlador con la configuración heredada y consentimiento; prueba real con texto sintético,
+    modelo automático y herramientas desactivadas (`MI_COPILOT_TEST=1`, `CopilotCLIIntegrationTests`).
+  - Selector de modelos en la barra de análisis: usa los modelos detectados de cada proveedor y conserva la
+    elección por proveedor. Copilot consulta `connect` → `models.list` mediante el protocolo SDK del CLI
+    (`--headless --stdio`, mensajes con `Content-Length`), sin crear sesión ni enviar un prompt. La autenticación
+    existente se mantiene solo en el entorno del subproceso, dentro de un `COPILOT_HOME` temporal. Tiempo límite
+    de 20 s y respuestas acotadas. No se requiere instalar el SDK. Fuente del protocolo:
+    https://github.com/github/copilot-sdk/blob/main/nodejs/src/client.ts.
+    En la cuenta personal de prueba el catálogo devuelve `models: []` aunque está autenticada. La CLI interactiva confirma
+    que la sesión `corpjorge` (plan Student) ofrece únicamente Automático. No se proponen modelos usados en
+    análisis previos: un modelo elegido automáticamente no acredita selección manual. Un catálogo cargado prevalece
+    sobre una preferencia anterior que ya no figura en él; al fallar la consulta se conserva el modelo guardado.
+    No se ofrecen modelos de imagen ni se inventan IDs. Cambiar de modelo restaura el esfuerzo predeterminado.
+  - Codex consulta `app-server` → `initialize` → `initialized` → `model/list` (JSONL), con paginación y sin crear
+    hilos ni turnos. Se desactivan comandos, plugins y hooks y se consulta el proveedor OpenAI que utiliza el
+    análisis. El app-server no admite `--ignore-user-config` (ese flag pertenece a `exec`); la ruta de análisis
+    mantiene su aislamiento anterior. Prueba real: ocho modelos visibles, sin inferencia. Se filtran modelos
+    ocultos y modalidades que no aceptan texto. El catálogo puede ser local/cacheado y no acredita acceso a cada
+    modelo hasta una inferencia exitosa. Fuente: https://developers.openai.com/codex/app-server.
+  - Textos de análisis seleccionables y botones de copia por resumen, elemento y sección; las citas se pueden
+    seleccionar sin activar reproducción. El timestamp sigue siendo el botón para escuchar la evidencia.
   - Sin sesión termina con «No authentication information found» antes de enviar nada → «Sin sesión».
   - Análisis real y chat sobre el fixture sintético: correctos (modelo `gpt-5.6-luna`, 8,3 s, citas verificadas).
     Cada ejecución cuenta como una solicitud de Copilot.

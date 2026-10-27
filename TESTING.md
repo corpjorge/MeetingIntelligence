@@ -4,6 +4,10 @@
 scripts/test.sh                 # suite completa
 scripts/test.sh --filter MCP    # filtrar
 scripts/generate-fixtures.sh    # regenera fixtures sintéticos (necesario para las pruebas de integración)
+MI_COPILOT_TEST=1 scripts/test.sh --filter CopilotCLIIntegrationTests # una solicitud real a Copilot con texto sintético
+MI_COPILOT_CATALOG_TEST=1 scripts/test.sh --filter CopilotCatalogIntegrationTests # solo metadatos, sin inferencia
+MI_COPILOT_CATALOG_TEST=1 MI_COPILOT_EXPECTED_LOGIN=usuario scripts/test.sh --filter CopilotCatalogIntegrationTests # verificar cuenta seleccionada y catálogo no vacío
+MI_CODEX_CATALOG_TEST=1 scripts/test.sh --filter CodexCatalogIntegrationTests # catálogo de la CLI, sin hilos ni turnos
 ```
 
 Framework: **Swift Testing** (XCTest no está disponible con Command Line Tools). La lógica de la app (servicios y

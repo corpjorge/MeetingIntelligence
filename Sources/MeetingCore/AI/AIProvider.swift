@@ -42,7 +42,10 @@ public struct ProviderStatus: Sendable, Hashable {
     /// nil = could not be determined.
     public var authenticated: Bool?
     public var authDetail: String?
+    public var accountLogin: String? = nil
     public var models: [String]
+    /// A valid catalog was returned, even when it has no manually selectable models.
+    public var modelCatalogLoaded: Bool = false
     public var supportsStructuredOutput: Bool
     public var notes: [String]
     /// Reasoning effort levels the provider accepts (empty = not configurable).

@@ -124,4 +124,105 @@ struct AIControllerTests {
         AIController(database: db, defaults: suite.defaults).selectedProvider = .ollama
         #expect(AIController(database: db, defaults: suite.defaults).selectedProvider == .ollama)
     }
+
+    @Test func legacyCopilotAutoWithMediumEffortCanAnalyzeAfterConsent() async throws {
+        let suite = try IsolatedDefaults()
+        defer { suite.remove() }
+        let db = try AppDatabase.inMemory()
+        let meeting = try AppFixture.meeting(db)
+        // Reproduce the persisted combination that stopped real runs before sending.
+        try db.save(providerConfiguration: AIProviderConfiguration(provider: .copilotCLI, effort: "medium"))
+        let provider = CountingProvider(kind: .copilotCLI)
+        let ai = AIController(database: db, defaults: suite.defaults, providerFor: { _ in provider })
+        ai.selectedProvider = .copilotCLI
+        #expect(ai.configuration(for: .copilotCLI).effort == nil)
+        #expect(!ai.configuration(for: .copilotCLI).supportsEffortSelection)
+
+        ai.analyze(meetingId: meeting.id)
+        #expect(ai.pendingConsent?.provider == .copilotCLI)
+        #expect(provider.calls == 0)
+        ai.confirmConsent()
+        try await waitUntil { !ai.isAnalyzing(meeting.id) }
+        #expect(provider.calls == 1 && ai.lastError == nil)
+        let result = try await db.reader.read {
+            try AIAnalysis.filter(Column("meetingId") == meeting.id).fetchOne($0)
+        }
+        #expect(result?.status == .succeeded && result?.effort == nil)
+    }
+
+    @Test func copilotClearsEffortOnlyForAutomaticModels() throws {
+        let suite = try IsolatedDefaults()
+        defer { suite.remove() }
+        let db = try AppDatabase.inMemory()
+        let ai = AIController(database: db, defaults: suite.defaults)
+        for model in [nil, "", " auto ", "Auto", "\n"] as [String?] {
+            let configuration = AIProviderConfiguration(provider: .copilotCLI, model: model, effort: "medium")
+            ai.save(configuration)
+            #expect(!configuration.supportsEffortSelection)
+            #expect(try db.providerConfiguration(.copilotCLI).effort == nil)
+        }
+        let explicit = AIProviderConfiguration(provider: .copilotCLI, model: "gpt-5.6-luna", effort: "medium")
+        ai.save(explicit)
+        #expect(explicit.supportsEffortSelection)
+        #expect(try db.providerConfiguration(.copilotCLI).effort == "medium")
+
+        ai.save(AIProviderConfiguration(provider: .codex, effort: "medium"))
+        #expect(ai.configuration(for: .codex).supportsEffortSelection)
+        #expect(try db.providerConfiguration(.codex).effort == "medium")
+    }
+
+    @Test func selectedCatalogModelIsPersistedAndSentToProvider() async throws {
+        let suite = try IsolatedDefaults()
+        defer { suite.remove() }
+        let db = try AppDatabase.inMemory()
+        let meeting = try AppFixture.meeting(db)
+        let provider = CountingProvider(kind: .copilotCLI, models: ["model-b", "model-a", "model-a"])
+        let ai = AIController(database: db, defaults: suite.defaults, providerFor: { _ in provider })
+        await ai.refreshStatuses()
+        #expect(ai.modelChoices(for: .copilotCLI) == ["model-a", "model-b"])
+        ai.selectModel("model-b", for: .copilotCLI)
+        #expect(try db.providerConfiguration(.copilotCLI).model == "model-b")
+        ai.selectedProvider = .copilotCLI
+        ai.analyze(meetingId: meeting.id)
+        ai.confirmConsent()
+        try await waitUntil { !ai.isAnalyzing(meeting.id) }
+        #expect(provider.lastRequest?.model == "model-b")
+
+        var config = ai.configuration(for: .copilotCLI)
+        config.effort = "medium"
+        ai.save(config)
+        ai.selectModel("", for: .copilotCLI)
+        #expect(ai.selectedModel(for: .copilotCLI).isEmpty)
+        #expect(ai.configuration(for: .copilotCLI).effort == nil)
+    }
+
+    @Test func unavailableCopilotCatalogKeepsOnlySavedModelChoice() async throws {
+        let db = try AppDatabase.inMemory()
+        let meeting = try AppFixture.meeting(db)
+        try await db.writer.write { database in
+            try AIAnalysis(meetingId: meeting.id, provider: .copilotCLI, model: "used-model", promptVersion: "fixture",
+                           sharedContentSummary: "fixture", status: .succeeded).insert(database)
+            try AIAnalysis(meetingId: meeting.id, provider: .copilotCLI, model: "failed-model", promptVersion: "fixture",
+                           sharedContentSummary: "fixture", status: .failed).insert(database)
+        }
+        let suite = try IsolatedDefaults()
+        defer { suite.remove() }
+        let ai = AIController(database: db, defaults: suite.defaults)
+        ai.selectModel("saved-model", for: .copilotCLI)
+        #expect(ai.modelChoices(for: .copilotCLI) == ["saved-model"])
+    }
+
+    @Test func copilotAutoOnlyCatalogDoesNotOfferPreviouslyRoutedModels() async throws {
+        let db = try AppDatabase.inMemory()
+        let suite = try IsolatedDefaults()
+        defer { suite.remove() }
+        let provider = CountingProvider(kind: .copilotCLI, catalogLoaded: true)
+        let ai = AIController(database: db, defaults: suite.defaults, providerFor: { _ in provider })
+        ai.save(AIProviderConfiguration(provider: .copilotCLI, model: "previously-routed-model", effort: "medium"))
+        await ai.refreshStatuses()
+        #expect(ai.modelChoices(for: .copilotCLI).isEmpty)
+        #expect(ai.selectedModel(for: .copilotCLI).isEmpty)
+        #expect(try db.providerConfiguration(.copilotCLI).model == nil)
+        #expect(try db.providerConfiguration(.copilotCLI).effort == nil)
+    }
 }

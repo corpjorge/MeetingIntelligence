@@ -2,6 +2,21 @@ import Foundation
 import MeetingCore
 import OSLog
 
+extension AIProviderConfiguration {
+    /// Copilot accepts a custom effort only with an explicit model.
+    var supportsEffortSelection: Bool {
+        guard provider == .copilotCLI else { return true }
+        let value = model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return !value.isEmpty && value.lowercased() != "auto"
+    }
+
+    var compatibleEffortConfiguration: Self {
+        var configuration = self
+        if !supportsEffortSelection { configuration.model = nil; configuration.effort = nil }
+        return configuration
+    }
+}
+
 /// App-side orchestration of AI providers: detection, selection, consent and runs.
 @Observable
 final class AIController {
@@ -53,13 +68,38 @@ final class AIController {
 
     func configuration(for kind: AIProviderKind) -> AIProviderConfiguration {
         _ = configurationRevision // observation dependency
-        return (try? database.providerConfiguration(kind)) ?? AIProviderConfiguration(provider: kind)
+        return ((try? database.providerConfiguration(kind)) ?? AIProviderConfiguration(provider: kind))
+            .compatibleEffortConfiguration
+    }
+
+    func modelChoices(for kind: AIProviderKind) -> [String] {
+        var choices = Set((statuses[kind]?.models ?? []).filter { !$0.isEmpty && $0.lowercased() != "auto" })
+        if kind == .copilotCLI, statuses[kind]?.modelCatalogLoaded == true {
+            return choices.sorted()
+        }
+        if let saved = configuration(for: kind).model, !saved.isEmpty, saved.lowercased() != "auto" {
+            choices.insert(saved)
+        }
+        return choices.sorted()
+    }
+
+    func selectedModel(for kind: AIProviderKind) -> String {
+        let saved = configuration(for: kind).model ?? ""
+        return kind == .copilotCLI && saved.lowercased() == "auto" ? "" : saved
+    }
+
+    func selectModel(_ model: String, for kind: AIProviderKind) {
+        var configuration = configuration(for: kind)
+        if selectedModel(for: kind) != model { configuration.effort = nil }
+        configuration.model = model.isEmpty ? nil : model
+        save(configuration)
     }
 
     /// Bumped on every save so views reading `configuration(for:)` refresh.
     private(set) var configurationRevision = 0
 
     func save(_ configuration: AIProviderConfiguration) {
+        let configuration = configuration.compatibleEffortConfiguration
         try? database.save(providerConfiguration: configuration)
         configurationRevision += 1
         // Ollama's levels depend on the selected model.
@@ -82,6 +122,11 @@ final class AIController {
             for await status in group {
                 statuses[status.kind] = status
                 var config = configuration(for: status.kind)
+                if status.kind == .copilotCLI, status.modelCatalogLoaded,
+                   let model = config.model, !status.models.contains(model) {
+                    config.model = nil
+                    config.effort = nil
+                }
                 config.lastDetectedVersion = status.version
                 config.lastCheckedAt = Date()
                 save(config)
@@ -127,6 +172,7 @@ final class AIController {
 
     private func startAnalysis(meetingId: String, kind: AIProviderKind, config: AIProviderConfiguration,
                                prepared: MeetingAnalysisService.PreparedPrompt, consent: Bool) {
+        lastError = nil
         runningAnalyses.insert(meetingId)
         let service = MeetingAnalysisService(database: database)
         let provider = providerFor(kind)

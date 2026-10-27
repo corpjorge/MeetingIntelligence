@@ -1,3 +1,4 @@
+import AppKit
 import GRDB
 import MeetingCore
 import SwiftUI
@@ -11,12 +12,26 @@ struct AnalysisRunBar: View {
     @State var showCompare = false
 
     var body: some View {
-        // One row when it fits; otherwise provider settings above, actions below.
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: DS.Space.m) { providerControls; Spacer(minLength: DS.Space.m); actions }
-            VStack(alignment: .leading, spacing: DS.Space.s) {
-                HStack(spacing: DS.Space.m) { providerControls }
-                HStack(spacing: DS.Space.m) { Spacer(minLength: DS.Space.none); actions }
+        VStack(alignment: .leading, spacing: DS.Space.m) {
+            // One row when it fits; otherwise provider settings above, actions below.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: DS.Space.m) { providerControls; Spacer(minLength: DS.Space.m); actions }
+                VStack(alignment: .leading, spacing: DS.Space.s) {
+                    HStack(spacing: DS.Space.m) { providerControls }
+                    HStack(spacing: DS.Space.m) { Spacer(minLength: DS.Space.none); actions }
+                }
+            }
+            if let error = env.ai.lastError {
+                InlineBanner(tone: .danger, systemImage: "exclamationmark.triangle.fill", title: "El análisis falló", message: error) {
+                    IconButton(systemImage: "xmark", help: "Cerrar") { env.ai.dismissError() }
+                }
+            }
+            if let status = env.ai.statuses[env.ai.selectedProvider],
+               status.kind == .copilotCLI, status.models.isEmpty {
+                Text(status.modelCatalogLoaded
+                     ? "La sesión actual de Copilot ofrece Automático; no hay modelos para elegir manualmente en su catálogo."
+                     : "No se pudo cargar el catálogo de Copilot. Puedes usar Automático o conservar el modelo guardado.")
+                    .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
             }
         }
         .task { if env.ai.statuses.isEmpty { await env.ai.refreshStatuses() } }
@@ -29,15 +44,61 @@ struct AnalysisRunBar: View {
 extension AnalysisRunBar {
     @ViewBuilder
     var providerControls: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: DS.Space.m) { providerPicker; statusPill; modelPicker; effortPicker }
+            VStack(alignment: .leading, spacing: DS.Space.s) {
+                HStack(spacing: DS.Space.m) { providerPicker; statusPill }
+                HStack(spacing: DS.Space.m) { modelPicker; effortPicker }
+            }
+        }
+    }
+
+    var providerPicker: some View {
         @Bindable var ai = env.ai
-        Picker("Proveedor", selection: $ai.selectedProvider) {
+        return Picker("Proveedor", selection: $ai.selectedProvider) {
             ForEach(AIProviderKind.allCases) { kind in
                 Text(kind.displayName + (kind.sendsDataToRemoteService ? " · nube" : " · local")).tag(kind)
             }
         }
         .frame(width: DS.Layout.Control.pickerWideWidth)
+    }
+
+    @ViewBuilder
+    var statusPill: some View {
         if let status = env.ai.statuses[env.ai.selectedProvider] {
-            ProviderStatusPill(status: status)
+            VStack(alignment: .leading, spacing: DS.Space.xxs) {
+                ProviderStatusPill(status: status)
+                if let login = status.accountLogin {
+                    Text(login).font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
+                        .lineLimit(1).help("Cuenta usada por \(status.kind.displayName)")
+                }
+            }
+        }
+    }
+
+    var modelPicker: some View {
+        HStack(spacing: DS.Space.xs) {
+            Picker("Modelo", selection: Binding(
+                get: { env.ai.selectedModel(for: env.ai.selectedProvider) },
+                set: { env.ai.selectModel($0, for: env.ai.selectedProvider) })) {
+                Text(env.ai.selectedProvider == .copilotCLI ? "Automático"
+                     : env.ai.selectedProvider == .ollama ? "Seleccionar modelo" : "Predeterminado").tag("")
+                ForEach(env.ai.modelChoices(for: env.ai.selectedProvider), id: \.self) { model in
+                    Text(model).tag(model)
+                }
+            }
+            .frame(width: DS.Layout.Control.pickerWidth)
+            .help("Modelo usado para analizar esta reunión con el proveedor seleccionado")
+            IconButton(systemImage: "arrow.clockwise", help: "Actualizar modelos disponibles") {
+                Task { await env.ai.refreshStatuses() }
+            }
+            .disabled(env.ai.isDetecting)
+        }
+    }
+
+    @ViewBuilder
+    var effortPicker: some View {
+        if let status = env.ai.statuses[env.ai.selectedProvider] {
             if !status.effortLevels.isEmpty {
                 Picker("Esfuerzo", selection: Binding(
                     get: { env.ai.configuration(for: env.ai.selectedProvider).effort ?? "" },
@@ -50,8 +111,11 @@ extension AnalysisRunBar {
                     ForEach(status.effortLevels, id: \.self) { Text("Esfuerzo: \(EffortLabel.text($0))").tag($0) }
                 }
                 .labelsHidden()
+                .disabled(!env.ai.configuration(for: env.ai.selectedProvider).supportsEffortSelection)
                 .frame(width: DS.Layout.Control.pickerNarrowWidth)
-                .help("Nivel de razonamiento del modelo. Más esfuerzo = respuesta más profunda, más lenta y con más consumo.")
+                .help(env.ai.configuration(for: env.ai.selectedProvider).supportsEffortSelection
+                      ? "Nivel de razonamiento del modelo. Más esfuerzo = respuesta más profunda, más lenta y con más consumo."
+                      : "Copilot en Automático utiliza esfuerzo predeterminado. Elige un modelo concreto para cambiarlo.")
             }
         }
     }
@@ -138,11 +202,6 @@ struct SummaryTab: View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.Space.xl) {
                 AnalysisRunBar(meetingId: meetingId, hasTranscript: !(model.detail?.segments.isEmpty ?? true))
-                if let error = env.ai.lastError {
-                    InlineBanner(tone: .danger, systemImage: "exclamationmark.triangle.fill", title: "El análisis falló", message: error) {
-                        IconButton(systemImage: "xmark", help: "Cerrar") { env.ai.dismissError() }
-                    }
-                }
                 if let analysis = model.latestAnalysis {
                     AIProvenance(analysis: analysis)
                     if let summary = analysis.executiveSummary {
@@ -187,6 +246,8 @@ struct SummaryTab: View {
                 HStack {
                     Text(title).font(DS.Font.headline)
                     StatusPill(text: "Generado por IA", tone: .ai, systemImage: "sparkles")
+                    Spacer()
+                    CopyAnalysisButton(text: text)
                 }
                 Text(text).font(DS.Font.reading).foregroundStyle(DS.Color.textPrimary).textSelection(.enabled)
             }
@@ -236,7 +297,9 @@ struct ItemsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.s) {
-            SectionHeader(title: category.displayName, subtitle: "\(items.count)")
+            SectionHeader(title: category.displayName, subtitle: "\(items.count)") {
+                CopyAnalysisButton(text: items.map(analysisClipboardText).joined(separator: "\n\n"), title: "Copiar todo")
+            }
             SurfaceCard(padding: DS.Space.xs) {
                 VStack(spacing: DS.Space.none) {
                     ForEach(items) { item in
@@ -278,17 +341,23 @@ struct ItemRow: View {
             VStack(alignment: .leading, spacing: DS.Space.xs) {
                 Text(item.text).font(DS.Font.body).foregroundStyle(DS.Color.textPrimary)
                     .strikethrough(item.completedAt != nil, color: DS.Color.textTertiary)
+                    .textSelection(.enabled)
                 HStack(spacing: DS.Space.s) {
                     natureBadge
-                    if let owner = item.ownerName { Label(owner, systemImage: "person").font(DS.Font.caption) }
-                    if let due = item.dueText { Label(due, systemImage: "calendar").font(DS.Font.caption) }
+                    if let owner = item.ownerName { Label(owner, systemImage: "person").font(DS.Font.caption).textSelection(.enabled) }
+                    if let due = item.dueText { Label(due, systemImage: "calendar").font(DS.Font.caption).textSelection(.enabled) }
                 }
                 .foregroundStyle(DS.Color.textSecondary)
                 evidence
             }
             Spacer(minLength: DS.Space.none)
+            CopyAnalysisButton(text: item.text).labelStyle(.iconOnly)
         }
         .padding(DS.Space.m)
+        .contextMenu {
+            Button("Copiar texto") { copyAnalysisText(item.text) }
+            Button("Copiar con evidencia") { copyAnalysisText(analysisClipboardText(item)) }
+        }
     }
 
     @ViewBuilder
@@ -303,27 +372,70 @@ struct ItemRow: View {
     @ViewBuilder
     private var evidence: some View {
         if item.evidenceStatus == .verified, let start = item.evidenceStartTime {
-            Button { onSeek(start) } label: {
-                HStack(alignment: .top, spacing: DS.Space.s) {
-                    Rectangle().fill(DS.Color.evidenceRule).frame(width: DS.Stroke.emphasis)
-                    VStack(alignment: .leading, spacing: DS.Space.xxs) {
+            HStack(alignment: .top, spacing: DS.Space.s) {
+                Rectangle().fill(DS.Color.evidenceRule).frame(width: DS.Stroke.emphasis)
+                VStack(alignment: .leading, spacing: DS.Space.xxs) {
+                    Button { onSeek(start) } label: {
                         Text("\(Timecode.hms(start)) · \(item.evidenceSpeakerName ?? "")")
                             .font(DS.Font.mono).foregroundStyle(DS.Color.accent)
-                        if let quote = item.evidenceQuote {
-                            Text("“\(quote)”").font(DS.Font.callout).italic().foregroundStyle(DS.Color.textSecondary)
-                        }
+                    }
+                    .buttonStyle(.plain).help("Escuchar la evidencia")
+                    if let quote = item.evidenceQuote {
+                        Text("“\(quote)”").font(DS.Font.callout).italic().foregroundStyle(DS.Color.textSecondary)
+                            .textSelection(.enabled)
                     }
                 }
-                .fixedSize(horizontal: false, vertical: true)
             }
-            .buttonStyle(.plain)
-            .help("Escuchar la evidencia")
+            .fixedSize(horizontal: false, vertical: true)
         } else {
             Label("Información no confirmada", systemImage: "exclamationmark.triangle")
                 .font(DS.Font.caption).foregroundStyle(DS.Color.warning)
                 .help(item.evidenceQuote.map { "Cita propuesta por la IA no encontrada en la transcripción: “\($0)”" }
                       ?? "La IA no aportó evidencia.")
         }
+    }
+}
+
+private func copyAnalysisText(_ text: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
+}
+
+private func analysisClipboardText(_ item: AnalysisItem) -> String {
+    var lines = [item.text]
+    if let owner = item.ownerName { lines.append("Responsable: \(owner)") }
+    if let due = item.dueText { lines.append("Fecha: \(due)") }
+    if item.evidenceStatus == .verified {
+        if let start = item.evidenceStartTime {
+            lines.append("[\(Timecode.hms(start))] \(item.evidenceSpeakerName ?? "")")
+        }
+        if let quote = item.evidenceQuote { lines.append("“\(quote)”") }
+    } else {
+        lines.append("Información no confirmada")
+    }
+    if item.nature == .interpretation { lines.append("Interpretación de la IA") }
+    if item.nature == .recommendation { lines.append("Recomendación de la IA") }
+    return lines.joined(separator: "\n")
+}
+
+private struct CopyAnalysisButton: View {
+    let text: String
+    var title = "Copiar"
+    @State private var copied = false
+
+    var body: some View {
+        Button {
+            copyAnalysisText(text)
+            copied = true
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                copied = false
+            }
+        } label: {
+            Label(copied ? "Copiado" : title, systemImage: copied ? "checkmark" : "doc.on.doc")
+        }
+        .buttonStyle(.ds(.ghost, size: .small))
+        .help(copied ? "Copiado al portapapeles" : title)
     }
 }
 
