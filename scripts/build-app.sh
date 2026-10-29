@@ -2,6 +2,7 @@
 # Builds a signed (ad-hoc by default) macOS app bundle from the SwiftPM products.
 #
 #   scripts/build-app.sh [debug|release]
+#   APP_OUTPUT_ROOT="$PWD/build/candidate" scripts/build-app.sh debug  # separate copy when the main app is open
 #
 # Output: build/<APP_NAME>.app containing
 #   Contents/MacOS/MeetingIntelligence          (SwiftUI app)
@@ -16,17 +17,34 @@ ROOT="${0:A:h:h}"
 CONFIG="${1:-release}"
 source "$ROOT/config/app.env"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+APP_OUTPUT_ROOT="${APP_OUTPUT_ROOT:-$ROOT/build}"
+APP="$APP_OUTPUT_ROOT/$APP_NAME.app"
+# Replacing a running ad-hoc bundle changes its on-disk identity while the old
+# process is still alive; TCC may then reject an apparently enabled permission.
+if [[ -x "$APP/Contents/MacOS/$EXECUTABLE_NAME" ]]; then
+  MI_BUILD_RUNNING_PIDS="$(/usr/sbin/lsof -t "$APP/Contents/MacOS/$EXECUTABLE_NAME" 2>/dev/null || true)"
+  if [[ -n "$MI_BUILD_RUNNING_PIDS" ]]; then
+    echo "La app de destino está abierta: $APP" >&2
+    echo "No se reemplazará una app en ejecución. Ciérrala o usa APP_OUTPUT_ROOT para compilar una copia aparte." >&2
+    exit 1
+  fi
+fi
 cd "$ROOT"
 
 echo "▸ Compilando ($CONFIG)…"
+BUILD_LOG="$(mktemp)"
+trap 'rm -f "$BUILD_LOG"' EXIT
 for product in "$EXECUTABLE_NAME" meeting-intelligence-mcp mi; do
-  "$ROOT/scripts/swiftw" build -c "$CONFIG" --product "$product" 2>&1 \
+  if ! "$ROOT/scripts/swiftw" build -c "$CONFIG" --product "$product" >"$BUILD_LOG" 2>&1; then
+    cat "$BUILD_LOG" >&2
+    exit 1
+  fi
+  cat "$BUILD_LOG" \
     | grep -v "search path '/Library/Developer/CommandLineTools" | grep -E "error|warning: |Compiling|Build complete" || true
 done
 BIN="$("$ROOT/scripts/swiftw" build -c "$CONFIG" --show-bin-path)"
 [[ -x "$BIN/$EXECUTABLE_NAME" ]] || { echo "No se encontró $BIN/$EXECUTABLE_NAME" >&2; exit 1; }
 
-APP="$ROOT/build/$APP_NAME.app"
 echo "▸ Ensamblando $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -40,7 +58,7 @@ cp "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_NOTICES.md" "$APP/Contents/Resources/"
 echo "▸ Icono"
 ICONSET="$ROOT/build/AppIcon.iconset"
 rm -rf "$ICONSET" && mkdir -p "$ICONSET"
-swift "$ROOT/scripts/make-icon.swift" "$ROOT/build/icon_1024.png" >/dev/null
+"$ROOT/scripts/swiftw" "$ROOT/scripts/make-icon.swift" "$ROOT/build/icon_1024.png" >/dev/null
 for s in 16 32 128 256 512; do
   sips -z $s $s "$ROOT/build/icon_1024.png" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
   sips -z $((s*2)) $((s*2)) "$ROOT/build/icon_1024.png" --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null

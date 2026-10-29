@@ -6,6 +6,7 @@ apps y **local por defecto**.
 
 - Captura el **micrófono** y el **audio de la app elegida** en pistas separadas y sincronizadas (Core Audio Process Taps).
 - **Detecta llamadas** de cualquier app (micrófono + audio a la vez) y **sugiere** grabar y detener; nunca lo hace sola.
+- **Video opcional de una ventana**, con selector nativo de macOS y audio sincronizado; exportación M4A/WAV/MP4 (TD-34; validación de larga duración pendiente).
 - Transcribe localmente con **Parakeet Ultra** (FluidAudio + Core ML, Apple Neural Engine).
 - Separa hablantes con **diarización offline** (pyannote community + WeSpeaker + VBx) y reconoce participantes
   registrados **solo con consentimiento** y umbrales **calibrados con tus propios datos**.
@@ -63,7 +64,7 @@ Uso gratuito según [LICENSE](LICENSE); componentes de terceros en [THIRD_PARTY_
 
 > El nombre es provisional: cámbialo en `config/app.env` (`APP_NAME`); no requiere tocar código Swift.
 
-## Estado real (verificado el 16-oct-2026 en MacBook Pro M5 Pro, macOS 27.0.1)
+## Estado real (verificado el 29-oct-2026 en MacBook Pro M5 Pro, macOS 27.0.1)
 
 | Área | Estado | Verificación |
 |---|---|---|
@@ -96,9 +97,12 @@ Uso gratuito según [LICENSE](LICENSE); componentes de terceros en [THIRD_PARTY_
 | Servidor MCP (stdio, 2026-07-28 + 2025-11-25) | ✅ | Prueba stdio con el binario empaquetado |
 | Actualizaciones de la app (GitHub, firma Ed25519, reinicio) | ✅ | Pruebas + de punta a punta con la app real: 0.2.0 → 0.2.1 con servidor local; firma alterada rechazada; primera actualización real en `/Applications`: reemplazo correcto, el reinicio fallaba con la hoja abierta (corregido en 0.2.2, TD-29) |
 | Exportación TXT/MD/JSON/SRT/PDF | ✅ | Pruebas |
+| Video de ventana, vista previa y exportación M4A/WAV/MP4 | ✅ Primera versión | Archivos reales y ventana sintética cubierta; pendiente llamada completa y medición de larga duración (TD-34/TD-36) |
+| Micrófono por dispositivo e inicio cancelable | ✅ | Prueba física integrada de 3 s y pruebas de cancelación; sin cambiar la salida de Teams (TD-38) |
+| Selección del proveedor/modelo en chat y ortografía nativa | ✅ | Pruebas de selección, envío y editor nativo; Enter/Mayús+Enter |
 
-146 pruebas automatizadas pasan (`scripts/test.sh`), incluidas 7 de integración con los modelos reales. Otras 4
-(mediciones de TD-24/TD-26, e5-small y actualización real desde Hugging Face) se activan bajo demanda; ver `TESTING.md`.
+210 pruebas automatizadas pasan (`scripts/test.sh`). Las integraciones y mediciones adicionales de catálogos,
+vocabulario, contexto, e5-small y actualización desde Hugging Face se activan bajo demanda; ver `TESTING.md`.
 
 ## Requisitos
 
@@ -132,6 +136,8 @@ scripts/publish-release.sh docs/releases/<versión>.md    # tag + release en Git
 
 La firma de actualización usa una clave Ed25519 guardada en tu Llavero (`mi-release keygen`, una sola vez). Guarda una
 copia: sin ella, las versiones futuras no se podrán instalar desde la app.
+El empaquetador usa Python 3.10 o posterior y prepara herramientas fijadas en `build/dmg-tools` para escribir el
+layout del DMG sin automatizar Finder. Esas dependencias no se incluyen en la app.
 
 > Firma: por defecto el bundle se firma *ad hoc*, así que macOS vuelve a pedir permisos tras cada recompilación.
 > Para conservarlos, usa una identidad de firma propia: `SIGN_IDENTITY="Mi certificado" scripts/build-app.sh`.
