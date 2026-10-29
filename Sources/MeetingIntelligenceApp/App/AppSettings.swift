@@ -54,6 +54,7 @@ final class AppSettings {
     var diarizationStepRatio: Double { didSet { defaults.set(diarizationStepRatio, forKey: "diarizationStepRatio") } }
     /// nil = keep audio forever.
     var audioRetentionDays: Int? { didSet { defaults.set(audioRetentionDays ?? 0, forKey: "audioRetentionDays") } }
+    var videoRetentionDays: Int? { didSet { defaults.set(videoRetentionDays ?? 0, forKey: "videoRetentionDays") } }
     var defaultProfileRetentionDays: Int? { didSet { defaults.set(defaultProfileRetentionDays ?? 0, forKey: "profileRetentionDays") } }
     var language: String { didSet { defaults.set(language, forKey: "language") } }
     var requireConsentConfirmation: Bool { didSet { defaults.set(requireConsentConfirmation, forKey: "consentConfirmation") } }
@@ -99,6 +100,8 @@ final class AppSettings {
         diarizationStepRatio = defaults.object(forKey: "diarizationStepRatio") as? Double ?? 0.1
         let audioDays = defaults.integer(forKey: "audioRetentionDays")
         audioRetentionDays = audioDays > 0 ? audioDays : nil
+        let videoDays = defaults.integer(forKey: "videoRetentionDays")
+        videoRetentionDays = videoDays > 0 ? videoDays : nil
         let profileDays = defaults.integer(forKey: "profileRetentionDays")
         defaultProfileRetentionDays = profileDays > 0 ? profileDays : nil
         language = defaults.string(forKey: "language") ?? "es-CO"

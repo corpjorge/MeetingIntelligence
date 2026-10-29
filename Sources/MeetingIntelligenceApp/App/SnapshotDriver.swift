@@ -18,14 +18,33 @@ enum SnapshotDriver {
         guard let dir = directory else { return }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         env.settings.hasCompletedOnboarding = ProcessInfo.processInfo.environment["MI_SNAPSHOT_ONBOARDING"] == nil
+        if ProcessInfo.processInfo.environment["MI_SNAPSHOT_INTERACTIVE"] == "1" { return }
         Task { @MainActor in
             // Frontmost, so the window is drawn active (traffic lights, sidebar selection).
             NSApp.activate(ignoringOtherApps: true)
             NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
             try? await Task.sleep(for: .seconds(2))
+            if ProcessInfo.processInfo.environment["MI_VERIFY_MICROPHONE"] == "1" {
+                await MicrophoneVerificationDriver.run(env: env, directory: dir)
+                AppUpdateController.terminateClosingSheets()
+                return
+            }
+            if ProcessInfo.processInfo.environment["MI_VERIFY_MEDIA"] == "1" {
+                await MediaVerificationDriver.run(env: env, directory: dir)
+                AppUpdateController.terminateClosingSheets()
+                return
+            }
             for appearance in [NSAppearance.Name.aqua, .darkAqua] {
                 NSApp.appearance = NSAppearance(named: appearance)
                 let suffix = appearance == .aqua ? "light" : "dark"
+                if ProcessInfo.processInfo.environment["MI_SNAPSHOT_RECORDING_ONLY"] == "1" {
+                    if let meeting = try? env.database.meetingRows().first(where: { $0.meeting.status == .ready }) {
+                        router.openMeeting(meeting.id, tab: .audio)
+                        try? await Task.sleep(for: .seconds(1.5))
+                        await capture("meeting-audio-\(suffix)", in: dir)
+                    }
+                    continue
+                }
                 if ProcessInfo.processInfo.environment["MI_SNAPSHOT_ANALYSIS_ONLY"] == "1" {
                     if env.ai.statuses.isEmpty { await env.ai.refreshStatuses() }
                     captureAnalysisControls(suffix: suffix, in: dir, env: env)
@@ -44,6 +63,9 @@ enum SnapshotDriver {
                     router.section = section
                     try? await Task.sleep(for: .seconds(1.5))
                     await capture("\(section.rawValue)-\(suffix)", in: dir)
+                }
+                captureWindowContent("recording-video-setup-\(suffix)", in: dir) {
+                    RecordingView(includeVideo: true).environment(env).environment(router)
                 }
                 // Live-recording banners need a real capture; render the component standalone.
                 captureComponent("recording-mute-reminder-\(suffix)", in: dir) {

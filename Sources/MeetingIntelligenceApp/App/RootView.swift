@@ -93,7 +93,7 @@ private struct SidebarFooter: View {
             if env.recording.isActive {
                 HStack(spacing: DS.Space.s) {
                     RecordingDot(size: DS.Size.dotM)
-                    Text(env.recording.state == .paused ? "Pausado" : "Grabando")
+                    Text(env.recording.activityLabel)
                         .font(DS.Font.captionEmphasis).foregroundStyle(DS.Color.recording)
                     Spacer()
                     Text(Timecode.compact(env.recording.elapsed)).font(DS.Font.mono).foregroundStyle(DS.Color.textSecondary)

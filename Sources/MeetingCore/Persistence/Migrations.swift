@@ -314,6 +314,21 @@ extension AppDatabase {
             }
         }
 
+        migrator.registerMigration("v5-video-assets") { db in
+            try db.create(table: "videoAsset") { t in
+                t.belongsTo("meeting", onDelete: .cascade).notNull()
+                t.primaryKey(["meetingId"])
+                t.column("relativePath", .text).notNull()
+                t.column("windowTitle", .text).notNull()
+                t.column("applicationName", .text).notNull()
+                t.column("width", .integer).notNull()
+                t.column("height", .integer).notNull()
+                t.column("durationSeconds", .double).notNull()
+                t.column("fileSizeBytes", .integer).notNull()
+                t.column("state", .text).notNull()
+            }
+        }
+
         return migrator
     }
 }

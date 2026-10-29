@@ -57,6 +57,8 @@ enum DS {
         /// Timecode column to the left of transcript text.
         static let timecodeGutter: CGFloat = 64
         static let editorMinHeight: CGFloat = 64
+        static let videoPreviewHeight: CGFloat = 200
+        static let videoPlayerHeight: CGFloat = 360
 
         enum Window {
             static let minWidth: CGFloat = 1000

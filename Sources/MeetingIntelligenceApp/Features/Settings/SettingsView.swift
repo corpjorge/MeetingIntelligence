@@ -280,7 +280,18 @@ struct PrivacySettings: View {
                     Text("30 días").tag(30)
                     Text("90 días").tag(90)
                 }
-                Text("La transcripción, los hablantes y los análisis se conservan. Se aplica al iniciar la app.")
+                Text("La transcripción, los hablantes y los análisis se conservan. Eliminar el audio también deja sin sonido el video asociado. Se aplica al iniciar la app.")
+                    .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
+            }
+            Section("Conservación de video") {
+                Picker("Eliminar el video de reuniones transcritas después de", selection: Binding(
+                    get: { settings.videoRetentionDays ?? 0 }, set: { settings.videoRetentionDays = $0 == 0 ? nil : $0 })) {
+                    Text("Nunca").tag(0)
+                    Text("7 días").tag(7)
+                    Text("30 días").tag(30)
+                    Text("90 días").tag(90)
+                }
+                Text("El audio y la transcripción se conservan según sus propias opciones. Se aplica al iniciar la app. El video puede ocupar varios GB por hora.")
                     .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
             }
             Section("Perfiles de voz") {

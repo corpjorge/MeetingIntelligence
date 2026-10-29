@@ -1,5 +1,6 @@
 import AVFoundation
 import MeetingCore
+import MeetingMedia
 
 /// Plays all tracks of a meeting in sync (one AVComposition) with per-source mute.
 @Observable
@@ -14,48 +15,40 @@ final class MeetingAudioPlayer {
     var rate: Float = 1 { didSet { if isPlaying { player?.rate = rate } } }
 
     private var player: AVPlayer?
+    private(set) var hasVideo = false
+    var videoPlayer: AVPlayer? { hasVideo ? player : nil }
     private var trackIDs: [AudioSource: CMPersistentTrackID] = [:]
-    private var composition: AVMutableComposition?
+    private var composition: AVComposition?
     private var timeObserver: Any?
     private var loadedKey: String?
+    private var loadGeneration = UUID()
 
-    func load(tracks: [AudioTrack], paths: AppPaths) async {
-        let key = tracks.map { "\($0.id):\($0.relativePath)" }.sorted().joined()
+    func load(tracks: [AudioTrack], paths: AppPaths, video: VideoAsset? = nil) async {
+        let key = tracks.map { "\($0.id):\($0.relativePath)" }.sorted().joined() + (video.map { "\($0.relativePath):\($0.state):\($0.durationSeconds)" } ?? "")
         guard key != loadedKey else { return }
-        loadedKey = key
         stop()
-        let composition = AVMutableComposition()
-        var ids: [AudioSource: CMPersistentTrackID] = [:]
-        var missing: [String] = []
-        for track in tracks {
-            let url = paths.resolve(relativePath: track.relativePath)
-            guard FileManager.default.fileExists(atPath: url.path) else {
-                missing.append(track.source.rawValue)
-                continue
-            }
-            let asset = AVURLAsset(url: url)
-            do {
-                guard let source = try await asset.loadTracks(withMediaType: .audio).first,
-                      let target = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
-                else { continue }
-                let assetDuration = try await asset.load(.duration)
-                try target.insertTimeRange(CMTimeRange(start: .zero, duration: assetDuration), of: source,
-                                           at: CMTime(seconds: track.timelineOffsetSeconds, preferredTimescale: 600))
-                ids[track.source] = target.trackID
-            } catch {
-                missing.append(track.source.rawValue)
-            }
-        }
-        self.composition = composition
-        trackIDs = ids
-        availableSources = ids.keys.sorted { $0.rawValue < $1.rawValue }
-        guard !ids.isEmpty else {
-            loadError = tracks.isEmpty ? "La reunión no tiene audio." :
-                "El audio no está disponible (se eliminó por la política de conservación o falta el archivo)."
+        loadGeneration = UUID()
+        let generation = loadGeneration
+        let media: MeetingMediaComposition
+        do {
+            media = try await MeetingMediaExporter.composition(tracks: tracks, video: video, paths: paths, strict: false)
+        } catch {
+            guard !Task.isCancelled, generation == loadGeneration else { return }
+            loadError = error.localizedDescription
             isLoaded = false
             return
         }
-        loadError = missing.isEmpty ? nil : "Pistas no disponibles: \(missing.joined(separator: ", "))"
+        guard !Task.isCancelled, generation == loadGeneration else { return }
+        loadedKey = key
+        let composition = media.asset
+        self.composition = composition
+        trackIDs = media.trackIDs
+        availableSources = media.trackIDs.keys.sorted { $0.rawValue < $1.rawValue }
+        hasVideo = media.hasVideo
+        var notices: [String] = []
+        if video != nil && !media.hasVideo { notices.append("El video no está disponible; puedes escuchar el audio.") }
+        if media.trackIDs.count < tracks.count { notices.append("Faltan pistas de audio; pueden haber sido eliminadas por la política de conservación.") }
+        loadError = notices.isEmpty ? nil : notices.joined(separator: " ")
         let item = AVPlayerItem(asset: composition)
         let player = AVPlayer(playerItem: item)
         self.player = player
@@ -101,7 +94,9 @@ final class MeetingAudioPlayer {
         if let timeObserver, let player { player.removeTimeObserver(timeObserver) }
         timeObserver = nil
         player = nil
+        loadedKey = nil
         isLoaded = false
+        hasVideo = false
         currentTime = 0
     }
 
@@ -111,7 +106,7 @@ final class MeetingAudioPlayer {
         mix.inputParameters = composition.tracks(withMediaType: .audio).map { track in
             let params = AVMutableAudioMixInputParameters(track: track)
             let source = trackIDs.first { $0.value == track.trackID }?.key
-            params.setVolume(source.map { mutedSources.contains($0) ? 0 : 1 } ?? 1, at: .zero)
+            params.setVolume(source.map { mutedSources.contains($0) ? 0 : 1 / Float(max(1, trackIDs.count)) } ?? 1, at: .zero)
             return params
         }
         item.audioMix = mix

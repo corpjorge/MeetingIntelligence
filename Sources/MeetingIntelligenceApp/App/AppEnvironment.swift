@@ -1,6 +1,7 @@
 import Foundation
 import MeetingAudio
 import MeetingCore
+import MeetingMedia
 import MeetingSpeech
 import OSLog
 
@@ -21,6 +22,7 @@ final class AppEnvironment {
     let processing: ProcessingCoordinator
     let recording: RecordingController
     let models: ModelStatusModel
+    let mediaExport = MediaExportController()
     let ai: AIController
     let semantic: SemanticIndexController
     let modelUpdates: ModelUpdateController
@@ -84,6 +86,7 @@ final class AppEnvironment {
         processing.onCompleted = { [semantic] _ in semantic.schedule() }
         semantic.refresh()
         recoverAfterCrash()
+        Task { await VideoRecovery.recover(database: database, paths: paths) }
     }
 
     /// Meetings left mid-recording by a crash get their WAV headers repaired and become `interrupted`.
@@ -97,6 +100,7 @@ final class AppEnvironment {
             recoveredMeetings = ids
             try database.enforceProfileRetention()
             try AudioRetention(database: database, paths: paths).apply(days: settings.audioRetentionDays)
+            try VideoRetention(database: database, paths: paths).apply(days: settings.videoRetentionDays)
             // Files left behind by an interrupted delete or a crash mid-transcription.
             let orphans = try StorageMaintenance.removeOrphanedRecordings(database: database, paths: paths)
             let temporary = StorageMaintenance.sweepTemporaryFiles()
@@ -123,6 +127,23 @@ struct AudioRetention {
                 if FileManager.default.fileExists(atPath: url.path) {
                     try FileManager.default.removeItem(at: url)
                 }
+            }
+        }
+    }
+}
+
+/// Independent policy: an existing audio preference never deletes a new video silently.
+struct VideoRetention {
+    let database: AppDatabase
+    let paths: AppPaths
+
+    func apply(days: Int?, now: Date = Date()) throws {
+        guard let days, days > 0 else { return }
+        let cutoff = now.addingTimeInterval(-Double(days) * 86_400)
+        for row in try database.meetingRows() where row.meeting.displayDate < cutoff && row.meeting.status == .ready {
+            if let video = try database.video(meetingId: row.id) {
+                let url = paths.resolve(relativePath: video.relativePath)
+                if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
             }
         }
     }

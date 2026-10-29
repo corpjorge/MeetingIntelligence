@@ -9,10 +9,10 @@ struct MenuBarLabel: View {
 
     var body: some View {
         if recording.isActive {
-            Image(systemName: recording.state == .paused ? "pause.circle.fill" : "record.circle.fill")
+            Image(systemName: recording.state == .starting ? "hourglass" : recording.state == .paused ? "pause.circle.fill" : "record.circle.fill")
                 .symbolRenderingMode(.palette)
                 .foregroundStyle(.red, .primary)
-                .accessibilityLabel(recording.state == .paused ? "Grabación en pausa" : "Grabando")
+                .accessibilityLabel(recording.activityLabel)
         } else if callDetected {
             Image(systemName: "phone.connection")
                 .accessibilityLabel("Llamada detectada")
@@ -39,6 +39,11 @@ struct MenuBarContent: View {
                 VStack(alignment: .leading, spacing: DS.Space.s) {
                     Text(env.recording.meeting?.title ?? "Grabación")
                         .font(DS.Font.bodyEmphasis).lineLimit(1)
+                    if env.recording.state == .starting {
+                        Text(env.recording.startingMessage).font(DS.Font.caption)
+                        Button("Cancelar inicio") { env.recording.cancelStart() }
+                            .disabled(env.recording.cancellingStart)
+                    } else {
                     Text(Timecode.compact(env.recording.elapsed)).font(DS.Font.metric)
                     HStack(spacing: DS.Space.s) {
                         Label("Mic", systemImage: "mic.fill").font(DS.Font.caption).frame(width: DS.Layout.Control.meterCompactWidth, alignment: .leading)
@@ -65,6 +70,8 @@ struct MenuBarContent: View {
                         .buttonStyle(.ds(.secondary, size: .small))
                         Button("Detener y guardar") { env.recording.stop() }
                             .buttonStyle(.ds(.recording, size: .small))
+                            .disabled(env.recording.state == .stopping)
+                    }
                     }
                 }
             } else {

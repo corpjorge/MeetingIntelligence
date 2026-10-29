@@ -1,4 +1,5 @@
 import MeetingCore
+import AVKit
 import SwiftUI
 
 struct ChatMessage: Identifiable {
@@ -47,17 +48,38 @@ struct ChatPanel: View {
                     .padding(.horizontal, DS.Space.xl)
                     .padding(.bottom, DS.Space.s)
             }
-            HStack(spacing: DS.Space.m) {
-                Toggle(isOn: $useAI) { Label("IA", systemImage: "sparkles") }
-                    .toggleStyle(.switch).controlSize(.small)
-                    .help("Desactívalo para ver solo los resultados de la búsqueda local")
-                TextField("Ej.: ¿Qué compromisos asumió Carlos?", text: $draft)
-                    .textFieldStyle(.plain).font(DS.Font.body)
-                    .onSubmit(send)
-                Button("Preguntar", action: send).buttonStyle(.dsPrimary)
-                    .disabled(draft.trimmingCharacters(in: .whitespaces).count < 3)
-                IconButton(systemImage: "trash", help: "Borrar el historial de este chat") { confirmClear = true }
-                    .disabled(messages.isEmpty)
+            VStack(alignment: .leading, spacing: DS.Space.m) {
+                HStack(spacing: DS.Space.m) {
+                    Toggle(isOn: $useAI) { Label("IA", systemImage: "sparkles") }
+                        .toggleStyle(.switch).controlSize(.small)
+                        .help("Desactívalo para ver solo los resultados de la búsqueda local")
+                        .fixedSize()
+                    if useAI {
+                        AIProviderControls(showsEffort: false)
+                    } else {
+                        Text("Solo búsqueda local · no se envía a ninguna IA")
+                            .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
+                    }
+                    Spacer(minLength: DS.Space.none)
+                }
+                HStack(spacing: DS.Space.m) {
+                    ZStack(alignment: .topLeading) {
+                        if draft.isEmpty {
+                            Text("Ej.: ¿Qué compromisos asumió Carlos?")
+                                .font(DS.Font.body).foregroundStyle(DS.Color.textTertiary)
+                                .padding(.top, DS.Space.xs)
+                                .padding(.leading, DS.Space.xs)
+                                .allowsHitTesting(false)
+                        }
+                        ChatTextInput(text: $draft, onSubmit: send)
+                    }
+                    .frame(height: DS.Layout.editorMinHeight)
+                    .help("Enter para enviar · Mayús + Enter para una nueva línea. Corrección ortográfica de macOS activada.")
+                    Button("Preguntar", action: send).buttonStyle(.dsPrimary)
+                        .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).count < 3)
+                    IconButton(systemImage: "trash", help: "Borrar el historial de este chat") { confirmClear = true }
+                        .disabled(messages.isEmpty)
+                }
             }
             .padding(.horizontal, DS.Space.xl)
             .padding(.vertical, DS.Space.m)
@@ -73,6 +95,7 @@ struct ChatPanel: View {
             Text("Se eliminan las preguntas y respuestas guardadas. Las reuniones no cambian.")
         }
         .task(id: thread) { loadHistory() }
+        .task { if env.ai.statuses.isEmpty { await env.ai.refreshStatuses() } }
     }
 
     private func loadHistory() {
@@ -98,15 +121,17 @@ struct ChatPanel: View {
     }
 
     private func send() {
-        let question = draft.trimmingCharacters(in: .whitespaces)
+        let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard question.count >= 3 else { return }
         draft = ""
         let message = ChatMessage(question: question)
         messages.append(message)
-        let scope = scope, thread = thread
+        let scope = scope, thread = thread, useAI = useAI
+        // Freeze the visible selection before the asynchronous semantic lookup.
+        let configuration = env.ai.configuration(for: env.ai.selectedProvider)
         Task {
             let semantic = await env.semantic.query(for: question)
-            let answer = await env.ai.ask(question: question, scope: scope, useAI: useAI, semantic: semantic)
+            let answer = await env.ai.ask(question: question, scope: scope, useAI: useAI, semantic: semantic, configuration: configuration)
             if let i = messages.firstIndex(where: { $0.id == message.id }) {
                 messages[i].answer = answer
                 messages[i].isLoading = false
@@ -128,6 +153,7 @@ struct ChatPanel: View {
             HStack {
                 Spacer()
                 Text(message.question).font(DS.Font.body)
+                    .textSelection(.enabled)
                     .padding(DS.Space.m)
                     .background(DS.Color.accentSoft, in: RoundedRectangle(cornerRadius: DS.Radius.m))
             }
@@ -209,11 +235,23 @@ struct AudioTab: View {
                 if let error = model.player.loadError {
                     InlineBanner(tone: .warning, systemImage: "speaker.slash", title: "Audio", message: error)
                 }
+                if let player = model.player.videoPlayer {
+                    MeetingVideoView(player: player)
+                        .frame(height: DS.Layout.videoPlayerHeight)
+                        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.m))
+                    if let video = model.detail?.video {
+                        Text("\(video.applicationName) · \(video.windowTitle)")
+                            .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
+                        if video.state == .interrupted {
+                            Text("Video recuperado después de una interrupción; puede estar incompleto.")
+                                .font(DS.Font.caption).foregroundStyle(DS.Color.warning)
+                        }
+                    }
+                }
                 if model.player.isLoaded {
                     SurfaceCard {
                         VStack(alignment: .leading, spacing: DS.Space.l) {
                             Text(Timecode.compact(model.player.currentTime)).font(DS.Font.timer)
-                            PlayerBar(player: model.player).background(.clear)
                         }
                     }
                 }

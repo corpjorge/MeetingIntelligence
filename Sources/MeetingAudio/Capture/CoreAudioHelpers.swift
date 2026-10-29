@@ -193,6 +193,23 @@ public struct AudioDeviceInfo: Sendable, Hashable, Identifiable {
 }
 
 public enum AudioDevices {
+    /// Enumerates input-capable devices without opening their microphones.
+    public static func inputDevices() -> [AudioDeviceInfo] {
+        HAL.array(HAL.systemObject, kAudioHardwarePropertyDevices, element: AudioObjectID(0))
+            .filter { !HAL.array($0, kAudioDevicePropertyStreams, scope: kAudioObjectPropertyScopeInput, element: AudioStreamID(0)).isEmpty }
+            .map { info($0, scope: kAudioObjectPropertyScopeInput) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// Do not activate a Bluetooth headset microphone automatically. Users can
+    /// still select it explicitly; no system/call-app defaults are changed here.
+    public static func preferredRecordingInput(defaultInput: AudioDeviceInfo?, devices: [AudioDeviceInfo]) -> AudioDeviceInfo? {
+        if let defaultInput, !defaultInput.transport.isBluetooth,
+           devices.contains(where: { $0.deviceID == defaultInput.deviceID }) { return defaultInput }
+        return devices.first(where: { $0.transport == .builtIn })
+            ?? devices.first(where: { $0.transport == .usb })
+    }
+
     public static func defaultInput() -> AudioDeviceInfo? {
         guard let id: AudioObjectID = HAL.scalar(HAL.systemObject, kAudioHardwarePropertyDefaultInputDevice, default: 0),
               id != kAudioObjectUnknown else { return nil }

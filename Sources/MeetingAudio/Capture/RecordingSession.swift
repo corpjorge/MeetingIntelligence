@@ -17,8 +17,16 @@ public final class RecordingSession: @unchecked Sendable {
     private let control = DispatchQueue(label: "mi.recording.control")
     private let logger = Logger(subsystem: "dev.meetingintelligence", category: "recording")
 
-    /// Optional tap of converted 16 kHz mono audio per source; set before `start()`.
-    public var onSamples: (@Sendable (AudioSource, [Float]) -> Void)?
+    /// May attach live ASR after capture has already started. Never holds the
+    /// handler lock while calling the consumer or performing model work.
+    private let sampleHandlerLock = NSLock()
+    private var sampleHandler: (@Sendable (AudioSource, [Float]) -> Void)?
+    public var onSamples: (@Sendable (AudioSource, [Float]) -> Void)? {
+        get { sampleHandlerLock.withLock { sampleHandler } }
+        set { sampleHandlerLock.withLock { sampleHandler = newValue } }
+    }
+    private let cancellationLock = NSLock()
+    private var startCancelled = false
 
     private var micRecorder: TrackRecorder?
     private var remoteRecorder: TrackRecorder?
@@ -32,6 +40,9 @@ public final class RecordingSession: @unchecked Sendable {
     private var started = false
     private var stopped = false
     private var microphonePaused = false
+    private var captureStartedHost: Double?
+    private var deliveryWatchdog = AudioDeliveryWatchdog()
+    private var inputDeviceName: String?
 
     public init(configuration: RecordingConfiguration) {
         self.configuration = configuration
@@ -52,10 +63,45 @@ public final class RecordingSession: @unchecked Sendable {
 
     // MARK: Lifecycle
 
+    /// Hardware APIs may block while negotiating a route. Keep that work off
+    /// the main actor and observe cancellation between native operations.
+    public func startAsync() async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async { [self] in
+                do { try start(); continuation.resume() }
+                catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+
+    public func requestStartCancellation() { cancellationLock.withLock { startCancelled = true } }
+
+    private func checkStartCancellation() throws {
+        if cancellationLock.withLock({ startCancelled }) { throw CancellationError() }
+    }
+
+    public func stopAsync() async -> RecordingResult {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async { [self] in continuation.resume(returning: stop()) }
+        }
+    }
+
     public func start() throws {
         try control.sync {
             guard !started else { throw CaptureError.alreadyRecording }
             started = true
+            var succeeded = false
+            defer {
+                if !succeeded {
+                    microphone?.stop(); tap?.stop()
+                    listeners.forEach { $0.invalidate() }; listeners.removeAll()
+                    _ = remoteRecorder?.finish(atTimelineSeconds: 0)
+                    _ = micRecorder?.finish(atTimelineSeconds: 0)
+                    stopped = true
+                    continuation.finish()
+                }
+            }
+            try checkStartCancellation()
             try FileManager.default.createDirectory(at: configuration.directory, withIntermediateDirectories: true,
                                                     attributes: [.posixPermissions: 0o700])
             let onLevel: @Sendable (AudioSource, AudioLevel) -> Void = { [continuation] source, level in
@@ -77,15 +123,24 @@ public final class RecordingSession: @unchecked Sendable {
                     outputSampleRate: configuration.outputSampleRate, clock: clock,
                     queue: trackQueue, echoCanceller: echoCanceller,
                     onLevel: onLevel, onWarning: onWarning)
-                recorder.onSamples = onSamples
+                recorder.onSamples = { [weak self] source, samples in self?.onSamples?(source, samples) }
                 micRecorder = recorder
                 let mic = MicrophoneSource(
-                    recorder: recorder, voiceProcessing: configuration.usesAppleVoiceProcessing,
-                    onDeviceChange: { [weak self] name in self?.report(.inputDeviceChanged(name)) },
+                    recorder: recorder, voiceProcessing: configuration.usesAppleVoiceProcessing, deviceUID: configuration.microphoneDeviceUID,
+                    onDeviceChange: { [weak self] name in
+                        self?.control.async { [weak self] in
+                            self?.inputDeviceName = name
+                            self?.report(.inputDeviceChanged(name))
+                        }
+                    },
                     onFailure: { [weak self] message in self?.report(.sourceFailed(.localMicrophone, message)) })
-                try mic.start()
                 microphone = mic
-                if let input = AudioDevices.defaultInput(), input.transport.isBluetooth {
+                try mic.start()
+                try checkStartCancellation()
+                let input = configuration.microphoneDeviceUID.flatMap { uid in AudioDevices.inputDevices().first { $0.uid == uid } }
+                    ?? AudioDevices.defaultInput()
+                inputDeviceName = input?.name
+                if let input, input.transport.isBluetooth {
                     report(.bluetoothMicrophone(input.name))
                 }
             }
@@ -97,10 +152,11 @@ public final class RecordingSession: @unchecked Sendable {
                     outputSampleRate: configuration.outputSampleRate, clock: clock,
                     queue: trackQueue, echoCanceller: echoCanceller,
                     onLevel: onLevel, onWarning: onWarning)
-                recorder.onSamples = onSamples
+                recorder.onSamples = { [weak self] source, samples in self?.onSamples?(source, samples) }
                 remoteRecorder = recorder
                 tap = ProcessTapSource(recorder: recorder)
                 try startRemoteLocked()
+                try checkStartCancellation()
                 installListenersLocked()
             }
 
@@ -109,6 +165,8 @@ public final class RecordingSession: @unchecked Sendable {
                !configuration.usesRecordingEchoCancellation, !configuration.usesAppleVoiceProcessing {
                 report(.speakerEchoRisk(output.dataSourceName ?? output.name))
             }
+            captureStartedHost = HostClock.nowSeconds()
+            succeeded = true
             continuation.yield(.remoteScope(scope))
         }
     }
@@ -121,6 +179,8 @@ public final class RecordingSession: @unchecked Sendable {
     /// Stops all sources, pads tracks to a common length and closes the files.
     public func stop() -> RecordingResult {
         control.sync {
+            // Freeze the shared endpoint before shutting down either audio or video.
+            clock.pause()
             let end = clock.elapsed
             listeners.forEach { $0.invalidate() }
             listeners.removeAll()
@@ -142,7 +202,7 @@ public final class RecordingSession: @unchecked Sendable {
             return RecordingResult(
                 durationSeconds: end, tracks: stats, captureScope: scope,
                 remoteProcessDescription: describe(tappedProcesses),
-                inputDeviceName: AudioDevices.defaultInput()?.name,
+                inputDeviceName: inputDeviceName,
                 warnings: warningLock.withLock { warnings },
                 sourceApp: { if case .application(let selector) = configuration.remoteTarget { selector } else { nil } }(),
                 microphonePauses: micPauses)
@@ -153,6 +213,29 @@ public final class RecordingSession: @unchecked Sendable {
     public func flushToDisk() {
         micRecorder?.flush()
         remoteRecorder?.flush()
+    }
+
+    /// No-buffer failures never reach TrackRecorder's digital-silence detector.
+    /// Check them independently of the UI meters, without opening any devices.
+    public func checkAudioDelivery() {
+        control.async { [self] in
+            guard started, !stopped, !clock.isPaused, let start = captureStartedHost else { return }
+            let now = HostClock.nowSeconds()
+            guard now - start >= 5 else { return }
+            for (source, recorder) in [(AudioSource.localMicrophone, micRecorder), (.remoteSystemAudio, remoteRecorder)] {
+                guard let recorder else { continue }
+                if source == .localMicrophone && microphonePaused { continue }
+                if source == .remoteSystemAudio && tap?.isRunning != true { continue }
+                let change = deliveryWatchdog.check(source: source, lastReceivedAt: recorder.lastReceivedHostTime, startedAt: start, now: now)
+                if change == .missing {
+                    continuation.yield(.level(source, .silence))
+                    report(.noAudioBuffers(source))
+                } else if change == .recovered {
+                    warningLock.withLock { warnings.removeAll { $0 == .noAudioBuffers(source) } }
+                    continuation.yield(.sourceRecovered(source))
+                }
+            }
+        }
     }
 
     // MARK: Microphone pause

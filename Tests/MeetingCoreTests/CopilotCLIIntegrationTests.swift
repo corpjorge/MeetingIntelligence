@@ -31,6 +31,12 @@ struct CopilotCatalogIntegrationTests {
         let environment = await ToolEnvironment.shared.environment()
         let catalog = try await CopilotModelCatalog.catalog(executable: executable, environment: environment)
         #expect(catalog.models == catalog.models.sorted())
+        if let report = ProcessInfo.processInfo.environment["MI_COPILOT_CATALOG_REPORT"] {
+            // Metadata only; never persist account names or credentials in the diagnostic.
+            let data = try JSONSerialization.data(withJSONObject: ["modelCount": catalog.models.count,
+                                                                    "models": catalog.models], options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: URL(fileURLWithPath: report))
+        }
         if let expected = ProcessInfo.processInfo.environment["MI_COPILOT_EXPECTED_LOGIN"] {
             #expect(catalog.login == expected)
             #expect(!catalog.models.isEmpty)

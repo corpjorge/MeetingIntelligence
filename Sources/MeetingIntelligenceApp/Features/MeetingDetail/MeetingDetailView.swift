@@ -1,6 +1,7 @@
 import AppKit
 import GRDB
 import MeetingCore
+import MeetingMedia
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -16,7 +17,7 @@ enum MeetingDetailTab: String, CaseIterable, Identifiable, Hashable {
         case .decisions: "Decisiones"
         case .tasks: "Tareas"
         case .chat: "Chat"
-        case .audio: "Audio"
+        case .audio: "Grabación"
         }
     }
     var icon: String {
@@ -27,7 +28,7 @@ enum MeetingDetailTab: String, CaseIterable, Identifiable, Hashable {
         case .decisions: "checkmark.seal"
         case .tasks: "checklist"
         case .chat: "bubble.left.and.text.bubble.right"
-        case .audio: "waveform"
+        case .audio: "play.rectangle"
         }
     }
 }
@@ -97,8 +98,23 @@ struct MeetingDetailView: View {
                     DSTabBar(tabs: MeetingDetailTab.allCases, selection: $tab, title: \.title, icon: \.icon)
                         .padding(.horizontal, DS.Space.xxl)
                         .padding(.top, DS.Space.l)
+                    if env.mediaExport.isExporting {
+                        HStack(spacing: DS.Space.m) {
+                            ProgressView(value: env.mediaExport.progress)
+                                .frame(maxWidth: DS.Layout.Control.progressBarMaxWidth)
+                            Text("Exportando…").font(DS.Font.callout)
+                            Button("Cancelar") { env.mediaExport.cancel() }.buttonStyle(.dsGhost)
+                        }
+                        .padding(DS.Space.m)
+                    }
+                    if let error = env.mediaExport.error {
+                        InlineBanner(tone: .danger, systemImage: "exclamationmark.triangle", title: "Exportación", message: error) {
+                            IconButton(systemImage: "xmark", help: "Cerrar") { env.mediaExport.error = nil }
+                        }
+                        .padding(.horizontal, DS.Space.xl)
+                    }
                     content(detail)
-                    if model.player.isLoaded, tab != .audio {
+                    if model.player.isLoaded {
                         PlayerBar(player: model.player)
                     }
                 }
@@ -111,8 +127,8 @@ struct MeetingDetailView: View {
         }
         .background(DS.Color.background)
         .task(id: meetingId) { await model.observe(env.database, meetingId: meetingId) }
-        .task(id: model.detail?.tracks.map(\.id)) {
-            if let tracks = model.detail?.tracks { await model.player.load(tracks: tracks, paths: env.paths) }
+        .task(id: model.detail) {
+            if let detail = model.detail { await model.player.load(tracks: detail.tracks, paths: env.paths, video: detail.video) }
         }
         .onAppear {
             if let requested = router.requestedDetailTab { tab = requested; router.requestedDetailTab = nil }
@@ -236,16 +252,29 @@ struct MeetingDetailView: View {
             .help("Transcribir con Parakeet Ultra y diarizar (local)")
 
             Menu {
-                ForEach(ExportFormat.allCases) { format in
-                    Button(format.displayName) { export(format) }
+                if let detail = model.detail {
+                    ForEach(MediaExportFormat.allCases) { format in
+                        Button(format.title) { env.mediaExport.begin(detail: detail, paths: env.paths, format: format) }
+                            .disabled(env.mediaExport.isExporting || detail.tracks.isEmpty || detail.meeting.status == .recording
+                                      || (format == .mp4 && (detail.video == nil || detail.video?.state == .recording || detail.video?.state == .failed)))
+                    }
+                }
+                Divider()
+                Menu("Transcripción y datos") {
+                    ForEach(ExportFormat.allCases) { format in
+                        Button(format.displayName) { export(format) }
+                    }
                 }
             } label: {
                 Label("Exportar", systemImage: "square.and.arrow.up")
+                    .labelStyle(.iconOnly)
             }
+            .accessibilityLabel("Exportar")
+            .help("Exportar el audio, el video o la transcripción de esta reunión")
             .disabled(model.detail == nil)
 
             Menu {
-                Button("Mostrar audio en Finder") {
+                Button("Mostrar grabación en Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([env.paths.meetingDirectory(meetingId)])
                 }
                 Divider()

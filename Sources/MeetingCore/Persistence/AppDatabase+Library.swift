@@ -5,6 +5,7 @@ public import GRDB
 public struct MeetingDetail: Sendable, Hashable {
     public var meeting: Meeting
     public var tracks: [AudioTrack]
+    public var video: VideoAsset? = nil
     public var transcripts: [Transcript]
     public var segments: [TranscriptSegment]
     public var speakers: [MeetingSpeaker]
@@ -71,7 +72,7 @@ extension AppDatabase {
         let jobs = try ProcessingJob.filter(Column("meetingId") == id).order(Column("startedAt")).fetchAll(db)
         let pauses = try RecordingPause.filter(Column("meetingId") == id).order(Column("startTime")).fetchAll(db)
         return MeetingDetail(
-            meeting: meeting, tracks: tracks, transcripts: transcripts, segments: segments,
+            meeting: meeting, tracks: tracks, video: try VideoAsset.fetchOne(db, key: id), transcripts: transcripts, segments: segments,
             speakers: speakers,
             participants: Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0) }),
             jobs: jobs,

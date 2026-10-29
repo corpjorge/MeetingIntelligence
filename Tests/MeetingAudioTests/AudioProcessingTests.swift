@@ -84,6 +84,22 @@ struct TimelineAlignerTests {
         #expect(aligner.framesWritten == 100)
     }
 
+    @Test func historicalClockMapsDelayedFramesAcrossRepeatedPauses() {
+        let clock = CaptureClock(originHostSeconds: 100)
+        clock.pause(atHostSeconds: 110)
+        #expect(clock.timelineSeconds(forHostSeconds: 109) == 9)
+        #expect(clock.timelineSeconds(forHostSeconds: 112) == nil)
+        clock.resume(atHostSeconds: 115)
+        clock.pause(atHostSeconds: 120)
+        clock.resume(atHostSeconds: 122)
+        #expect(clock.timelineSeconds(forHostSeconds: 109) == 9)
+        #expect(clock.timelineSeconds(forHostSeconds: 112) == nil)
+        #expect(clock.timelineSeconds(forHostSeconds: 115) == 10)
+        #expect(clock.timelineSeconds(forHostSeconds: 119) == 14)
+        #expect(clock.timelineSeconds(forHostSeconds: 121) == nil)
+        #expect(clock.timelineSeconds(forHostSeconds: 125) == 18)
+    }
+
     @Test func clockExcludesPausedTime() throws {
         let clock = CaptureClock(originHostSeconds: HostClock.nowSeconds() - 10)
         let before = try #require(clock.timelineSeconds(forHostSeconds: HostClock.nowSeconds()))

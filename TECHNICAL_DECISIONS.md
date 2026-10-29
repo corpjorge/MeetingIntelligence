@@ -631,3 +631,151 @@ real**, volumen que reciben los demás, cambios de dispositivo y condiciones ac�
 adaptarse; puede quedar eco con altavoces saturados, latencia/reverberación fuera del filtro, deriva o sonidos de
 otras aplicaciones que no estén en la referencia. No se promete eliminación total. Las grabaciones anteriores
 no se modifican automáticamente.
+
+## TD-34 · Captura de ventana con video, exportación multimedia y ortografía del chat
+
+- Se añade `MeetingMedia` (depende de Core y Audio). ScreenCaptureKit captura únicamente la ventana elegida en el selector del sistema; no captura audio ni micrófono por segunda vez. El modo predeterminado sigue siendo solo audio. La selección muestra una previsualización y no permite iniciar video hasta tener una fuente confirmada. No se amplía automáticamente a otra ventana/pantalla.
+- Video SDR H.264, proporciones conservadas, hasta 1080p/30 fps, en MOV fragmentado cada 10 s. AVAssetWriter se ejecuta en una cola separada de audio/AEC y limita el estado retenido al último frame. Los PTS se convierten desde el reloj de ScreenCaptureKit al host clock. `CaptureClock` conserva el historial de pausas para mapear correctamente buffers tardíos. El video comienza con negro y conserva la duración de una imagen estática hasta detenerse.
+- Nueva migración `v5-video-assets`: un maestro de video por reunión, con dimensiones, ruta relativa, duración, tamaño, ventana/aplicación y estado. La finalización del video es asíncrona; si falla, se registra el fallo y se conservan los WAV. Los maestros inconclusos se examinan al iniciar y se marcan como recuperados o fallidos. La recuperación de un cierre forzado con video largo todavía requiere validación física; no se promete un límite de pérdida.
+- Se exportan M4A, WAV mono 16 kHz y MP4 H.264/AAC con audio mezclado. Los offsets se respetan; las fuentes se atenúan por el número de pistas para mantener margen y evitar saturación por suma. La exportación usa un temporal junto al destino, cancelación y publicación por rename atómico. Nunca reemplaza deliberadamente los originales. No depende de haber terminado ASR/IA. La transcripción sigue disponible en TXT/Markdown/PDF/SRT/JSON bajo un submenú.
+- Reproducción de video y audio mediante la misma AVComposition/AVPlayer, incluidos saltos por citas y silenciamiento por fuente. Se usa AVPlayerView directamente: el overlay VideoPlayer de SwiftUI abortaba al resolver su superclase con CLT/SDK 26.5 en el macOS actual; la revisión visual lo detectó. Los controles de transporte permanecen visibles al pie en todas las pestañas. La pestaña «Audio» pasa a «Grabación». Retención de video independiente de la preferencia histórica de audio, inicialmente «Nunca», configurable en Privacidad. La eliminación completa de una reunión elimina también su video.
+- El chat utiliza NSTextView con revisión ortográfica continua, gramática, autocorrección y reemplazo de texto, con los idiomas de macOS. Enter envía, Mayús+Enter añade línea y la composición de texto de un IME no se envía antes de terminar. No se usa un proveedor de IA para corregir lo escrito.
+- Verificación automatizada: codificación H.264 de imágenes sintéticas; lectura del primer frame y del frame posterior; duración de imagen estática final; exportación MP4 con pistas de audio/video; mezcla WAV con offsets y niveles comprobados; M4A; cancelación y preservación de destinos/originales; migración y cascada; reloj con pausas históricas; configuración y envío del editor; preferencias/retención independiente.
+- `MI_VERIFY_MEDIA=1` junto con `MI_SNAPSHOT_DIR` y una biblioteca temporal ejecuta una verificación de integración usando solo una ventana de este proceso, sin capturar llamadas ni micrófono, y genera MOV/MP4/M4A/WAV y `verification.json`. La ventana fuente cambia de color mientras una segunda ventana la cubre; se comprueban los frames del maestro.
+- Límites: minimizar puede suspender la imagen; la captura se reanuda cuando la ventana vuelve a producir frames. Se avisa ante suspensión/fallo y el audio continúa. Otra presentación en una ventana distinta requiere una nueva selección antes de una nueva grabación. La primera versión no cambia la fuente durante la grabación. El audio de navegadores conserva el alcance compartido existente. Video de importaciones antiguas no se recupera: el importador anterior solo extrajo su audio.
+- Pendiente de verificación: llamada real de Teams/Zoom/Meet, sesión de 60 min con medición de deriva/CPU/memoria/batería, cambios de dispositivo durante video, disco lleno y recuperación tras cierre forzado; ejecución en un equipo con macOS 15. La comprobación corta con ventanas sintéticas no acredita esos escenarios.
+
+## TD-35 · Micrófono Bluetooth sin bucle de reinicios y detección de canales vacíos
+
+Diagnóstico de una grabación real reportada por el usuario (solo metadatos/niveles, sin escuchar ni transcribir):
+entrada y salida Galaxy Buds Pro por Bluetooth, entrada nominal de 16 kHz; el WAV del micrófono seguía en 44 bytes
+(solo cabecera), mientras el WAV remoto de Teams contenía muestras de audio. Los registros mostraban reinicios
+correctos aparentemente cada ~0,8 s, con formato anunciado de 44,1 kHz y Voice Processing desactivado. Se confirmó
+un bucle de reconfiguración y ausencia de audio local; no se atribuye a una mera caída de calidad de Bluetooth.
+
+- El tap del micrófono remuestrea con `buffer.format.sampleRate`. El observador se instala antes de `prepare/start`
+  para no perder cambios ocurridos durante el arranque. La elección inicial de `format: nil` se sustituye en TD-37
+  por el formato de entrada real del hardware: nil podía conservar el formato cliente del dispositivo anterior.
+- Se agrupan notificaciones durante 0,5 s. Si el motor está corriendo y entrega buffers recientes, no se reinicia.
+  Cuando hace falta recuperar, se reutiliza el mismo motor negociado en lugar de crear uno nuevo. Límite de tres
+  intentos en 30 s; al agotarse se libera el motor y se muestra el fallo, evitando reconexiones indefinidas.
+- Sin VPIO, la unidad de captura tiene la salida desactivada: grabar un micrófono no necesita abrir los audífonos
+  para reproducción. La alternativa VPIO conserva su advertencia y queda sujeta a las limitaciones de TD-33.
+- La app permite elegir un micrófono de grabación por UID usando `AUAudioUnit.setDeviceID`, sin escribir el
+  dispositivo predeterminado del sistema ni los ajustes de Teams. Automático conserva la entrada no Bluetooth
+  disponible, o prefiere integrado/USB cuando la predeterminada es Bluetooth. Si no existe alternativa, exige una
+  selección explícita; no activa el micrófono Bluetooth silenciosamente. Al desconectar uno elegido, no cambia a otro.
+- Se comprueba recepción de buffers a partir de 5 s, independientemente de los medidores. Se distinguen ausencia
+  de callbacks y muestras silenciosas. Falta de audio genera aviso por canal; si vuelven los datos, se retira ese
+  aviso. Las pausas intencionales no se inspeccionan. El detector no corrige el dispositivo por su cuenta.
+- Un arranque fallido detiene fuentes y finaliza grabadores abiertos. La metadata conserva el nombre del micrófono
+  realmente elegido, y se muestra durante la grabación.
+
+Verificación: pruebas sintéticas de límite de reinicios, ausencia/retorno de buffers, preferencia de dispositivo,
+entrada que cambia de 44,1 a 16 kHz y regresión de Audio/App. No se abrió otro micrófono ni se cambió la conexión
+Bluetooth del usuario durante estas pruebas. Pendiente validar la nueva captura con los Galaxy Buds y con el
+micrófono integrado en una llamada real; no se promete que usar el micrófono Bluetooth conserve calidad estéreo.
+Los intervalos que nunca llegaron al archivo local no se pueden recuperar de esa pista.
+
+## TD-36 · Vista previa y grabación con un único stream autorizado
+
+El usuario mostró autorización de pantalla/audio activada, una petición repetida de macOS y el error de vista
+previa. El fallo de la app estaba confirmado en su flujo: tras recibir el filtro del selector nativo, un error de
+`SCScreenshotManager` borraba ese filtro; además, dos guardas exigían una imagen para iniciar. Eso obligaba a volver
+al selector aunque la ventana ya estuviera seleccionada. No se pudo atribuir el error interno de ScreenshotManager
+solo al estado del interruptor de Ajustes.
+
+- Al confirmar una ventana se inicia automáticamente un `SCStream` sin audio, micrófono ni archivos. Sus frames
+  producen la vista previa en memoria, limitada a 640×360 y una actualización cada 0,4 s. No se usan
+  `SCScreenshotManager` ni `CGPreflightScreenCaptureAccess`: el consentimiento limitado del selector no se trata
+  como un permiso global ausente. Se elimina el remedio inicial de la miniatura opcional.
+- Al pulsar Iniciar se transfiere el mismo `WindowVideoRecorder` a `RecordingController` y se adjunta su escritor.
+  `start()` comparte una única tarea de arranque; no crea otro stream ni solicita otra captura. Una imagen estática
+  anterior al inicio puede sembrar el primer frame; una posterior conserva su timestamp real en el reloj común.
+- La ventana seleccionada se conserva tras un error, pero el inicio de grabación requiere que el stream haya
+  arrancado. El fallo real muestra su causa y permite reintentar. La falta de frames se avisa tras cinco segundos;
+  no se oculta como una vista previa opcional. Se muestran título y aplicación independientemente de la miniatura.
+- Cancelar una nueva selección conserva la captura anterior. Cambiar ventana, volver a Solo audio o salir de la
+  pantalla de preparación libera la captura de vista previa. Las revisiones y la cancelación impiden que respuestas
+  de selecciones anteriores sobrescriban la actual. Salir durante una grabación no detiene el stream transferido.
+- Se comprueba el inicio de video antes de abrir fuentes de audio. Si macOS rechaza realmente el stream, el mensaje
+  explica que puede existir otra copia o identidad; no afirma que el usuario tenga el interruptor desactivado.
+- Había copias en `build/` y `/Applications` con requisitos de firma ad-hoc basados en CDHash diferentes. No hay
+  identidades válidas de firma de código configuradas. Una nueva compilación ad-hoc no conserva necesariamente las
+  autorizaciones de la anterior: el permiso de una copia no demuestra autorización de otra firma.
+- `build-app.sh` ahora rechaza reemplazar un ejecutable de destino abierto, detectado con `lsof`. Evita cambiar su
+  identidad en disco mientras el proceso anterior sigue vivo. `APP_OUTPUT_ROOT` permite preparar una copia aparte,
+  sin modificar la que está usando el usuario. El flujo normal de empaquetado mantiene su ruta predeterminada.
+- Para conservar permisos entre versiones hace falta configurar `SIGN_IDENTITY` con una identidad estable. No se
+  modificaron TCC, autorizaciones ni confianza de certificados; no se creó una firma falsa basada solo en bundle ID.
+
+Pruebas: inicio automático y actualización de imagen; rechazo real; cancelación que conserva el stream anterior;
+respuesta antigua que no sobrescribe la nueva; fallo del stream durante el arranque que no se marca listo después;
+diferenciación entre rechazo real de SCStream y otro error. El modo `MI_VERIFY_MEDIA` comprueba también vista previa
+sin archivo y transferencia a grabación con una ventana propia, antes y después de cubrirla.
+También se verificó que el build se detiene antes de reemplazar la copia actualmente abierta. Pendiente la prueba
+interactiva de selección/arranque en el equipo del usuario con la nueva firma; una recompilación temporal puede
+seguir requiriendo una nueva autorización de macOS.
+
+## TD-37 · Formato del micrófono al pasar de Bluetooth a la entrada integrada
+
+El 29-10-2026 el usuario reportó un inicio fallido con `com.apple.coreaudio.avfaudio -10868`. Los registros técnicos
+del proceso confirmaron selección de `BuiltInMicrophoneDevice`, entrada de hardware de un canal a 48 kHz y tap
+de un canal a 16 kHz. `AVAudioEngineGraph` rechazó explícitamente esa discrepancia antes de iniciar. No fue un
+rechazo de permisos ni un fallo de captura de pantalla. No se abrió ni escuchó una grabación para diagnosticarlo.
+
+- Cambiar `AUAudioUnit.deviceID` actualiza el dispositivo, pero el formato cliente de `AVAudioInputNode` puede
+  conservar la frecuencia anterior. Un tap con `format: nil` mantiene ese formato. Se lee `inputFormat(forBus: 0)`
+  después de seleccionar el dispositivo y se aplica explícitamente ese formato al tap, tanto al iniciar como al
+  recuperar. Se comprueban frecuencia positiva/finita y canales antes de instalarlo. La conversión a 16 kHz ocurre
+  después en `TrackRecorder`, a partir del formato de cada buffer; no se impone al micrófono físico.
+- Se conserva la captura solo de entrada, la selección por UID sin modificar los dispositivos globales y el límite
+  de recuperación de TD-35. No se cambia automáticamente a un micrófono distinto ante este error.
+- Un rechazo de formato al iniciar deja un diagnóstico con dominio, código y frecuencia/canales (sin muestras ni
+  contenido de reuniones), y presenta un mensaje específico en español en lugar del error genérico de macOS.
+- La prueba de regresión usa `AVAudioEngine` en modo manual offline: simula entrada de 48 kHz/mono con cliente
+  anterior de 16 kHz/mono, el cambio inverso y entrada de 44,1 kHz/estéreo. Verifica que el formato anterior sigue
+  presente tras retirar el tap y que el instalador real lo sustituye por el de la entrada. No inicia hardware ni
+  obtiene muestras del micrófono.
+
+El contrato de Apple indica que [AVAudioInputNode no convierte formatos en modo de hardware](https://developer.apple.com/documentation/avfaudio/avaudioinputnode)
+y que [un formato explícito en installTap se aplica al bus de salida](https://developer.apple.com/documentation/avfaudio/avaudionode/installtap(onbus:buffersize:format:block:)).
+La prueba offline acredita la corrección del formato cliente; queda por validar el inicio y la recepción de voz
+en una llamada real con los audífonos del usuario.
+
+## TD-38 · Captura directa del micrófono e inicio que mantiene la interfaz disponible
+
+El siguiente intento mostró «Grabando», «Iniciando captura…» y 0:00 sin controles de salida. El registro de esa
+compilación mostró negociación del agregado automático de AVAudioEngine, cambio de formato y un error interno
+al seleccionar dispositivo; unos 49 s después el inicio terminó con «No hay un micrófono disponible». La muestra
+posterior del proceso tenía el hilo principal disponible: no se afirma que continuara bloqueado permanentemente.
+El arranque síncrono de hardware desde MainActor y el estado visual prematuro sí estaban confirmados en el código.
+
+- La ruta normal utiliza `AVCaptureDeviceInput` seleccionado por UID y `AVCaptureAudioDataOutput`, sin salida de
+  reproducción. No crea primero el agregado de los dispositivos predeterminados de AVAudioEngine. Se pide PCM
+  Float32 sin imponer frecuencia ni canales, se leen del formato real de cada CMSampleBuffer y se sincronizan
+  con `AVCaptureSession.synchronizationClock` convertido al reloj host. Se drenan callbacks al detener antes de cerrar WAV.
+- AVAudioEngine se conserva únicamente para VPIO elegido explícitamente; mantiene el formato real y la recuperación
+  acotada. La ruta normal conserva la reducción de eco por software y no cambia los dispositivos globales ni Teams.
+- `RecordingSession.startAsync/stopAsync` llevan las llamadas bloqueantes a colas de trabajo. Cancelar marca la
+  sesión y se comprueba entre operaciones; el inicio activa cancelación a los 15 s. Una llamada nativa que aún no
+  retorna no se mata a la fuerza: se muestra que se está liberando y no se permite iniciar otra toma mientras tanto.
+- La vista, barra lateral y menú indican Preparando/Cancelando/Guardando según la fase. Durante el inicio no se
+  presentan medidores ni cronómetro como prueba de captura y existe «Cancelar inicio»; detener desde el menú también
+  cancela. La pausa del micrófono y su recordatorio solo se habilitan una vez que se está grabando.
+- La transcripción provisional deja de bloquear el inicio. Se prepara en segundo plano después de empezar a grabar;
+  un consumidor de muestras protegido por lock puede conectarse después. Las preparaciones tardías se cancelan o
+  descartan al detener, y se libera cualquier sesión ASR parcialmente preparada. Se revisó FluidAudio 0.17.7:
+  `SlidingWindowAsrManager.startStreaming` consume buffers suministrados; no abre por sí mismo otro micrófono.
+- Pruebas sin hardware: muestras CMSampleBuffer estéreo intercaladas/separadas de 16/44,1/48 kHz, mezcla, timestamps
+  host, cancelación previa sin crear archivos, inicio nativo demorado con cancelación manual/timeout y respuesta
+  tardía que no vuelve a marcar Grabando ni deja reuniones fantasma.
+
+`MI_VERIFY_MICROPHONE=1` es una prueba física opt-in distinta de los fixtures sintéticos: exige biblioteca temporal
+en /private/tmp, selecciona solo un micrófono integrado, graba unos tres segundos, sin audio remoto ni ASR y genera
+`microphone-verification.json` con latencia, muestras recibidas y tamaño. No ejecutarla sin autorización explícita.
+Una prueba corta no acredita la interoperabilidad de una llamada larga de Teams ni todos los cambios de Bluetooth.
+
+Prueba física autorizada el 29-10-2026: micrófono integrado del MacBook Pro, arranque en 0,128 s, muestras de entrada
+a 48 kHz, duración registrada de 3,162 s, WAV finalizado y cero pistas remotas. Informe local en
+`/private/tmp/mi-startup-physical-check/results/microphone-verification.json`. No se transcribió ni envió el audio.
