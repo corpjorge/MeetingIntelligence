@@ -116,6 +116,39 @@ struct AIControllerTests {
         #expect(provider.calls == 1)
     }
 
+    @Test func chatUsesConfigurationChosenAtSendEvenIfSelectionChanges() async throws {
+        let suite = try IsolatedDefaults()
+        defer { suite.remove() }
+        let db = try AppDatabase.inMemory()
+        _ = try AppFixture.meeting(db)
+        let codex = CountingProvider(kind: .codex)
+        let claude = CountingProvider(kind: .claudeCode)
+        let ai = AIController(database: db, defaults: suite.defaults,
+                              providerFor: { $0 == .codex ? codex : claude })
+        ai.selectedProvider = .codex
+        ai.save(AIProviderConfiguration(provider: .codex, model: "chosen-model", effort: "high"))
+        let sentConfiguration = ai.configuration(for: ai.selectedProvider)
+
+        // Selection can change while the chat awaits semantic retrieval or consent.
+        ai.selectedProvider = .claudeCode
+        ai.selectModel("next-model", for: .codex)
+        let sent = Task {
+            await ai.ask(question: "indicador de ingresos", scope: .allMeetings, useAI: true,
+                         configuration: sentConfiguration)
+        }
+        try await waitUntil { ai.pendingConsent != nil }
+        #expect(ai.pendingConsent?.provider == .codex)
+        #expect(codex.calls == 0 && claude.calls == 0)
+        ai.confirmConsent()
+        let answer = try #require(await sent.value)
+        #expect(answer.provider == .codex)
+        #expect(codex.lastRequest?.model == "chosen-model")
+        #expect(codex.lastRequest?.effort == "high")
+        #expect(codex.calls == 1 && claude.calls == 0)
+        #expect(ai.selectedProvider == .claudeCode)
+        #expect(ai.selectedModel(for: .codex) == "next-model")
+    }
+
     @Test func selectedProviderIsRemembered() throws {
         let suite = try IsolatedDefaults()
         defer { suite.remove() }

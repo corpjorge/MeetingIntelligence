@@ -64,6 +64,11 @@ let package = Package(
             swiftSettings: strictConcurrency
         ),
         .target(
+            name: "MeetingMedia",
+            dependencies: ["MeetingCore", "MeetingAudio"],
+            swiftSettings: strictConcurrency
+        ),
+        .target(
             name: "MeetingSpeech",
             dependencies: [
                 "MeetingCore",
@@ -79,7 +84,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "MeetingIntelligenceApp",
-            dependencies: ["MeetingCore", "MeetingAudio", "MeetingSpeech", "MeetingSemantic",
+            dependencies: ["MeetingCore", "MeetingAudio", "MeetingMedia", "MeetingSpeech", "MeetingSemantic",
                            .product(name: "GRDB", package: "GRDB.swift")],
             swiftSettings: strictConcurrency + [
                 .defaultIsolation(MainActor.self),
@@ -92,7 +97,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "MeetingIntelligenceCLI",
-            dependencies: ["MeetingCore", "MeetingAudio", "MeetingSpeech", "MeetingSemantic",
+            dependencies: ["MeetingCore", "MeetingAudio", "MeetingMedia", "MeetingSpeech", "MeetingSemantic",
                            .product(name: "GRDB", package: "GRDB.swift")],
             swiftSettings: strictConcurrency
         ),
@@ -121,10 +126,15 @@ let package = Package(
             dependencies: ["MeetingSemantic", "MeetingCore"],
             swiftSettings: strictConcurrency
         ),
+        .testTarget(
+            name: "MeetingMediaTests",
+            dependencies: ["MeetingMedia", "MeetingCore", "MeetingAudio"],
+            swiftSettings: strictConcurrency
+        ),
         // App logic (services and settings); views are verified with snapshots (TD-15).
         .testTarget(
             name: "MeetingIntelligenceAppTests",
-            dependencies: ["MeetingIntelligenceApp", "MeetingCore", "MeetingAudio", "MeetingSpeech",
+            dependencies: ["MeetingIntelligenceApp", "MeetingCore", "MeetingAudio", "MeetingMedia", "MeetingSpeech",
                            .product(name: "GRDB", package: "GRDB.swift")],
             swiftSettings: strictConcurrency + [
                 .defaultIsolation(MainActor.self),

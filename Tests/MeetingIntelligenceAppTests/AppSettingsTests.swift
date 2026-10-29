@@ -14,7 +14,7 @@ struct AppSettingsTests {
         #expect(settings.suggestRecording && settings.suggestStop)
         #expect(settings.requireConsentConfirmation)
         #expect(!settings.hasCompletedOnboarding)
-        #expect(settings.audioRetentionDays == nil && settings.defaultProfileRetentionDays == nil)
+        #expect(settings.audioRetentionDays == nil && settings.videoRetentionDays == nil && settings.defaultProfileRetentionDays == nil)
         // Model downloads are opt-in.
         #expect(!settings.acousticVocabularyBoost && !settings.semanticSearch)
         #expect(settings.diarizationStepRatio == 0.1)
@@ -33,6 +33,7 @@ struct AppSettingsTests {
         first.suggestStop = false
         first.ignoredCallApps = ["com.example.music"]
         first.audioRetentionDays = 30
+        first.videoRetentionDays = 7
         first.defaultProfileRetentionDays = 180
         first.diarizationStepRatio = 0.2
         first.semanticSearch = true
@@ -44,7 +45,7 @@ struct AppSettingsTests {
         #expect(second.defaultCaptureMode == .microphoneOnly)
         #expect(!second.suggestStop)
         #expect(second.ignoredCallApps == ["com.example.music"])
-        #expect(second.audioRetentionDays == 30 && second.defaultProfileRetentionDays == 180)
+        #expect(second.audioRetentionDays == 30 && second.videoRetentionDays == 7 && second.defaultProfileRetentionDays == 180)
         #expect(second.diarizationStepRatio == 0.2)
         #expect(second.semanticSearch && second.hasCompletedOnboarding)
         #expect(!second.microphoneEchoCancellation)

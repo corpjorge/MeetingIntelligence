@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import MeetingAudio
 import MeetingCore
+import MeetingMedia
 import MeetingSpeech
 import OSLog
 
@@ -19,6 +20,16 @@ final class RecordingController {
     }
 
     private(set) var state: State = .idle
+    private(set) var startingMessage = "Preparando captura…"
+    private(set) var cancellingStart = false
+    var activityLabel: String {
+        switch state {
+        case .starting: cancellingStart ? "Cancelando inicio…" : "Preparando grabación…"
+        case .stopping: "Guardando grabación…"
+        case .paused: "En pausa"
+        default: "Grabando"
+        }
+    }
     private(set) var meeting: Meeting?
     private(set) var elapsed: TimeInterval = 0
     private(set) var micLevel = AudioLevel.silence
@@ -28,8 +39,15 @@ final class RecordingController {
     private(set) var scope: CaptureScope?
     private(set) var lastFinishedMeetingId: String?
     private(set) var capturesMicrophone = false
+    private(set) var microphoneName: String?
     private(set) var capturesRemoteAudio = false
     private(set) var microphonePaused = false
+    let videoSelection = VideoSelectionController()
+    private(set) var capturesVideo = false
+    private(set) var videoStatus: VideoCaptureStatus = .recording
+    private(set) var lastVideoError: String?
+    private var videoRecorder: WindowVideoRecorder?
+    private var videoAsset: VideoAsset?
     /// The user hid the "muted in the call ≠ paused here" reminder for this recording.
     private(set) var muteReminderDismissed = false
     /// App being recorded on the remote track (nil = system-wide / microphone only).
@@ -44,8 +62,13 @@ final class RecordingController {
 
     private let importer: MeetingImportService
     private let asr: ParakeetUltraProvider
+    private let startCapture: @Sendable (RecordingSession) async throws -> Void
+    private let startupLimit: Duration
     private var live: LiveTranscriber?
     private var liveTask: Task<Void, Never>?
+    private var livePreparationTask: Task<Void, Never>?
+    private var startupTimeoutTask: Task<Void, Never>?
+    private var startupTimedOut = false
     private let paths: AppPaths
     private let settings: AppSettings
     private var session: RecordingSession?
@@ -54,11 +77,15 @@ final class RecordingController {
     private var terminationObserver: (any NSObjectProtocol)?
     private let logger = Logger(subsystem: "dev.meetingintelligence", category: "recording-ui")
 
-    init(importer: MeetingImportService, paths: AppPaths, settings: AppSettings, asr: ParakeetUltraProvider) {
+    init(importer: MeetingImportService, paths: AppPaths, settings: AppSettings, asr: ParakeetUltraProvider,
+         startCapture: @escaping @Sendable (RecordingSession) async throws -> Void = { try await $0.startAsync() },
+         startupLimit: Duration = .seconds(15)) {
         self.importer = importer
         self.asr = asr
         self.paths = paths
         self.settings = settings
+        self.startCapture = startCapture
+        self.startupLimit = startupLimit
         terminationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -66,9 +93,29 @@ final class RecordingController {
         }
     }
 
-    func start(title: String, target: RemoteCaptureTarget, captureMicrophone: Bool) async {
+    func start(title: String, target: RemoteCaptureTarget, captureMicrophone: Bool, includeVideo: Bool = false, microphoneDeviceUID: String? = nil) async {
         guard !isActive else { return }
+        guard !includeVideo || videoSelection.canRecord else {
+            state = .failed("Elige la ventana en el selector de macOS antes de grabar video.")
+            return
+        }
+        let inputs = AudioDevices.inputDevices()
+        let chosenInput = microphoneDeviceUID.flatMap { uid in inputs.first { $0.uid == uid } }
+            ?? (microphoneDeviceUID == nil ? AudioDevices.preferredRecordingInput(defaultInput: AudioDevices.defaultInput(), devices: inputs) : nil)
+        guard !captureMicrophone || chosenInput?.uid != nil else {
+            state = .failed("Selecciona un micrófono disponible. En modo automático no se activa el micrófono Bluetooth de los audífonos.")
+            return
+        }
+        microphoneName = chosenInput?.name
+        let videoFilter = includeVideo ? videoSelection.filter : nil
         state = .starting
+        cancellingStart = false; startupTimedOut = false
+        startingMessage = "Preparando captura…"
+        elapsed = 0
+        capturesVideo = includeVideo
+        videoStatus = .recording
+        lastVideoError = nil
+        videoAsset = nil
         capturesMicrophone = captureMicrophone
         capturesRemoteAudio = target != .none
         microphonePaused = false
@@ -82,6 +129,7 @@ final class RecordingController {
                 return
             }
         }
+        if cancellingStart { state = .idle; return }
         let scope: CaptureScope = switch target {
         case .application: .applicationProcesses
         case .systemWide: .systemWide
@@ -93,34 +141,78 @@ final class RecordingController {
             let config = RecordingConfiguration(
                 directory: paths.meetingDirectory(meeting.id), remoteTarget: target,
                 captureMicrophone: captureMicrophone, microphoneEchoCancellation: settings.microphoneEchoCancellation,
-                microphoneVoiceProcessing: settings.microphoneVoiceProcessing)
+                microphoneVoiceProcessing: settings.microphoneVoiceProcessing, microphoneDeviceUID: chosenInput?.uid)
             let session = RecordingSession(configuration: config)
             self.session = session
             self.meeting = meeting
             liveText = [:]
             let liveSources: [AudioSource] = (captureMicrophone ? [.localMicrophone] : []) + (target == .none ? [] : [.remoteSystemAudio])
-            if settings.liveTranscription, await asr.isModelCached(), !liveSources.isEmpty {
-                await startLive(sources: liveSources, session: session)
-            }
+            liveStatus = settings.liveTranscription ? "La transcripción provisional se preparará al comenzar la captura." : nil
             listen(to: session)
-            try session.start()
+            if videoFilter != nil {
+                guard let recorder = videoSelection.takeRecorder() else {
+                    throw MediaError.unavailable("La captura de la ventana no está lista. Vuelve a seleccionarla.")
+                }
+                videoRecorder = recorder
+                try recorder.beginRecording(to: config.directory.appendingPathComponent(WindowVideoRecorder.fileName),
+                                            clock: session.clock) { [weak self] status in
+                    Task { @MainActor in self?.videoStatus = status }
+                }
+                let asset = VideoAsset(meetingId: meeting.id,
+                                       relativePath: "Recordings/\(meeting.id)/\(WindowVideoRecorder.fileName)",
+                                       windowTitle: videoSelection.title, applicationName: videoSelection.applicationName,
+                                       width: recorder.width, height: recorder.height)
+                try importer.database.save(video: asset)
+                videoAsset = asset
+            }
+            // Confirm video capture before opening microphone/audio devices.
+            try await videoRecorder?.start()
+            if cancellingStart { throw CancellationError() }
+            startingMessage = "Abriendo el micrófono y el audio remoto…"
+            let limit = startupLimit
+            startupTimeoutTask = Task { [weak self, weak session] in
+                do { try await Task.sleep(for: limit) } catch { return }
+                guard let self, self.state == .starting, self.session === session else { return }
+                self.startupTimedOut = true
+                self.cancelStart()
+                self.startingMessage = "El dispositivo tardó demasiado. Cancelando y liberando la captura…"
+            }
+            defer { startupTimeoutTask?.cancel(); startupTimeoutTask = nil }
+            try await startCapture(session)
+            if cancellingStart { throw CancellationError() }
             state = .recording
             startTimer()
+            if settings.liveTranscription, !liveSources.isEmpty {
+                livePreparationTask = Task { [weak self] in await self?.startLive(sources: liveSources, session: session) }
+            }
         } catch {
             logger.error("Start failed: \(error.localizedDescription, privacy: .public)")
+            stopLive()
+            eventsTask?.cancel()
+            if let session { _ = await session.stopAsync() }
+            if let videoRecorder { _ = try? await videoRecorder.stop(at: session?.elapsed ?? 0) }
+            videoRecorder = nil
             if let meeting {
-                _ = session?.stop()
                 try? importer.database.deleteMeeting(id: meeting.id, paths: paths)
             }
             session = nil
             meeting = nil
-            state = .failed(error.localizedDescription)
+            if startupTimedOut { state = .failed("El dispositivo de audio no terminó de iniciar en 15 segundos. Se canceló la captura; vuelve a seleccionar el micrófono.") }
+            else if error is CancellationError { state = .idle }
+            else { state = .failed((includeVideo ? VideoSelectionController.startFailureMessage(error) : nil) ?? error.localizedDescription) }
         }
+    }
+
+    func cancelStart() {
+        guard state == .starting else { return }
+        cancellingStart = true
+        startingMessage = "Cancelando y liberando la captura…"
+        session?.requestStartCancellation()
     }
 
     /// Pauses only my microphone (silence is written; the remote track keeps recording).
     func toggleMicrophonePause() {
-        guard isActive, capturesMicrophone, let session else { return }
+        guard state == .recording || state == .paused, capturesMicrophone, let session else { return }
         microphonePaused.toggle()
         session.setMicrophonePaused(microphonePaused)
     }
@@ -133,7 +225,7 @@ final class RecordingController {
 
     /// The call app's mute state is not readable (TD-23), so this reminder is static.
     var showsMuteReminder: Bool {
-        isActive && CallMuteReminder.isRelevant(capturesMicrophone: capturesMicrophone, capturesRemoteAudio: capturesRemoteAudio,
+        (state == .recording || state == .paused) && CallMuteReminder.isRelevant(capturesMicrophone: capturesMicrophone, capturesRemoteAudio: capturesRemoteAudio,
                                                 microphonePaused: microphonePaused, dismissed: muteReminderDismissed)
     }
 
@@ -152,26 +244,47 @@ final class RecordingController {
     }
 
     func stop() {
+        if state == .starting { cancelStart(); return }
         guard let session, let meeting, state == .recording || state == .paused else { return }
         state = .stopping
         timer?.invalidate()
-        let result = session.stop()
         eventsTask?.cancel()
         stopLive()
-        do {
-            try importer.finishRecording(meetingId: meeting.id, result: result)
-            lastFinishedMeetingId = meeting.id
-            onFinished?(meeting.id)
-            state = .idle
-        } catch {
-            state = .failed("La grabación se detuvo pero no se pudo registrar: \(error.localizedDescription)")
+        let videoRecorder = self.videoRecorder
+        let videoAsset = self.videoAsset
+        Task {
+            let result = await session.stopAsync()
+            if let videoRecorder, var asset = videoAsset {
+                do {
+                    _ = try await videoRecorder.stop(at: result.durationSeconds)
+                    asset.state = .ready
+                    asset.durationSeconds = result.durationSeconds
+                } catch {
+                    asset.state = .failed
+                    lastVideoError = "El audio se conservó, pero el video no se pudo finalizar: \(error.localizedDescription)"
+                }
+                asset.fileSizeBytes = StorageMaintenance.size(of: paths.resolve(relativePath: asset.relativePath))
+                do { try importer.database.save(video: asset) }
+                catch { lastVideoError = "No se pudo registrar el video; se intentará recuperar al abrir la app." }
+            }
+            do {
+                try importer.finishRecording(meetingId: meeting.id, result: result)
+                lastFinishedMeetingId = meeting.id
+                onFinished?(meeting.id)
+                state = .idle
+            } catch {
+                state = .failed("La grabación se detuvo pero no se pudo registrar: \(error.localizedDescription)")
+            }
+            self.session = nil
+            self.meeting = nil
+            self.videoRecorder = nil
+            self.videoAsset = nil
+            videoSelection.clear()
+            recordingApp = nil
+            microphonePaused = false
+            micLevel = .silence
+            remoteLevel = .silence
         }
-        self.session = nil
-        self.meeting = nil
-        recordingApp = nil
-        microphonePaused = false
-        micLevel = .silence
-        remoteLevel = .silence
     }
 
     func dismissFailure() {
@@ -181,7 +294,17 @@ final class RecordingController {
     private func startLive(sources: [AudioSource], session: RecordingSession) async {
         liveStatus = "Cargando transcripción provisional…"
         do {
+            let cached = await asr.isModelCached()
+            guard !Task.isCancelled, self.session === session, state == .recording || state == .paused else { return }
+            guard cached else {
+                liveStatus = "La grabación continúa. Descarga el modelo para ver transcripción provisional."
+                return
+            }
             let live = try await asr.makeLiveTranscriber(sources: sources, languageHint: settings.language)
+            guard !Task.isCancelled, self.session === session, state == .recording || state == .paused else {
+                await live.stop()
+                return
+            }
             self.live = live
             session.onSamples = { source, samples in live.feed(samples, source: source) }
             liveStatus = nil
@@ -191,11 +314,14 @@ final class RecordingController {
                 }
             }
         } catch {
+            guard !Task.isCancelled, self.session === session, state == .recording || state == .paused else { return }
             liveStatus = "Transcripción provisional no disponible: \(error.localizedDescription)"
         }
     }
 
     private func stopLive() {
+        livePreparationTask?.cancel(); livePreparationTask = nil
+        session?.onSamples = nil
         liveTask?.cancel()
         liveTask = nil
         if let live { Task { await live.stop() } }
@@ -210,11 +336,14 @@ final class RecordingController {
                 case .level(let source, let level):
                     if source == .localMicrophone { self.micLevel = level } else { self.remoteLevel = level }
                 case .warning(let warning):
+                    if case .inputDeviceChanged(let name) = warning { self.microphoneName = name }
                     if !self.warnings.contains(warning) { self.warnings.append(warning) }
                 case .remoteProcesses(let processes):
                     self.remoteProcesses = processes
                 case .remoteScope(let scope):
                     self.scope = scope
+                case .sourceRecovered(let source):
+                    self.warnings.removeAll { $0 == .noAudioBuffers(source) }
                 case .microphonePaused(let paused):
                     self.microphonePaused = paused
                 }
@@ -228,6 +357,7 @@ final class RecordingController {
             MainActor.assumeIsolated {
                 guard let self, let session = self.session else { return }
                 self.elapsed = session.elapsed
+                session.checkAudioDelivery()
             }
         }
     }
@@ -236,7 +366,9 @@ final class RecordingController {
     /// meeting is recovered as `interrupted` on next launch.
     private func handleTermination() {
         guard let session, isActive else { return }
+        if state == .starting { session.requestStartCancellation(); return }
         session.flushToDisk()
+        guard state != .stopping else { return }
         if let meeting {
             let result = session.stop()
             try? importer.finishRecording(meetingId: meeting.id, result: result)

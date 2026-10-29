@@ -47,6 +47,10 @@ enum Commands {
         if let output = AudioDevices.defaultOutput() {
             print("Salida: \(output.name) [\(output.transport.rawValue)] fuente=\(output.dataSourceName ?? "-") riesgo de eco=\(output.isLikelySpeakers ? "sí" : "no")")
         }
+        let inputs = AudioDevices.inputDevices()
+        for device in inputs { print("Micrófono disponible: \(device.name) [\(device.transport.rawValue)]") }
+        let recommended = AudioDevices.preferredRecordingInput(defaultInput: AudioDevices.defaultInput(), devices: inputs)
+        print("Micrófono recomendado para grabar sin activar Bluetooth: \(recommended?.name ?? "ninguno; elegir explícitamente")")
         print("Permiso de micrófono: \(RecordingSession.microphonePermissionGranted() ? "concedido" : "no concedido (se solicitará en la app)")")
         let apps = AudioApplicationResolver.currentApplications()
         print("Apps registradas en el audio del sistema: \(apps.count)")

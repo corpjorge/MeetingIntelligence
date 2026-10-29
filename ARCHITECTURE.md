@@ -24,12 +24,18 @@ MeetingCore              Dominio, persistencia (GRDB/SQLite WAL + FTS5), búsque
 
 MeetingAudio             Captura y DSP. Depende de MeetingCore.
   ├─ Capture/            RecordingSession, ProcessTapSource (Core Audio taps), MicrophoneSource
-  │                      (AVAudioEngine), TrackRecorder, CaptureClock, catálogo HAL de procesos/dispositivos,
+  │                      (AVCaptureSession por UID; AVAudioEngine solo para VPIO), TrackRecorder, CaptureClock, catálogo HAL de procesos/dispositivos,
   │                      ConversationApps (agrupación de procesos por app + catálogo descriptivo),
   │                      CallMonitor/CallDetector (detección de llamadas de cualquier app)
   ├─ Processing/         CrashSafeWAVWriter + WAVRepair, MonoResampler, Downmix, TimelineAligner, LevelMeter,
   │                      SilenceCompactor, RecordingEchoCanceller (SpeexDSP 1.2.1)
   └─ Import/             AudioImporter (copia WAV/M4A/MP3; extrae audio de MP4/MOV)
+
+MeetingMedia             Captura de video y exportación audiovisual. Depende de MeetingCore y MeetingAudio.
+  ├─ WindowVideoRecorder   ScreenCaptureKit, ventana explícita, video sin duplicar audio, reloj común
+  ├─ VideoFileWriter       H.264 SDR hasta 1080p/30 fps, MOV fragmentado, cola independiente
+  ├─ MeetingMediaExporter  AVComposition + mezcla, M4A/WAV/MP4, cancelación y publicación atómica
+  └─ VideoRecovery         recuperación de maestros inconclusos; metadatos VideoAsset en Core
 
 MeetingSpeech            FluidAudio. Depende de MeetingCore y MeetingAudio.
   ├─ Transcription/      ASRProvider, ParakeetUltraProvider, ShortUtteranceContext (TD-26), WordGrouping,
@@ -68,18 +74,25 @@ App elegida (todos sus procesos: los del bundle .app que los contiene, p. ej. Te
 IOProc ── copia + mezcla a mono ──► remuestreo + alineación ──► WAV remoto
                                                │ referencia
                                                ▼
-AVAudioEngine.inputNode ── copia ──► remuestreo + alineación ──► AEC ──► WAV micrófono
+AVCaptureAudioDataOutput ── copia ──► remuestreo + alineación ──► AEC ──► WAV micrófono
                                            (cola serial compartida; AEC opcional)
 ```
 
-- **Reloj común** (`CaptureClock`): origen en host time; las pausas desplazan el origen para ambas pistas.
+- **Reloj común** (`CaptureClock`): origen en host time; las pausas desplazan el origen para ambas pistas. El mapa histórico de pausas también permite alinear frames de video tardíos.
 - **Alineación** (`TimelineAligner`): cada buffer trae el host time de su primera muestra; se insertan silencios
   ante huecos (cambios de dispositivo, inicio tardío de Teams) y se descartan muestras ante deriva > 40 ms.
 - **Formato**: 16 kHz, mono, PCM 16 bits — el formato que consumen Parakeet y la diarización.
 - **Resiliencia**: cabecera WAV reescrita + `fsync` cada 2 s; al iniciar, las reuniones en estado `recording`
   pasan a `interrupted` y `WAVRepair` recupera el audio escrito.
-- **Cambios de dispositivo**: `AVAudioEngineConfigurationChange` reinstala el tap del micrófono; listeners del HAL
-  reconstruyen el tap de procesos cuando cambian los procesos de Teams o la salida por defecto.
+- **Micrófono**: AVCaptureSession abre únicamente el dispositivo elegido por UID, sin salida de reproducción ni
+  agregado de entrada/salida predeterminadas. El formato de cada CMSampleBuffer se convierte a mono y se alinea
+  mediante el reloj de la sesión y el reloj host. AVAudioEngine queda reservado para VPIO explícito (TD-38).
+- **Cambios de dispositivo**: AVCapture gestiona los formatos del micrófono seleccionado; un fallo se avisa sin
+  cambiar silenciosamente a otro dispositivo. Listeners del HAL reconstruyen el tap remoto cuando cambian los
+  procesos de Teams o la salida por defecto. En VPIO, AVAudioEngineConfigurationChange conserva recuperación acotada.
+- **Inicio y cierre**: operaciones de hardware en colas de trabajo, con cancelación entre fases y aviso/cancelación
+  al superar 15 s de inicio. La transcripción provisional se prepara después de que la captura empiece; conectar
+  su consumidor de muestras es seguro durante la grabación y una preparación tardía no reactiva una toma terminada.
 - **Cualquier app**: `AudioApplicationResolver` agrupa los procesos de audio por el `.app` más externo que los
   contiene (o por bundle ID si no hay bundle). El catálogo solo describe (nombre, tipo, aislamiento); nunca limita.
 - **Pausa del micrófono**: el `TrackRecorder` del micrófono escribe silencio mientras está en pausa (la línea de
@@ -142,7 +155,7 @@ reunión a la vez, con progreso real (FluidAudio) y cancelación cooperativa (`T
 ## Persistencia
 
 SQLite (GRDB 7.11.1, WAL). Migraciones `v1-core`, `v2-conversation-apps`, `v3-chat-history`,
-`v4-segment-embeddings`. Relación verificable:
+`v4-segment-embeddings`, `v5-video-assets`. Relación verificable:
 `AudioTrack → Transcript → TranscriptSegment (startTime/endTime, palabras) → MeetingSpeaker → Participant`.
 
 - `asrText` (inmutable), `vocabularyText` (diccionario), `editedText` (usuario): nunca se sobrescribe el original.
@@ -179,3 +192,12 @@ GitHub /releases ─► versión más nueva con .zip + .zip.sig ─► aviso (el
    ─► «Reiniciar e instalar» (no si se graba/procesa) ─► copia junto a la app ─► renamex_np(RENAME_SWAP)
    ─► ayudante en su propia sesión espera el cierre y abre la app ─► la nueva borra la anterior y avisa
 ```
+
+## Video y exportación de grabaciones (TD-34)
+
+`VideoSelectionController` usa el selector nativo de una ventana y su previsualización. Solo el botón Iniciar
+activa `WindowVideoRecorder`; captura pantalla sin audio. `RecordingController` coordina ambos motores sobre
+`CaptureClock`, finaliza video antes de anunciar la grabación guardada y conserva WAV si falla el video.
+`VideoAsset` pertenece a una reunión y se guarda bajo su carpeta. El reproductor usa la misma composición para
+imagen, audio y saltos por cita. `MediaExportController` presenta destino/progreso/cancelación; `MeetingMediaExporter`
+genera audio mezclado o video con audio sin esperar al análisis. El exportador documental sigue en Core.

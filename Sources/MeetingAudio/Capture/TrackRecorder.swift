@@ -8,41 +8,48 @@ public import MeetingCore
 /// once, so tracks stay mutually aligned.
 public final class CaptureClock: @unchecked Sendable {
     private let lock = NSLock()
-    private var originSeconds: Double
+    private let originSeconds: Double
     private var pausedAt: Double?
-    private var pausedTotal: Double = 0
+    private var pauses: [(start: Double, end: Double)] = []
 
     public init(originHostSeconds: Double = HostClock.nowSeconds()) {
         self.originSeconds = originHostSeconds
     }
 
-    /// Timeline position of an event that happened at `hostSeconds`, or nil while paused.
+    /// Historical mapping also handles video/audio buffers delivered after a pause.
     public func timelineSeconds(forHostSeconds hostSeconds: Double) -> Double? {
-        lock.withLock {
-            guard pausedAt == nil else { return nil }
-            return hostSeconds - originSeconds - pausedTotal
+        lock.withLock { position(hostSeconds) }
+    }
+
+    private func position(_ hostSeconds: Double) -> Double? {
+        if let pausedAt, hostSeconds >= pausedAt { return nil }
+        var removed = 0.0
+        for pause in pauses {
+            if hostSeconds >= pause.start && hostSeconds < pause.end { return nil }
+            if hostSeconds >= pause.end { removed += pause.end - pause.start }
         }
+        return hostSeconds - originSeconds - removed
     }
 
     public var isPaused: Bool { lock.withLock { pausedAt != nil } }
 
-    /// Elapsed recorded time (excluding pauses).
     public var elapsed: Double {
-        lock.withLock {
-            let now = pausedAt ?? HAL.nowSeconds()
-            return max(0, now - originSeconds - pausedTotal)
-        }
+        lock.withLock { max(0, position(pausedAt ?? HostClock.nowSeconds()) ?? positionBeforePause) }
     }
 
-    public func pause() {
-        lock.withLock { if pausedAt == nil { pausedAt = HAL.nowSeconds() } }
+    private var positionBeforePause: Double {
+        (pausedAt ?? HostClock.nowSeconds()) - originSeconds - pauses.reduce(0) { $0 + $1.end - $1.start }
     }
 
-    public func resume() {
+    public func pause(atHostSeconds now: Double = HostClock.nowSeconds()) {
+        lock.withLock { if pausedAt == nil { pausedAt = now } }
+    }
+
+    public func resume(atHostSeconds now: Double = HostClock.nowSeconds()) {
         lock.withLock {
-            if let pausedAt {
-                pausedTotal += HAL.nowSeconds() - pausedAt
-                self.pausedAt = nil
+            if let start = pausedAt {
+                pauses.append((start, max(start, now)))
+                pausedAt = nil
             }
         }
     }
@@ -73,6 +80,9 @@ public final class TrackRecorder: @unchecked Sendable {
     private var resampler: MonoResampler?
     private var seenRates: [Double] = []
     private var lastLevelEmit: Double = 0
+    private let receiptLock = NSLock()
+    private var receivedAt: Double?
+    var lastReceivedHostTime: Double? { receiptLock.withLock { receivedAt } }
     private var digitalSilenceSeconds: Double = 0
     private var silenceWarningSent = false
     private var finished = false
@@ -109,6 +119,8 @@ public final class TrackRecorder: @unchecked Sendable {
     ///   - mono: mono Float32 samples at `sampleRate`.
     ///   - hostTime: host time of the first sample, if valid.
     func ingest(_ mono: [Float], sampleRate: Double, hostTime: UInt64?) {
+        guard !mono.isEmpty, sampleRate > 0 else { return }
+        receiptLock.withLock { receivedAt = HostClock.nowSeconds() }
         let hostSeconds = hostTime.map(HAL.hostTimeToSeconds)
         // Resolve the timeline position now (pause state is time-sensitive).
         let timeline: Double?? = hostSeconds.map { clock.timelineSeconds(forHostSeconds: $0) }

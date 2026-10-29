@@ -3,6 +3,7 @@ public import Foundation
 public enum CaptureError: LocalizedError, Sendable, Equatable {
     case microphonePermissionDenied
     case noInputDevice
+    case inputDeviceUnavailable
     case appNotProducingAudio
     case tapCreationFailed(OSStatus)
     case aggregateDeviceFailed(OSStatus)
@@ -20,6 +21,8 @@ public enum CaptureError: LocalizedError, Sendable, Equatable {
             "Sin permiso de micrófono. Actívalo en Ajustes del Sistema › Privacidad y seguridad › Micrófono."
         case .noInputDevice:
             "No hay un micrófono disponible."
+        case .inputDeviceUnavailable:
+            "El micrófono elegido ya no está disponible. Vuelve a conectarlo o selecciona otro; no se cambiará automáticamente a tus audífonos."
         case .appNotProducingAudio:
             "La aplicación elegida no está reproduciendo audio en este momento. Abre la llamada o elige capturar el audio del sistema."
         case .tapCreationFailed(let s):

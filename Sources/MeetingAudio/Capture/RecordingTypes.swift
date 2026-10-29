@@ -30,6 +30,7 @@ public struct RecordingConfiguration: Sendable {
     public var directory: URL
     public var remoteTarget: RemoteCaptureTarget
     public var captureMicrophone: Bool
+    public var microphoneDeviceUID: String?
     /// Recording-only software AEC; requires both microphone and remote audio.
     public var microphoneEchoCancellation: Bool
     /// Optional Apple VPIO. Off by default; recording AEC takes precedence if
@@ -47,10 +48,11 @@ public struct RecordingConfiguration: Sendable {
 
     public init(directory: URL, remoteTarget: RemoteCaptureTarget = .systemWide, captureMicrophone: Bool = true,
                 microphoneEchoCancellation: Bool = true, microphoneVoiceProcessing: Bool = false,
-                outputSampleRate: Double = 16_000) {
+                outputSampleRate: Double = 16_000, microphoneDeviceUID: String? = nil) {
         self.directory = directory
         self.remoteTarget = remoteTarget
         self.captureMicrophone = captureMicrophone
+        self.microphoneDeviceUID = microphoneDeviceUID
         self.microphoneEchoCancellation = microphoneEchoCancellation
         self.microphoneVoiceProcessing = microphoneVoiceProcessing
         self.outputSampleRate = outputSampleRate
@@ -70,6 +72,7 @@ public enum RecordingWarning: Sendable, Equatable, Hashable {
     case systemWideCapture
     /// Long run of exact digital silence (often a missing permission).
     case prolongedDigitalSilence(AudioSource)
+    case noAudioBuffers(AudioSource)
     /// The reference stream is too late/missing; retain microphone speech.
     case echoReferenceUnavailable
     case inputDeviceChanged(String)
@@ -94,6 +97,10 @@ public enum RecordingWarning: Sendable, Equatable, Hashable {
             source == .remoteSystemAudio
                 ? "La pista remota está en silencio digital. Verifica el permiso 'Grabación de audio del sistema' y que la llamada esté activa."
                 : "El micrófono entrega silencio digital. Verifica el permiso de micrófono y el dispositivo de entrada."
+        case .noAudioBuffers(let source):
+            source == .localMicrophone
+                ? "El micrófono no está entregando audio. Puede haber cambiado la conexión Bluetooth. Detén y guarda; selecciona otro micrófono antes de volver a grabar."
+                : "No llegan datos de audio de la aplicación elegida. Verifica la llamada, la fuente y el permiso de audio del sistema."
         case .echoReferenceUnavailable:
             "No llega a tiempo el audio remoto para reducir el eco. Tu micrófono sigue grabándose, pero puede contener voces de los altavoces."
         case .inputDeviceChanged(let name): "Micrófono cambiado a \(name). La grabación continúa sincronizada."
@@ -106,7 +113,7 @@ public enum RecordingWarning: Sendable, Equatable, Hashable {
 
     public var isCritical: Bool {
         switch self {
-        case .writeFailed, .sourceFailed, .prolongedDigitalSilence: true
+        case .writeFailed, .sourceFailed, .prolongedDigitalSilence, .noAudioBuffers: true
         default: false
         }
     }
@@ -139,6 +146,7 @@ public enum RecordingEvent: Sendable {
     case remoteProcesses([AudioProcessInfo])
     case microphonePaused(Bool)
     case remoteScope(CaptureScope)
+    case sourceRecovered(AudioSource)
 }
 
 public struct RecordingResult: Sendable {

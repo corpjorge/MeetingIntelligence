@@ -71,10 +71,15 @@ struct RecordingView: View {
     @State private var title = ""
     @State private var source: Source?
     @State private var captureMicrophone = true
+    @State private var includeVideo = false
     @State private var consentConfirmed = false
     @State private var showAllApps = false
     @State private var output: AudioDeviceInfo?
     @State private var input: AudioDeviceInfo?
+    @State private var inputs: [AudioDeviceInfo] = []
+    @State private var microphoneUID = ""
+
+    init(includeVideo: Bool = false) { _includeVideo = State(initialValue: includeVideo) }
 
     private var recording: RecordingController { env.recording }
 
@@ -95,6 +100,7 @@ struct RecordingView: View {
             }
         }
         .task { refreshDevices() }
+        .onDisappear { if !recording.isActive { recording.videoSelection.clear() } }
         .onAppear {
             if title.isEmpty { title = defaultTitle(app: nil) }
             applyDefaultSource()
@@ -129,7 +135,13 @@ struct RecordingView: View {
 
     private func refreshDevices() {
         output = AudioDevices.defaultOutput()
-        input = AudioDevices.defaultInput()
+        inputs = AudioDevices.inputDevices()
+        input = selectedMicrophone
+    }
+
+    private var selectedMicrophone: AudioDeviceInfo? {
+        if !microphoneUID.isEmpty { return inputs.first { $0.uid == microphoneUID } }
+        return AudioDevices.preferredRecordingInput(defaultInput: AudioDevices.defaultInput(), devices: inputs)
     }
 
     private var selectedOption: SourceAppOption? {
@@ -159,17 +171,38 @@ struct RecordingView: View {
                         Text("Título").font(DS.Font.captionEmphasis).foregroundStyle(DS.Color.textSecondary)
                         TextField("Título de la conversación", text: $title).textFieldStyle(.roundedBorder)
                     }
+                    Picker("Modo de grabación", selection: $includeVideo) {
+                        Text("Solo audio").tag(false)
+                        Text("Audio y video").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .onChange(of: includeVideo) { if !includeVideo { recording.videoSelection.clear() } }
+                    if includeVideo { videoPicker }
                     sourcePicker
                     Toggle(isOn: $captureMicrophone) {
                         VStack(alignment: .leading, spacing: DS.Space.xxs) {
                             Text("Grabar mi micrófono").font(DS.Font.body)
-                            Text(input.map { "\($0.name)\($0.transport.isBluetooth ? " · Bluetooth" : "")" } ?? "Sin dispositivo de entrada")
+                            Text(selectedMicrophone.map { "\($0.name)\($0.transport.isBluetooth ? " · Bluetooth" : "")" } ?? "Sin dispositivo de entrada")
                                 .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
                         }
                     }
                     .toggleStyle(.switch)
                     .disabled(source == .microphoneOnly)
+                    if captureMicrophone || source == .microphoneOnly {
+                        Picker("Micrófono para esta grabación", selection: $microphoneUID) {
+                            Text("Automático · evita Bluetooth").tag("")
+                            ForEach(inputs.filter { $0.uid != nil }) { device in
+                                Text(device.name + (device.transport.isBluetooth ? " · Bluetooth" : "")).tag(device.uid!)
+                            }
+                        }
+                        .onChange(of: microphoneUID) { input = selectedMicrophone }
+                        Text("Se usa solo para esta grabación. No cambia el micrófono ni la salida de Teams. Puedes seguir escuchando por tus audífonos.")
+                            .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
+                    }
                 }
+            }
+            if let error = recording.lastVideoError {
+                InlineBanner(tone: .warning, systemImage: "video.slash", title: "Video", message: error)
             }
             deviceWarnings
             if env.settings.requireConsentConfirmation {
@@ -185,7 +218,9 @@ struct RecordingView: View {
                 }
                 .buttonStyle(.ds(.recording, size: .large))
                 .disabled(source == nil || (env.settings.requireConsentConfirmation && !consentConfirmed)
-                          || recording.state == .starting)
+                          || recording.state == .starting
+                          || ((captureMicrophone || source == .microphoneOnly) && selectedMicrophone == nil)
+                          || (includeVideo && !recording.videoSelection.canRecord))
                 if recording.state == .starting { ProgressView().controlSize(.small) }
                 Spacer()
                 Button { refreshDevices() } label: { Label("Actualizar dispositivos", systemImage: "arrow.clockwise") }
@@ -206,7 +241,48 @@ struct RecordingView: View {
         }
         Task {
             await recording.start(title: title.isEmpty ? defaultTitle(app: nil) : title, target: target,
-                                  captureMicrophone: source == .microphoneOnly ? true : captureMicrophone)
+                                  captureMicrophone: source == .microphoneOnly ? true : captureMicrophone, includeVideo: includeVideo,
+                                  microphoneDeviceUID: selectedMicrophone?.uid)
+        }
+    }
+
+    private var videoPicker: some View {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            HStack {
+                Label("Ventana del video", systemImage: "video").font(DS.Font.captionEmphasis)
+                Spacer()
+                Button(recording.videoSelection.filter == nil ? "Elegir ventana…" : "Cambiar ventana…") {
+                    recording.videoSelection.choose()
+                }
+                .buttonStyle(.dsSecondary)
+                .disabled(recording.videoSelection.isChoosing)
+            }
+            if recording.videoSelection.isChoosing { ProgressView("Elige la ventana en el selector de macOS…") }
+            if let preview = recording.videoSelection.preview {
+                Image(nsImage: preview).resizable().scaledToFit()
+                    .frame(maxHeight: DS.Layout.videoPreviewHeight)
+                    .clipShape(RoundedRectangle(cornerRadius: DS.Radius.s))
+            }
+            if recording.videoSelection.filter != nil, !recording.videoSelection.canRecord,
+               !recording.videoSelection.isChoosing, !recording.videoSelection.isLoadingPreview {
+                Button("Reintentar captura de la ventana") { recording.videoSelection.retryPreview() }
+                    .buttonStyle(.dsGhost)
+            }
+            if recording.videoSelection.isLoadingPreview { ProgressView("Preparando vista previa…").controlSize(.small) }
+            if recording.videoSelection.filter != nil {
+                Label([recording.videoSelection.applicationName, recording.videoSelection.title].filter { !$0.isEmpty }.joined(separator: " · "), systemImage: "checkmark.circle")
+                    .font(DS.Font.caption).foregroundStyle(DS.Color.success).lineLimit(2)
+            }
+            if let bundle = recording.videoSelection.bundleIdentifier,
+               case .app(let app) = source, let audioBundle = app.bundleIdentifier, bundle != audioBundle {
+                Label("La ventana y el audio pertenecen a aplicaciones distintas. Verifica ambas fuentes.", systemImage: "exclamationmark.triangle")
+                    .font(DS.Font.caption).foregroundStyle(DS.Color.warning)
+            }
+            if let error = recording.videoSelection.error {
+                Text(error).font(DS.Font.caption).foregroundStyle(DS.Color.warning)
+            }
+            Text("Hasta 1080p · 30 fps. Puedes cubrir la ventana con otras apps; evita minimizarla. Solo se graba lo que aparece dentro de la ventana elegida.")
+                .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
         }
     }
 
@@ -309,10 +385,10 @@ struct RecordingView: View {
                          title: "Riesgo de eco: el audio sale por \(output.dataSourceName ?? output.name)",
                          message: "El micrófono puede captar las voces remotas. Usa audífonos o activa la cancelación de eco en Ajustes › Audio. Los fragmentos de eco se marcarán como “eco probable”.")
         }
-        if captureMicrophone, let input, input.transport.isBluetooth {
+        if captureMicrophone, let input = selectedMicrophone, input.transport.isBluetooth {
             InlineBanner(tone: .info, systemImage: "airpods",
                          title: "Micrófono Bluetooth (\(input.name))",
-                         message: "En llamadas, los audífonos Bluetooth usan un perfil de banda estrecha; la transcripción puede ser menos precisa.")
+                         message: "Usar el micrófono de estos audífonos puede cambiar su modo de audio y provocar cortes o menor calidad. Para evitar que esta grabación lo active, elige el micrófono del Mac u otro micrófono.")
         }
     }
 
@@ -340,12 +416,32 @@ struct RecordingView: View {
                             Text("En pausa").font(DS.Font.headline).foregroundStyle(DS.Color.warning)
                         } else {
                             RecordingDot(size: DS.Size.dotL)
-                            Text("Grabando").font(DS.Font.headline).foregroundStyle(DS.Color.recording)
+                            Text(recording.activityLabel).font(DS.Font.headline).foregroundStyle(DS.Color.recording)
                         }
                         Spacer()
                         if let scope = recording.scope { ScopeBadge(scope: scope, appName: recording.recordingApp?.name) }
                     }
+                    if recording.capturesVideo {
+                        Label("Audio y video", systemImage: "video.fill").font(DS.Font.callout)
+                        switch recording.videoStatus {
+                        case .recording: EmptyView()
+                        case .unavailable(let message), .failed(let message):
+                            InlineBanner(tone: .warning, systemImage: "video.slash", title: "Video", message: message)
+                        }
+                    }
+                    if recording.state == .starting || recording.state == .stopping {
+                        ProgressView(recording.state == .starting ? recording.startingMessage : "Finalizando archivos…")
+                    }
+                    if recording.state == .starting {
+                        Button("Cancelar inicio") { recording.cancelStart() }
+                            .buttonStyle(.ds(.secondary, size: .large))
+                            .disabled(recording.cancellingStart)
+                    } else {
                     Text(Timecode.compact(recording.elapsed)).font(DS.Font.timer).foregroundStyle(DS.Color.textPrimary)
+                    if let name = recording.microphoneName, recording.capturesMicrophone {
+                        Text("Micrófono de grabación: \(name)")
+                            .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
+                    }
                     meter(recording.microphonePaused ? "Micrófono (en pausa)" : "Micrófono local", systemImage: recording.microphonePaused ? "mic.slash.fill" : "mic.fill",
                           level: recording.micLevel, tint: DS.Color.success,
                           enabled: recording.capturesMicrophone && !recording.microphonePaused)
@@ -359,6 +455,7 @@ struct RecordingView: View {
                                   systemImage: recording.state == .paused ? "play.fill" : "pause.fill")
                         }
                         .buttonStyle(.ds(.secondary, size: .large))
+                        .disabled(recording.state != .recording && recording.state != .paused)
                         if recording.capturesMicrophone {
                             Button { recording.toggleMicrophonePause() } label: {
                                 Label(recording.microphonePaused ? "Reactivar mi micrófono" : "Pausar mi micrófono",
@@ -369,7 +466,8 @@ struct RecordingView: View {
                         }
                         Button { recording.stop() } label: { Label("Detener y guardar", systemImage: "stop.fill") }
                             .buttonStyle(.ds(.recording, size: .large))
-                            .disabled(recording.state == .stopping)
+                            .disabled(recording.state != .recording && recording.state != .paused)
+                    }
                     }
                 }
             }
@@ -397,7 +495,7 @@ struct RecordingView: View {
                              systemImage: warning.isCritical ? "exclamationmark.octagon" : "exclamationmark.triangle",
                              title: warning.message)
             }
-            livePanel
+            if recording.state != .starting { livePanel }
         }
         .frame(maxWidth: DS.Layout.singleColumnMaxWidth, alignment: .leading)
     }

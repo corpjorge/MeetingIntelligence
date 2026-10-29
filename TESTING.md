@@ -194,3 +194,104 @@ Prueba manual pendiente, con una llamada de prueba autorizada y altavoces:
    debe conservarse. No aceptar reducción de eco a costa de perder habla local.
 
 Estas pruebas sintéticas no certifican acústica real ni interoperabilidad con una llamada de Teams.
+
+## Video, exportación multimedia y ortografía
+
+`scripts/test.sh --filter 'MeetingMediaTests|MeetingIntelligenceAppTests|MeetingAudioTests|MeetingCoreTests'`
+verifica codificación y exportación de archivos reales a partir de datos sintéticos, sin abrir llamadas ni capturar
+micrófono: MP4/M4A/WAV, mezcla con offsets, headroom, preservación de archivos ante fallo/cancelación,
+migración de video, borrado en cascada, mapa histórico de pausas y editor nativo del chat.
+
+Comprobación de captura real **solo de una ventana propia**, cubierta por otra ventana de prueba:
+
+```sh
+mkdir -p /tmp/mi-media-check/library /tmp/mi-media-check/results
+MEETING_INTELLIGENCE_HOME=/tmp/mi-media-check/library \
+MI_SNAPSHOT_DIR=/tmp/mi-media-check/results MI_VERIFY_MEDIA=1 \
+  "build/Meeting Intelligence.app/Contents/MacOS/MeetingIntelligence"
+```
+
+Se crea una reunión FIXTURE en la biblioteca temporal. `verification.json` registra frames de vista previa antes de
+grabar, ausencia de archivo durante esa vista previa, colores antes y después de cubrir la fuente, duración
+descontando la pausa, frames descartados y archivos exportados. No usar una biblioteca
+real para este modo. Las capturas generales incluyen `recording-video-setup-light/dark.png` y la pestaña Grabación
+si existe una reunión lista con video. Ver TD-34 para escenarios físicos y de larga duración aún pendientes.
+
+## Micrófono Bluetooth y canales sin datos (TD-35)
+
+`scripts/test.sh --filter 'MeetingAudioTests|MeetingIntelligenceAppTests'` incluye `MicrophoneRecoveryTests`:
+preferencia por entrada integrada/USB, límite de tres recuperaciones, avisos por ausencia de callbacks con retorno
+de señal y audio que cambia de frecuencia de entrada sin perder toda la pista. No se abren dispositivos físicos.
+`mi doctor` enumera micrófonos disponibles y la alternativa recomendada, sin iniciar captura.
+
+Para validar físicamente: detener/guardar la toma anterior, abrir la nueva compilación y elegir el micrófono de
+la grabación. Probar primero Automático/integrado con los audífonos como salida, luego el Bluetooth explícito;
+comprobar medidor local, duración de ambas pistas y volumen recibido por Teams, sin cambiar ajustes globales
+ni activar VPIO. Revisar que los cambios de conexión no generen reinicios indefinidos y que un canal sin callbacks
+muestre un aviso tras la gracia inicial.
+
+### Formato del dispositivo seleccionado (TD-37)
+
+`scripts/test.sh --filter MicrophoneTapTests` usa nodos nativos en modo manual offline, sin iniciar hardware.
+Reproduce un cliente de 16 kHz con entrada de 48 kHz, el caso inverso y cambio de mono a estéreo a 44,1 kHz.
+El formato obsoleto debe mantenerse en la preparación del fixture y ser reemplazado por el formato real de entrada
+al instalar el tap de producción. No se deben recibir buffers físicos. La regresión amplia ejecuta Audio/App/Media.
+Verificado el 29-10-2026: 93 pruebas correctas (45 de Audio, 43 de App y 5 de Media); los tres casos parametrizados
+del nuevo test pasaron en modo offline.
+
+Comprobación pendiente con el usuario: conservar los audífonos como salida, elegir Automático/micrófono integrado,
+iniciar una toma corta y comprobar niveles locales y remotos y que se guarde audio reproducible. Repetir con el
+micrófono Bluetooth solo si se elige explícitamente. Esta prueba física no se sustituye por el modo offline.
+
+## Selección de ventana sin bucle de permisos (TD-36)
+
+`scripts/test.sh --filter VideoSelectionControllerTests` inyecta sesiones sin capturar contenido real ni abrir
+el selector: cubre inicio automático, frames sucesivos, rechazo real, cancelación, respuestas tardías y fallo
+durante el arranque. La vista previa usa el mismo stream que la grabación: no se llama a screenshots ni a un
+preflight global. El rechazo real conserva la selección para reintentar, pero impide iniciar sin stream disponible.
+No se interpreta un fallo genérico como interruptor de privacidad desactivado. La prueba de integración anterior
+comprueba la entrega de frames y que el escritor se abra solo al iniciar, con una ventana sintética propia.
+
+Verificado el 28-10-2026 con la candidata `build/live-preview/Meeting Intelligence.app`: 48 pruebas de App/Media
+correctas; integración con dos frames de vista previa antes de grabar y ningún archivo en esa fase, imagen azul
+antes de cubrir y verde durante la cobertura, cero frames descartados y exportaciones M4A/WAV/MP4 generadas.
+Esta prueba usa solo la ventana sintética de la app; queda por comprobar la selección de una ventana de Teams
+autorizada por el usuario y su permiso asociado a esta compilación.
+
+No recompilar sobre una app abierta. Para preparar una candidata separada:
+
+```sh
+APP_OUTPUT_ROOT="$PWD/build/candidate" scripts/build-app.sh debug
+```
+
+La firma ad-hoc cambia entre compilaciones. La prueba manual debe cerrar la copia anterior y abrir la misma app
+que se autoriza, o usar una identidad estable mediante `SIGN_IDENTITY`. No borrar/resetear permisos como parte de
+las pruebas automáticas. Verificar tanto autorización global como consentimiento limitado a la ventana del picker.
+
+## Inicio bloqueante y micrófono directo (TD-38)
+
+`scripts/test.sh --filter 'MeetingAudioTests|MeetingIntelligenceAppTests|MeetingSpeechTests|MeetingMediaTests'`
+incluye lectura de CMSampleBuffer y cancelación de un arranque demorado. El caso de timeout no espera 15 s reales:
+inyecta un límite corto y comprueba que la respuesta tardía no cambia a Grabando y elimina la reunión provisional.
+La lectura sintética cubre canales intercalados y separados y el reloj host, sin abrir hardware.
+
+La prueba física `MI_VERIFY_MICROPHONE=1` requiere autorización explícita del usuario, `MI_SNAPSHOT_DIR` y
+`MEETING_INTELLIGENCE_HOME` bajo /private/tmp. Usa únicamente el micrófono integrado durante unos tres segundos;
+no incluye audio de sistema ni inicializa ASR. Su informe debe tener `success: true`, frecuencia de entrada no vacía,
+archivo mayor de 44 bytes y cero pistas remotas. No confundir esta prueba con validación completa de Teams/Bluetooth.
+
+Resultado físico autorizado del 29-10-2026: correcto, entrada integrada 48 kHz, inicio en 0,128 s, 3,162 s guardados,
+cero pistas remotas. Informe en `/private/tmp/mi-startup-physical-check/results/microphone-verification.json`.
+
+## Release 0.2.7
+
+Suite completa del 29-10-2026: 210 pruebas correctas; las suites opt-in permanecen desactivadas por defecto.
+`MI_COPILOT_CATALOG_TEST=1` verificó además el catálogo instalado; `MI_COPILOT_CATALOG_REPORT` permite guardar solo
+identificadores de modelos y su cantidad, sin nombres de cuenta ni credenciales.
+
+`scripts/package-release.sh` crea un entorno aislado `build/dmg-tools` con `scripts/requirements-dmg.txt` y escribe
+el layout del DMG mediante DS_Store, sin automatizar Finder. Verificar el DMG con `hdiutil verify`, la firma del ZIP
+con `mi-release verify`, la versión embebida y `shasum -a 256 -c SHA256SUMS.txt` antes de publicar.
+Verificado para 0.2.7 (build 9): firma del ZIP, sumas, firma de código y DMG correctos; DS_Store en el volumen HFS+
+con posiciones y alias de fondo válidos. El binario de producción superó `MI_VERIFY_MEDIA` con dos frames previos,
+sin archivo antes de grabar, imagen correcta bajo cobertura, cero frames descartados y las tres exportaciones.

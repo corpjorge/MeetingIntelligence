@@ -43,7 +43,6 @@ struct IntelligenceView: View {
                             Button("Todas") { scopeMeetings = [] }.buttonStyle(.ds(.ghost, size: .small))
                         }
                         Spacer()
-                        providerPicker
                     }
                     .padding(.horizontal, DS.Space.xxl)
                     .padding(.bottom, DS.Space.s)
@@ -66,16 +65,7 @@ struct IntelligenceView: View {
         .task { if env.ai.statuses.isEmpty { await env.ai.refreshStatuses() } }
     }
 
-    private var providerPicker: some View {
-        @Bindable var ai = env.ai
-        return HStack(spacing: DS.Space.s) {
-            Picker("Proveedor", selection: $ai.selectedProvider) {
-                ForEach(AIProviderKind.allCases) { Text($0.displayName).tag($0) }
-            }
-            .frame(width: DS.Layout.Control.pickerWidth)
-            if let status = env.ai.statuses[env.ai.selectedProvider] { ProviderStatusPill(status: status) }
-        }
-    }
+
 }
 
 struct ProvidersPane: View {

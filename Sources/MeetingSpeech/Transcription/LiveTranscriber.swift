@@ -37,11 +37,14 @@ public actor LiveTranscriber {
         let config = SlidingWindowAsrConfig.streaming
             .applying(tdtConfig: TdtConfig(blankId: models.version.blankId))
             .applying(language: language)
-        for source in sources {
+        do { for source in sources {
+            try Task.checkCancellation()
             let manager = SlidingWindowAsrManager(config: config)
-            try await manager.loadModels(models)
-            try await manager.startStreaming(source: source == .localMicrophone ? .microphone : .system)
             managers[source] = manager
+            try await manager.loadModels(models)
+            try Task.checkCancellation()
+            try await manager.startStreaming(source: source == .localMicrophone ? .microphone : .system)
+            try Task.checkCancellation()
             state[source] = ("", "")
 
             let updates = await manager.transcriptionUpdates
@@ -66,6 +69,9 @@ public actor LiveTranscriber {
                     await manager.streamAudio(buffer)
                 }
             })
+        } } catch {
+            await stop()
+            throw error
         }
     }
 
@@ -118,6 +124,7 @@ extension ParakeetUltraProvider {
     /// the loaded Ultra models (no second download or load).
     public func makeLiveTranscriber(sources: [MeetingCore.AudioSource], languageHint: String) async throws -> LiveTranscriber {
         let models = try await loadedModels()
+        try Task.checkCancellation()
         let transcriber = LiveTranscriber()
         try await transcriber.start(models: models, sources: sources, language: Self.fluidLanguage(for: languageHint))
         return transcriber

@@ -15,14 +15,25 @@ source "$ROOT/config/app.env"
 cd "$ROOT"
 
 [[ -n "${UPDATE_PUBLIC_KEY:-}" ]] || { echo "Falta UPDATE_PUBLIC_KEY en config/app.env (ver TD-29)." >&2; exit 1; }
-"$ROOT/scripts/swiftw" build -c release --product mi-release 2>&1 | grep -E "error" || true
+TOOL_BUILD_LOG="$(mktemp)"
+if ! "$ROOT/scripts/swiftw" build -c release --product mi-release >"$TOOL_BUILD_LOG" 2>&1; then
+  cat "$TOOL_BUILD_LOG" >&2
+  rm -f "$TOOL_BUILD_LOG"
+  exit 1
+fi
+rm -f "$TOOL_BUILD_LOG"
 RELEASE_TOOL="$("$ROOT/scripts/swiftw" build -c release --show-bin-path)/mi-release"
 # Fail before building if the Keychain key does not match the key the app will embed.
 [[ "$("$RELEASE_TOOL" public-key)" == "$UPDATE_PUBLIC_KEY" ]] \
   || { echo "La clave de firma del Llavero no corresponde a UPDATE_PUBLIC_KEY." >&2; exit 1; }
 
 "$ROOT/scripts/third-party-notices.sh"
-"$ROOT/scripts/build-app.sh" release
+APP_OUTPUT_ROOT="$ROOT/build" "$ROOT/scripts/build-app.sh" release
+
+# Finder metadata is written directly, without opening Finder or requesting Automation access.
+DMG_TOOLS="$ROOT/build/dmg-tools"
+[[ -x "$DMG_TOOLS/bin/python3" ]] || python3 -m venv "$DMG_TOOLS"
+"$DMG_TOOLS/bin/python3" -m pip install --disable-pip-version-check -r "$ROOT/scripts/requirements-dmg.txt"
 
 APP="$ROOT/build/$APP_NAME.app"
 DIST="$ROOT/dist"
@@ -64,7 +75,7 @@ $APP_NAME $VERSION
 Requisitos: Mac con Apple Silicon y macOS 15 (Sequoia) o posterior.
 Más información: https://github.com/corpjorge/MeetingIntelligence
 TXT
-swift "$ROOT/scripts/make-dmg-background.swift" "$STAGE/.background/bg.png" "$STAGE/.background/bg@2x.png"
+"$ROOT/scripts/swiftw" "$ROOT/scripts/make-dmg-background.swift" "$STAGE/.background/bg.png" "$STAGE/.background/bg@2x.png"
 tiffutil -cathidpicheck "$STAGE/.background/bg.png" "$STAGE/.background/bg@2x.png" -out "$STAGE/.background/background.tiff" 2>/dev/null
 rm "$STAGE/.background/bg.png" "$STAGE/.background/bg@2x.png"
 cp "$APP/Contents/Resources/AppIcon.icns" "$STAGE/.VolumeIcon.icns"
@@ -75,41 +86,7 @@ hdiutil attach -quiet -readwrite -noverify -noautoopen "$RW"
 MOUNTED="/Volumes/$VOLUME"
 SetFile -a C "$MOUNTED"
 chflags hidden "$MOUNTED/.background"
-osascript <<APPLESCRIPT
-tell application "Finder"
-    tell disk "$VOLUME"
-        open
-        set current view of container window to icon view
-        set toolbar visible of container window to false
-        set statusbar visible of container window to false
-        set the bounds of container window to {200, 120, 860, 628}
-        set options to the icon view options of container window
-        set arrangement of options to not arranged
-        set icon size of options to 104
-        set text size of options to 13
-        set background picture of options to file ".background:background.tiff"
-        -- Icon centers, matching make-dmg-background.swift. Hidden entries are moved out of view
-        -- (they would take grid slots and show up for users who display hidden files).
-        set position of item "$APP_NAME.app" of container window to {170, 150}
-        set position of item "Aplicaciones" of container window to {490, 150}
-        set position of item "Léeme" of container window to {330, 392}
-        try
-            set position of item ".background" of container window to {900, 900}
-        end try
-        try
-            set position of item ".fseventsd" of container window to {900, 1000}
-        end try
-        try
-            set position of item ".VolumeIcon.icns" of container window to {1000, 900}
-        end try
-        close
-        open
-        update without registering applications
-        delay 2
-        close
-    end tell
-end tell
-APPLESCRIPT
+"$DMG_TOOLS/bin/python3" "$ROOT/scripts/make-dmg-layout.py" "$MOUNTED" "$APP_NAME.app"
 sync
 hdiutil detach -quiet "$MOUNTED"
 MOUNTED=""
