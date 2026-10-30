@@ -102,7 +102,7 @@ Uso gratuito según [LICENSE](LICENSE); componentes de terceros en [THIRD_PARTY_
 | Micrófono por dispositivo e inicio cancelable | ✅ | Prueba física integrada de 3 s y pruebas de cancelación; sin cambiar la salida de Teams (TD-38) |
 | Selección del proveedor/modelo en chat y ortografía nativa | ✅ | Pruebas de selección, envío y editor nativo; Enter/Mayús+Enter |
 
-331 pruebas automatizadas pasan (`scripts/test.sh`, 30-oct-2026; otras 8 quedan omitidas bajo demanda). Las integraciones y mediciones adicionales de catálogos,
+334 pruebas automatizadas pasan (`scripts/test.sh`, 30-oct-2026; otras 10 quedan omitidas bajo demanda). Las integraciones y mediciones adicionales de catálogos,
 vocabulario, contexto, e5-small y actualización desde Hugging Face se activan bajo demanda; ver `TESTING.md`.
 
 ## Requisitos

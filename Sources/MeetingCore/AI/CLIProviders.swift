@@ -329,9 +329,42 @@ public struct CopilotCLIProvider: AIProvider {
         var text = ""
         var model: String?
         var toolsUsed: [String] = []
+        var failure: Failure?
     }
 
-    /// Last non-empty `assistant.message` of the JSONL event stream, and any tool execution.
+    /// Only classify structured provider codes; event messages may contain meeting text.
+    enum Failure: Equatable {
+        case quota, authentication, forbidden, rateLimit, modelUnavailable, serviceUnavailable, rejected
+
+        var message: String {
+            switch self {
+            case .quota: "La cuenta de Copilot agotó su cuota de solicitudes. Espera a su renovación o revisa el límite con tu administrador de GitHub."
+            case .authentication: "La sesión de Copilot caducó o no es válida. Inicia sesión con `copilot login` y verifica /user."
+            case .forbidden: "La cuenta de Copilot no tiene permiso para usar este modelo. Revisa el acceso y las políticas de tu organización."
+            case .rateLimit: "Copilot está limitando temporalmente las solicitudes. Espera un momento antes de reintentar."
+            case .modelUnavailable: "El modelo solicitado no está disponible para esta cuenta de Copilot. Actualiza el catálogo y elige otro modelo."
+            case .serviceUnavailable: "El servicio de Copilot no está disponible temporalmente. Reintenta más tarde."
+            case .rejected: "Copilot rechazó la solicitud. Comprueba el modelo y el esfuerzo seleccionados."
+            }
+        }
+
+        static func classify(_ data: [String: Any]) -> Self? {
+            let code = data["errorCode"] as? String
+            let type = data["errorType"] as? String
+            if code == "quota_exceeded" || type == "quota" || data["statusCode"] as? Int == 402 { return .quota }
+            if code == "model_not_found" || code == "model_not_supported" { return .modelUnavailable }
+            if let status = data["statusCode"] as? Int, (500...599).contains(status) { return .serviceUnavailable }
+            switch data["statusCode"] as? Int {
+            case 401: return .authentication
+            case 403: return .forbidden
+            case 429: return .rateLimit
+            case 400: return .rejected
+            default: return nil
+            }
+        }
+    }
+
+    /// Last assistant message, tool executions and classified provider failures from JSONL.
     static func parse(_ jsonl: String) -> Output {
         var output = Output()
         for line in jsonl.split(separator: "\n") {
@@ -347,6 +380,8 @@ public struct CopilotCLIProvider: AIProvider {
                 }
             case "tool.execution_start":
                 output.toolsUsed.append(data?["toolName"] as? String ?? "desconocida")
+            case "session.error", "model.call_failure":
+                if let data, let failure = Failure.classify(data) { output.failure = failure }
             default:
                 break
             }
@@ -431,6 +466,10 @@ public struct CopilotCLIProvider: AIProvider {
                                          + "se descartó la respuesta")
         }
         guard result.exitCode == 0 else {
+            if let failure = output.failure {
+                if failure == .authentication { throw AIProviderError.notAuthenticated(kind, failure.message) }
+                throw AIProviderError.failed(kind, failure.message)
+            }
             if result.stderrText.localizedCaseInsensitiveContains("No authentication information") {
                 throw AIProviderError.notAuthenticated(kind, "ejecuta `copilot` en una terminal e inicia sesión con /login "
                                                        + "(o `gh auth login`).")

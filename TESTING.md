@@ -14,13 +14,26 @@ Framework: **Swift Testing** (XCTest no está disponible con Command Line Tools)
 preferencias) tiene su propio target, `MeetingIntelligenceAppTests`; las vistas se verifican con capturas (TD-15). Las pruebas de integración con
 modelos reales se ejecutan solo si Parakeet Ultra y la diarización ya están en caché (nunca descargan en CI).
 
-## Inventario (331 pruebas ejecutadas correctamente al 30-oct-2026; 8 omitidas bajo demanda)
+## Inventario (334 pruebas ejecutadas correctamente al 30-oct-2026; 10 omitidas bajo demanda)
 
 Validación del candidato 0.2.8 (build 10): `scripts/test.sh` terminó con código 0. Swift Testing registró
 339 pruebas en 81 suites: 331 ejecutadas correctamente y 8 omitidas por sus condiciones de activación.
 La ejecución incluyó los modelos locales disponibles (Ultra, diarización, transcripción provisional y ciclo
 de vida de modelos) y las exportaciones sintéticas M4A/WAV/MP4. No se activaron llamadas a proveedores de IA
 ni descargas de actualización desde Hugging Face. La validación manual del candidato sigue pendiente.
+
+Validación del candidato 0.2.8 (build 11): suite completa correcta, 344 pruebas registradas en 83 suites;
+334 ejecutadas y 10 omitidas bajo demanda. Se añadieron regresiones para errores JSONL de Copilot (cuota,
+autenticación, acceso, límites temporales y servicio), sin mostrar mensajes que puedan contener la transcripción.
+Pruebas optativas con texto sintético: Claude, Codex y Antigravity respondieron con JSON válido; también Claude
+con modelo `opus` y esfuerzo `medium`. El catálogo de Copilot respondió, incluso con un entorno mínimo similar
+al de Finder. Su inferencia devolvió HTTP 402 `quota_exceeded`; el build informa de la cuota agotada en vez de
+mostrar solo «código 1». Esto no elimina el límite del proveedor. No se enviaron reuniones reales.
+
+```bash
+MI_AI_PROVIDER_TEST=1 scripts/test.sh --filter CLIProviderIntegrationTests # solicitudes sintéticas: Claude, Codex y Antigravity
+scripts/test.sh --filter CopilotFailureTests # regresión sin red de errores estructurados
+```
 
 | Suite | Cubre |
 |---|---|
