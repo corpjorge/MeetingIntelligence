@@ -45,6 +45,37 @@ struct ShortUtteranceContextTests {
         let long = (0..<20).map { token(Double($0), Double($0 + 1), confidence: 0.5) }
         #expect(!ShortUtteranceContext.needsContext(long.indices, in: long))
     }
+
+    @Test(arguments: ["▁", " "])
+    func wordLimitsCountFluidAudioWordMarkers(marker: String) {
+        func words(_ count: Int, confidence: Float) -> [ASRToken] {
+            (0..<count).map {
+                ASRToken(piece: marker + "voz", tokenId: 1, start: Double($0) * 0.25, end: Double($0 + 1) * 0.25,
+                         confidence: confidence)
+            }
+        }
+        let seven = words(7, confidence: 0.9)
+        #expect(!ShortUtteranceContext.isShort(seven.indices, in: seven))
+        let six = words(6, confidence: 0.9)
+        #expect(ShortUtteranceContext.isShort(six.indices, in: six))
+        let expanded = words(17, confidence: 0.5)
+        #expect(!ShortUtteranceContext.needsContext(expanded.indices, in: expanded))
+        let uncertain = words(16, confidence: 0.5)
+        #expect(ShortUtteranceContext.needsContext(uncertain.indices, in: uncertain))
+    }
+
+    @Test func shortNeighbourDoesNotHideFartherContext() {
+        let tokens = [token(0, 1.5), token(1.5, 3), token(6, 6.1), token(9, 9.5)]
+        let ranges = ShortUtteranceContext.utterances(tokens)
+        #expect(ranges == [0..<2, 2..<3, 3..<4])
+        let spans = ShortUtteranceContext.contextSpans(for: 1, in: ranges, tokens: tokens)
+        #expect(spans.count == 2)
+        let fromTarget = ShortUtteranceContext.contextSpans(for: 2, in: ranges, tokens: tokens)
+        #expect(fromTarget.count == 1)
+        #expect(fromTarget.first?.start == 0 && fromTarget.first?.end == 3)
+        let budget = ShortUtteranceContext.contextSpans(for: 2, in: ranges, tokens: tokens, maxSeconds: 1)
+        #expect(budget.count == 1 && budget.first?.start == 2 && budget.first?.end == 3)
+    }
 }
 
 /// Opt-in measurement on synthetic paired-track replies; never reads real meetings.

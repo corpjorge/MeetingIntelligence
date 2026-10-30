@@ -16,10 +16,12 @@ final class SemanticIndexController {
     }
 
     private(set) var status: Status = .disabled
+    var blockedReason: String?
     private let engine: SemanticSearchEngine
     private let database: AppDatabase
     private let settings: AppSettings
     private var task: Task<Void, Never>?
+    private var generation = 0
     private var rerun = false
     private let logger = Logger(subsystem: "dev.meetingintelligence", category: "semantic")
 
@@ -35,8 +37,8 @@ final class SemanticIndexController {
 
     /// Stops indexing and releases the model (before an update or a delete).
     func unloadModel() async {
-        task?.cancel()
-        task = nil
+        let previous = stopRun()
+        await previous?.value
         await engine.unload()
     }
 
@@ -50,11 +52,13 @@ final class SemanticIndexController {
     /// Applies the current setting: starts indexing when enabled, stops when disabled.
     func refresh() {
         guard settings.semanticSearch else {
-            task?.cancel()
-            task = nil
+            let previous = stopRun()
             status = .disabled
             let engine = self.engine
-            Task { await engine.unload() }
+            Task {
+                await previous?.value
+                await engine.unload()
+            }
             return
         }
         schedule()
@@ -63,33 +67,59 @@ final class SemanticIndexController {
     /// Indexes new or edited segments (coalesces calls while a run is active).
     func schedule() {
         guard settings.semanticSearch else { return }
+        if let blockedReason {
+            status = .failed(blockedReason)
+            return
+        }
         if task != nil { rerun = true; return }
-        task = Task { [weak self] in await self?.run() }
+        generation += 1
+        rerun = false
+        let current = generation
+        task = Task { [weak self] in await self?.run(generation: current) }
     }
 
-    private func run() async {
+    @discardableResult
+    private func stopRun() -> Task<Void, Never>? {
+        let previous = task
+        previous?.cancel()
+        task = nil
+        rerun = false
+        generation += 1
+        return previous
+    }
+
+    private func isCurrent(_ token: Int) -> Bool {
+        token == generation && !Task.isCancelled && settings.semanticSearch
+    }
+
+    private func run(generation token: Int) async {
         repeat {
             rerun = false
             do {
+                guard isCurrent(token) else { break }
                 status = .preparing(engine.isModelCached() ? "Cargando el modelo" : "Descargando e5-small (~470 MB)")
                 try await engine.prepare()
+                guard isCurrent(token) else { break }
                 let model = SemanticSearchEngine.modelId
                 status = .indexing(try database.semanticIndexCoverage(model: model))
                 try await engine.indexPending(database: database) { coverage in
                     Task { @MainActor [weak self] in
-                        if case .indexing = self?.status { self?.status = .indexing(coverage) }
+                        guard let self, self.generation == token, case .indexing = self.status else { return }
+                        self.status = .indexing(coverage)
                     }
                 }
+                guard isCurrent(token) else { break }
                 status = .ready(try database.semanticIndexCoverage(model: model))
             } catch is CancellationError {
                 break
             } catch {
+                guard isCurrent(token) else { break }
                 logger.error("Semantic indexing failed: \(error.localizedDescription, privacy: .public)")
                 status = .failed(error.localizedDescription)
                 break
             }
-        } while rerun && !Task.isCancelled
-        task = nil
+        } while rerun && isCurrent(token)
+        if generation == token { task = nil }
     }
 
     /// Query vector for the chat, or nil (setting off, model missing, or failure → keyword search only).
@@ -104,14 +134,16 @@ final class SemanticIndexController {
     }
 
     func clearIndex() {
-        task?.cancel()
-        task = nil
-        do {
-            try database.clearSemanticIndex()
-        } catch {
-            status = .failed(error.localizedDescription)
-            return
+        let previous = stopRun()
+        Task {
+            await previous?.value
+            do {
+                try database.clearSemanticIndex()
+            } catch {
+                status = .failed(error.localizedDescription)
+                return
+            }
+            refresh()
         }
-        refresh()
     }
 }

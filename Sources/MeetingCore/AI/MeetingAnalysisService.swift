@@ -49,13 +49,21 @@ public struct MeetingAnalysisService: Sendable {
 
         var previous: [String] = []
         if !previousMeetingIds.isEmpty {
-            let items = try database.reader.read { db in
-                try AnalysisItem
-                    .filter(previousMeetingIds.contains(Column("meetingId")))
+            let items = try database.reader.read { db -> [AnalysisItem] in
+                let latest = try previousMeetingIds.compactMap { id in
+                    try AIAnalysis.filter(Column("meetingId") == id && Column("status") == AnalysisStatus.succeeded.rawValue)
+                        .order(Column("startedAt").desc).fetchOne(db)?.id
+                }
+                return try AnalysisItem
+                    .filter(latest.contains(Column("analysisId")))
                     .filter([AnalysisCategory.decision.rawValue, AnalysisCategory.technicalDecision.rawValue,
                              AnalysisCategory.agreement.rawValue, AnalysisCategory.commitment.rawValue].contains(Column("category")))
                     .filter(Column("evidenceStatus") == EvidenceStatus.verified.rawValue)
                     .fetchAll(db)
+                    .sorted {
+                        (previousMeetingIds.firstIndex(of: $0.meetingId) ?? 0, $0.orderIndex)
+                            < (previousMeetingIds.firstIndex(of: $1.meetingId) ?? 0, $1.orderIndex)
+                    }
             }
             let titles = try Dictionary(uniqueKeysWithValues: previousMeetingIds.compactMap { id in
                 try database.meeting(id: id).map { (id, "\($0.title) (\($0.displayDate.formatted(date: .abbreviated, time: .omitted)))") }
@@ -166,10 +174,11 @@ public struct MeetingAnalysisService: Sendable {
     @discardableResult
     public func run(meetingId: String, provider: any AIProvider, configuration: AIProviderConfiguration,
                     prepared: PreparedPrompt, consentGiven: Bool) async throws -> AIAnalysis {
-        if provider.kind.sendsDataToRemoteService && !consentGiven {
+        if provider.kind.sendsDataToRemoteService(model: prepared.request.model ?? configuration.model) && !consentGiven {
             throw AIProviderError.remoteConsentRequired(provider.kind)
         }
         let status = await provider.detect(configuration: configuration)
+        try Task.checkCancellation()
         guard status.installed else { throw AIProviderError.notInstalled(provider.kind) }
         var analysis = AIAnalysis(meetingId: meetingId, provider: provider.kind, model: prepared.request.model,
                                   effort: prepared.request.effort,
@@ -244,7 +253,10 @@ public struct MeetingAnalysisService: Sendable {
                 if let cited, Self.quote(quote, isSupportedBy: cited.displayText) {
                     evidenceSegment = cited
                     status = .verified
-                } else if let found = orderedSegments.first(where: { Self.quote(quote, isSupportedBy: $0.displayText) }) {
+                } else if TextNormalization.tokens(quote).count >= 3,
+                          let found = orderedSegments.first(where: {
+                              $0.attribution != .probableEcho && Self.quote(quote, isSupportedBy: $0.displayText)
+                          }) {
                     // Wrong reference but the quote exists verbatim elsewhere: fix the reference.
                     evidenceSegment = found
                     status = .verified
@@ -265,12 +277,12 @@ public struct MeetingAnalysisService: Sendable {
         }
     }
 
-    /// A quote is supported when its normalized text appears in the segment, or
+    /// A quote is supported when its normalized text appears in the segment as whole words, or
     /// when ≥ 85 % of its words appear in order (tolerates punctuation/ASR noise).
     static func quote(_ quote: String, isSupportedBy text: String) -> Bool {
         let q = TextNormalization.comparable(quote), t = TextNormalization.comparable(text)
         guard !q.isEmpty else { return false }
-        if t.contains(q) { return true }
+        if " \(t) ".contains(" \(q) ") { return true }
         let qTokens = q.split(separator: " "), tTokens = t.split(separator: " ")
         guard qTokens.count >= 3 else { return false }
         var j = 0, matched = 0

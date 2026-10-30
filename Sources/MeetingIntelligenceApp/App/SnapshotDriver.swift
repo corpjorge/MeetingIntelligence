@@ -175,6 +175,12 @@ enum SnapshotDriver {
                                 evidenceQuote: "Compartimos el resultado antes de la próxima reunión.",
                                 evidenceStartTime: 208, evidenceSpeakerName: "Hablante 1", evidenceStatus: .verified,
                                 orderIndex: 0)
+        let originals = [AIProviderKind.copilotCLI, .codex].compactMap { try? env.database.providerConfiguration($0) }
+        let selected = env.ai.selectedProvider
+        defer {
+            for original in originals { try? env.database.save(providerConfiguration: original) }
+            env.ai.selectedProvider = selected
+        }
         for provider in [AIProviderKind.copilotCLI, .codex] {
             env.ai.selectedProvider = provider
             env.ai.selectModel(provider == .codex ? env.ai.modelChoices(for: provider).first ?? "" : "", for: provider)

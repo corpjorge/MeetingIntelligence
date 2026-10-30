@@ -11,6 +11,15 @@ enum MeetingDeletion {
     /// Returns true when the meeting was deleted.
     @discardableResult
     static func confirmAndDelete(_ meeting: Meeting, env: AppEnvironment, beforeDeleting: () -> Void = {}) -> Bool {
+        let current = (try? env.database.meeting(id: meeting.id)) ?? meeting
+        guard !isRecording(current, recordingMeetingId: env.recording.meeting?.id) else {
+            let alert = NSAlert()
+            alert.messageText = "No se puede eliminar “\(meeting.title)” mientras se graba"
+            alert.informativeText = "Detén y guarda la grabación antes de eliminar la reunión."
+            alert.alertStyle = .warning
+            alert.runModal()
+            return false
+        }
         let summary = (try? env.database.deletionSummary(meetingId: meeting.id, paths: env.paths))
             ?? MeetingDeletionSummary(fileBytes: 0, voiceSamples: 0, chatMessages: 0)
         let alert = NSAlert()
@@ -47,6 +56,10 @@ enum MeetingDeletion {
             }
         }
         return true
+    }
+
+    static func isRecording(_ meeting: Meeting, recordingMeetingId: String?) -> Bool {
+        meeting.status == .recording || meeting.id == recordingMeetingId
     }
 
     static func informativeText(_ summary: MeetingDeletionSummary) -> String {

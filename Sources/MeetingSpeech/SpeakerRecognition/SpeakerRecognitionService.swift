@@ -73,11 +73,13 @@ public actor SpeakerRecognitionService {
         guard others.isEmpty else { throw EnrollmentError.multipleSpeakers(others.count + 1) }
         guard dominant.seconds >= minimumEnrollmentSpeechSeconds else { throw EnrollmentError.tooShort(dominant.seconds) }
 
-        let profile = try database.createProfile(participantId: participantId, consentStatement: consent,
-                                                 retentionDays: retentionDays)
-        let sample = VoiceSample(profileId: profile.id, origin: .enrollment, durationSeconds: dominant.seconds,
-                                 embeddingCiphertext: try vault.seal(embedding), embeddingModel: output.modelIdentifier)
-        try database.add(sample: sample)
+        let ciphertext = try vault.seal(embedding)
+        try Task.checkCancellation()
+        let sample = try database.enrollSample(participantId: participantId, consentStatement: consent,
+                                               retentionDays: retentionDays) { profileId in
+            VoiceSample(profileId: profileId, origin: .enrollment, durationSeconds: dominant.seconds,
+                        embeddingCiphertext: ciphertext, embeddingModel: output.modelIdentifier)
+        }
         logger.info("Enrolled voice sample (\(dominant.seconds, format: .fixed(precision: 1)) s)")
         return sample
     }
@@ -94,14 +96,25 @@ public actor SpeakerRecognitionService {
               let cipher = speaker.embeddingCiphertext, let model = speaker.embeddingModel else {
             throw AppDatabaseError.invalidOperation("Este hablante no tiene una huella de voz disponible.")
         }
-        guard speaker.totalSpeechSeconds >= minimumEnrollmentSpeechSeconds else {
-            throw EnrollmentError.tooShort(speaker.totalSpeechSeconds)
+        let ownSpeech = try clusterSpeechSeconds(speakerId: speaker.id)
+        guard ownSpeech >= minimumEnrollmentSpeechSeconds else {
+            throw EnrollmentError.tooShort(ownSpeech)
         }
         let sample = VoiceSample(profileId: profile.id, origin: .validatedMeetingSegment, meetingId: speaker.meetingId,
-                                 durationSeconds: speaker.totalSpeechSeconds, embeddingCiphertext: cipher,
+                                 durationSeconds: ownSpeech, embeddingCiphertext: cipher,
                                  embeddingModel: model)
         try database.add(sample: sample)
         return sample
+    }
+
+    private func clusterSpeechSeconds(speakerId: String) throws -> Double {
+        try database.reader.read { db in
+            try Double.fetchOne(db, sql: """
+                SELECT COALESCE(SUM(MAX(0, s.endTime - s.startTime)), 0) FROM transcriptSegment s
+                JOIN transcript t ON t.id = s.transcriptId AND t.supersededAt IS NULL
+                WHERE s.diarizedSpeakerId = ? AND s.attribution != 'probableEcho'
+                """, arguments: [speakerId]) ?? 0
+        }
     }
 
     private func meetingId(of speakerId: String) throws -> String {

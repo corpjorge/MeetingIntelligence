@@ -25,7 +25,7 @@ struct DSButtonStyle: ButtonStyle {
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
                 .padding(.horizontal, size == .small ? DS.Space.s : (size == .large ? DS.Space.l : DS.Space.m))
-                .frame(minHeight: size == .small ? 24 : (size == .large ? 36 : 28))
+                .frame(minHeight: size == .small ? DS.Size.buttonHeightSmall : (size == .large ? DS.Size.buttonHeightLarge : DS.Size.buttonHeight))
                 .foregroundStyle(foreground)
                 .background(background, in: RoundedRectangle(cornerRadius: DS.Radius.s, style: .continuous))
                 .overlay {
@@ -34,8 +34,8 @@ struct DSButtonStyle: ButtonStyle {
                             .strokeBorder(DS.Color.borderStrong, lineWidth: DS.Layout.hairline)
                     }
                 }
-                .opacity(isEnabled ? 1 : 0.45)
-                .scaleEffect(configuration.isPressed ? 0.98 : 1)
+                .opacity(isEnabled ? 1 : DS.Opacity.disabledButton)
+                .scaleEffect(configuration.isPressed ? DS.Scale.pressed : 1)
                 .animation(DS.Motion.quick, value: configuration.isPressed)
                 .onHover { hovering = $0 }
                 .contentShape(RoundedRectangle(cornerRadius: DS.Radius.s, style: .continuous))
@@ -52,11 +52,11 @@ struct DSButtonStyle: ButtonStyle {
         private var background: Color {
             let pressedOrHover = configuration.isPressed || hovering
             switch kind {
-            case .primary: return DS.Color.accent.opacity(pressedOrHover ? 0.88 : 1)
-            case .recording: return DS.Color.recording.opacity(pressedOrHover ? 0.88 : 1)
+            case .primary: return DS.Color.accent.opacity(pressedOrHover ? DS.Opacity.pressedFill : 1)
+            case .recording: return DS.Color.recording.opacity(pressedOrHover ? DS.Opacity.pressedFill : 1)
             case .secondary: return pressedOrHover ? DS.Color.hover : DS.Color.surface
             case .ghost: return pressedOrHover ? DS.Color.hover : .clear
-            case .destructive: return DS.Color.danger.opacity(pressedOrHover ? 0.14 : 0.08)
+            case .destructive: return DS.Color.danger.opacity(pressedOrHover ? DS.Opacity.destructivePressedFill : DS.Opacity.destructiveFill)
             }
         }
     }
@@ -83,7 +83,7 @@ struct IconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 13, weight: .medium))
+                .font(DS.Font.iconButton)
                 .foregroundStyle(hovering ? DS.Color.textPrimary : tint)
                 .frame(width: DS.Layout.iconButton, height: DS.Layout.iconButton)
                 .background(hovering ? DS.Color.hover : .clear,

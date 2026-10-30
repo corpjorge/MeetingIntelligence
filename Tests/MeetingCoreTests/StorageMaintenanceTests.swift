@@ -64,7 +64,8 @@ struct StorageMaintenanceTests {
         let kept = try paths.prepareMeetingDirectory(meeting.id)
         let orphan = try paths.prepareMeetingDirectory("ORPHAN")
         try Data(count: 1000).write(to: orphan.appendingPathComponent("a.wav"))
-        let report = try StorageMaintenance.removeOrphanedRecordings(database: db, paths: paths)
+        let report = try StorageMaintenance.removeOrphanedRecordings(database: db, paths: paths,
+                                                                     now: Date().addingTimeInterval(2 * 3600))
         #expect(report.removedItems == 1 && report.freedBytes > 0)
         #expect(FileManager.default.fileExists(atPath: kept.path) && !FileManager.default.fileExists(atPath: orphan.path))
 

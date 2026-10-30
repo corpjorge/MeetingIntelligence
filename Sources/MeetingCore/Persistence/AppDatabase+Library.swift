@@ -38,6 +38,16 @@ public struct MeetingSummaryRow: Sendable, Hashable, Identifiable {
     public var id: String { meeting.id }
 }
 
+public struct InterruptedMeetings: Sendable, Equatable {
+    public var recordings: [String]
+    public var processing: [String]
+
+    public init(recordings: [String] = [], processing: [String] = []) {
+        self.recordings = recordings
+        self.processing = processing
+    }
+}
+
 extension AppDatabase {
     // MARK: Meetings
 
@@ -110,9 +120,12 @@ extension AppDatabase {
             SELECT meetingId AS id, COUNT(*) AS n FROM meetingSpeaker GROUP BY meetingId
             """).reduce(into: [String: Int]()) { $0[$1["id"]] = $1["n"] }
         let openItems = try Row.fetchAll(db, sql: """
-            SELECT meetingId AS id, COUNT(*) AS n FROM analysisItem
-            WHERE category IN ('actionItem','commitment') AND completedAt IS NULL
-            GROUP BY meetingId
+            SELECT i.meetingId AS id, COUNT(*) AS n FROM analysisItem i
+            JOIN aiAnalysis a ON a.id = i.analysisId AND a.status = 'succeeded'
+            WHERE i.category IN ('actionItem','commitment') AND i.completedAt IS NULL
+              AND a.startedAt = (SELECT MAX(b.startedAt) FROM aiAnalysis b
+                                 WHERE b.meetingId = a.meetingId AND b.status = 'succeeded')
+            GROUP BY i.meetingId
             """).reduce(into: [String: Int]()) { $0[$1["id"]] = $1["n"] }
         return meetings.map {
             MeetingSummaryRow(meeting: $0,
@@ -151,8 +164,12 @@ extension AppDatabase {
     /// Deletes the meeting row (cascading to every dependent row: transcripts, speakers,
     /// analyses, chat, vectors…) and its audio folder. Voice samples enrolled from it stay on
     /// the participant's profile unless `includeVoiceSamples`.
-    public func deleteMeeting(id: String, paths: AppPaths, includeVoiceSamples: Bool = false) throws {
+    public func deleteMeeting(id: String, paths: AppPaths, includeVoiceSamples: Bool = false,
+                              allowRecording: Bool = false) throws {
         _ = try writer.write { db in
+            if !allowRecording, try Meeting.fetchOne(db, key: id)?.status == .recording {
+                throw AppDatabaseError.invalidOperation("La reunión se está grabando; detén la grabación antes de eliminarla.")
+            }
             if includeVoiceSamples {
                 try db.execute(sql: "DELETE FROM voiceSample WHERE meetingId = ?", arguments: [id])
             }
@@ -202,6 +219,7 @@ extension AppDatabase {
             segment.editedText = (trimmed == machineText) ? nil : trimmed
             segment.editedAt = segment.editedText == nil ? nil : Date()
             try segment.update(db)
+            try Self.dropEmbeddingIfTextIsEmpty(db, segment: segment)
             try CorrectionEvent(meetingId: segment.meetingId, entityType: "transcriptSegment",
                                 entityId: segmentId, field: "text",
                                 previousValue: previous, newValue: trimmed).insert(db)
@@ -216,10 +234,16 @@ extension AppDatabase {
             segment.editedText = nil
             segment.editedAt = nil
             try segment.update(db)
+            try Self.dropEmbeddingIfTextIsEmpty(db, segment: segment)
             try CorrectionEvent(meetingId: segment.meetingId, entityType: "transcriptSegment",
                                 entityId: segmentId, field: "text.revert",
                                 previousValue: edited, newValue: segment.displayText).insert(db)
         }
+    }
+
+    static func dropEmbeddingIfTextIsEmpty(_ db: Database, segment: TranscriptSegment) throws {
+        guard segment.displayText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        try db.execute(sql: "DELETE FROM segmentEmbedding WHERE segmentId = ?", arguments: [segment.id])
     }
 
     public func corrections(meetingId: String) throws -> [CorrectionEvent] {
@@ -244,23 +268,49 @@ extension AppDatabase {
     }
 
     /// Meetings left in `recording`/`processing` by a crash are surfaced as interrupted/failed.
-    public func recoverInterruptedMeetings() throws -> [String] {
+    public func recoverInterrupted() throws -> InterruptedMeetings {
         try writer.write { db in
+            let now = Date()
             let stuck = try Meeting.filter([MeetingStatus.recording.rawValue, MeetingStatus.processing.rawValue]
-                .contains(Column("status"))).fetchAll(db)
+                .contains(Column("status"))).order(Column("createdAt")).fetchAll(db)
+            var recovered = InterruptedMeetings()
             for var meeting in stuck {
-                meeting.status = meeting.status == .recording ? .interrupted : .failed
-                meeting.lastError = meeting.status == .interrupted
-                    ? "La aplicación se cerró durante la grabación. El audio escrito hasta ese momento se conservó."
-                    : "El procesamiento se interrumpió. Puedes volver a procesar la reunión."
-                meeting.updatedAt = Date()
+                if meeting.status == .recording {
+                    meeting.status = .interrupted
+                    meeting.lastError = "La aplicación se cerró durante la grabación. El audio escrito hasta ese momento se conservó."
+                    recovered.recordings.append(meeting.id)
+                } else {
+                    meeting.status = .failed
+                    meeting.lastError = "El procesamiento se interrumpió. Puedes volver a procesar la reunión."
+                    recovered.processing.append(meeting.id)
+                }
+                meeting.updatedAt = now
                 try meeting.update(db)
             }
             try db.execute(sql: """
                 UPDATE processingJob SET status = 'failed', errorMessage = 'Interrumpido', finishedAt = ?
                 WHERE status = 'running'
-                """, arguments: [Date()])
-            return stuck.map(\.id)
+                """, arguments: [now])
+            try db.execute(sql: """
+                UPDATE aiAnalysis SET status = 'failed', errorMessage = 'Interrumpido', finishedAt = ?
+                WHERE status = 'running'
+                """, arguments: [now])
+            return recovered
+        }
+    }
+
+    public func recoverInterruptedMeetings() throws -> [String] {
+        let recovered = try recoverInterrupted()
+        return recovered.recordings + recovered.processing
+    }
+
+    public func interruptedMeetingIdsWithoutTracks() throws -> [String] {
+        try reader.read { db in
+            try String.fetchAll(db, sql: """
+                SELECT m.id FROM meeting m
+                WHERE m.status = ? AND NOT EXISTS (SELECT 1 FROM audioTrack a WHERE a.meetingId = m.id)
+                ORDER BY m.createdAt
+                """, arguments: [MeetingStatus.interrupted.rawValue])
         }
     }
 

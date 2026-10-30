@@ -71,9 +71,9 @@ public final class TrackRecorder: @unchecked Sendable {
     public let source: AudioSource
     public let outputSampleRate: Double
 
+    let writer: CrashSafeWAVWriter
     private let queue: DispatchQueue
     private let clock: CaptureClock
-    private let writer: CrashSafeWAVWriter
     /// If present, both track recorders and the AEC share this recorder's queue.
     private let echoCanceller: RecordingEchoCanceller?
     private var aligner: TimelineAligner
@@ -87,10 +87,15 @@ public final class TrackRecorder: @unchecked Sendable {
     private var silenceWarningSent = false
     private var finished = false
     private var tailPaddedFrames = 0
+    private var missingPadFrames = 0
+    private var missingAudioFrames = 0
+    private var replacedAudioFrames = 0
+    private var writeFailureReported = false
+    private let pauseLock = NSLock()
     /// While muted the recorder writes digital silence instead of the input, so
-    /// the timeline stays aligned with the other track. Queue-confined.
-    private var muted = false
+    /// the timeline stays aligned with the other track. Guarded by `pauseLock`.
     private var pauses: [PauseInterval] = []
+    private var pausesClosed = false
     private let onLevel: @Sendable (AudioSource, AudioLevel) -> Void
     private let onWarning: @Sendable (RecordingWarning) -> Void
     /// Receives every converted 16 kHz mono block (e.g. live transcription).
@@ -99,7 +104,8 @@ public final class TrackRecorder: @unchecked Sendable {
     init(source: AudioSource, url: URL, outputSampleRate: Double, clock: CaptureClock,
          queue: DispatchQueue? = nil, echoCanceller: RecordingEchoCanceller? = nil,
          onLevel: @escaping @Sendable (AudioSource, AudioLevel) -> Void,
-         onWarning: @escaping @Sendable (RecordingWarning) -> Void) throws {
+         onWarning: @escaping @Sendable (RecordingWarning) -> Void,
+         onRecovered: @escaping @Sendable (RecordingWarning) -> Void = { _ in }) throws {
         self.source = source
         self.outputSampleRate = outputSampleRate
         self.clock = clock
@@ -112,6 +118,7 @@ public final class TrackRecorder: @unchecked Sendable {
         if source == .localMicrophone {
             echoCanceller?.onOutput = { [weak self] samples in self?.writeOutput(samples) }
             echoCanceller?.onMissingReference = { onWarning(.echoReferenceUnavailable) }
+            echoCanceller?.onReferenceRecovered = { onRecovered(.echoReferenceUnavailable) }
         }
     }
 
@@ -139,17 +146,35 @@ public final class TrackRecorder: @unchecked Sendable {
                 if !seenRates.contains(sampleRate) { seenRates.append(sampleRate) }
             }
             trackSilence(mono, sampleRate: sampleRate)
-            var converted = try resampler!.process(mono)
+            let converted = try resampler!.process(mono)
             guard !converted.isEmpty else { return }
-            if muted { converted = [Float](repeating: 0, count: converted.count) }
             let plan = aligner.plan(startSeconds: timelineSeconds, frameCount: converted.count)
-            if plan.padFrames > 0 { try appendSilence(frames: plan.padFrames) }
+            if plan.padFrames > 0 { appendSilence(frames: plan.padFrames) }
             if plan.dropFrames < converted.count {
-                let aligned = Array(converted.dropFirst(plan.dropFrames))
+                var aligned = Array(converted.dropFirst(plan.dropFrames))
+                silencePausedFrames(&aligned, endingAt: aligner.framesWritten)
                 appendAligned(aligned)
             }
         } catch {
             onWarning(.writeFailed(source, error.localizedDescription))
+        }
+    }
+
+    private func silencePausedFrames(_ samples: inout [Float], endingAt end: Int) {
+        let start = end - samples.count
+        let rate = outputSampleRate
+        let spans: [Range<Int>] = pauseLock.withLock {
+            var result: [Range<Int>] = []
+            for pause in pauses.reversed() {
+                let upper = pause.end.isFinite ? Int((pause.end * rate).rounded()) : Int.max
+                guard upper > start else { break }
+                let lower = max(start, Int((pause.start * rate).rounded()))
+                if lower < min(upper, end) { result.append(lower..<min(upper, end)) }
+            }
+            return result
+        }
+        for span in spans {
+            for index in span { samples[index - start] = 0 }
         }
     }
 
@@ -164,17 +189,26 @@ public final class TrackRecorder: @unchecked Sendable {
 
     private func writeOutput(_ samples: [Float]) {
         emitLevel(samples)
+        guard restoreMissingFrames() else {
+            missingAudioFrames += samples.count
+            return
+        }
+        let before = writer.framesWritten
         do {
             try writer.append(samples)
-            onSamples?(source, samples)
+            writeFailureReported = false
         } catch {
-            onWarning(.writeFailed(source, error.localizedDescription))
+            reportWriteFailure(error)
         }
+        let written = Int(writer.framesWritten - before)
+        missingAudioFrames += samples.count - written
+        if written > 0 { onSamples?(source, written == samples.count ? samples : Array(samples.prefix(written))) }
     }
 
-    private func appendSilence(frames: Int) throws {
+    private func appendSilence(frames: Int) {
         if echoCanceller == nil {
-            try writer.appendSilence(frames: frames)
+            missingPadFrames += frames
+            _ = restoreMissingFrames()
             return
         }
         // Bound allocations for late starts and disconnected devices.
@@ -186,22 +220,45 @@ public final class TrackRecorder: @unchecked Sendable {
         }
     }
 
+    private func restoreMissingFrames() -> Bool {
+        let missing = missingPadFrames + missingAudioFrames
+        guard missing > 0 else { return true }
+        let before = writer.framesWritten
+        do {
+            try writer.appendSilence(frames: missing)
+        } catch {
+            reportWriteFailure(error)
+        }
+        var written = Int(writer.framesWritten - before)
+        let audio = min(written, missingAudioFrames)
+        missingAudioFrames -= audio
+        replacedAudioFrames += audio
+        written -= audio
+        missingPadFrames -= min(written, missingPadFrames)
+        return missingPadFrames + missingAudioFrames == 0
+    }
+
+    private func reportWriteFailure(_ error: any Error) {
+        guard !writeFailureReported else { return }
+        writeFailureReported = true
+        onWarning(.writeFailed(source, error.localizedDescription))
+    }
+
     private func emitLevel(_ mono: [Float]) {
         let now = HAL.nowSeconds()
         guard now - lastLevelEmit >= 0.05 else { return }
         lastLevelEmit = now
-        onLevel(source, muted ? .silence : LevelMeter.measure(mono))
+        onLevel(source, LevelMeter.measure(mono))
     }
 
     /// Starts/ends an intentional pause at a timeline position.
     func setMuted(_ value: Bool, atTimelineSeconds time: Double) {
-        queue.async { [self] in
-            guard value != muted, !finished else { return }
-            muted = value
+        pauseLock.withLock {
+            guard !pausesClosed, value != (pauses.last?.end == .infinity) else { return }
             if value {
-                pauses.append(PauseInterval(start: time, end: time))
-            } else if let last = pauses.indices.last {
-                pauses[last].end = time
+                pauses.append(PauseInterval(start: time, end: .infinity))
+            } else {
+                pauses[pauses.count - 1].end = max(pauses[pauses.count - 1].start, time)
             }
         }
     }
@@ -224,22 +281,29 @@ public final class TrackRecorder: @unchecked Sendable {
     func finish(atTimelineSeconds end: Double) -> TrackStatistics {
         queue.sync {
             if !finished {
-                if muted, let last = pauses.indices.last { pauses[last].end = end }
+                pauseLock.withLock {
+                    pausesClosed = true
+                    if let last = pauses.indices.last, !pauses[last].end.isFinite {
+                        pauses[last].end = max(pauses[last].start, end)
+                    }
+                }
                 let target = Int(end * outputSampleRate)
                 let missing = target - aligner.framesWritten
                 if missing > 0 {
-                    try? appendSilence(frames: missing)
+                    appendSilence(frames: missing)
                     tailPaddedFrames = missing
                 }
                 if source == .localMicrophone { echoCanceller?.finish() }
+                _ = restoreMissingFrames()
                 try? writer.close()
                 finished = true
             }
+            let padded = aligner.totalPaddedFrames + tailPaddedFrames + replacedAudioFrames
             return TrackStatistics(source: source, url: writer.url,
                                    durationSeconds: writer.durationSeconds,
-                                   paddedSeconds: Double(aligner.totalPaddedFrames + tailPaddedFrames) / outputSampleRate,
+                                   paddedSeconds: Double(padded) / outputSampleRate,
                                    droppedSeconds: Double(aligner.totalDroppedFrames) / outputSampleRate,
-                                   inputSampleRates: seenRates, pauses: pauses)
+                                   inputSampleRates: seenRates, pauses: pauseLock.withLock { pauses })
         }
     }
 

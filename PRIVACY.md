@@ -10,7 +10,7 @@ datos tuyos (ver «Actualizaciones»).
 |---|---|---|
 | Audio (`local_microphone.wav`, `remote_system_audio.wav`, importados) | `~/Library/Application Support/MeetingIntelligence/Recordings/<id>/` | Permisos 0700/0600, FileVault; conservación configurable |
 | Transcripciones, hablantes, análisis, historial | `Library.sqlite` (misma carpeta) | 0600, `secure_delete`, FileVault |
-| Huellas de voz (embeddings) | `voiceSample`, `meetingSpeaker` | **AES-GCM**; clave de 256 bits en el Llavero (solo este dispositivo) |
+| Huellas de voz (embeddings) | `voiceSample`, `meetingSpeaker` | **AES-GCM**; clave de 256 bits en el Llavero de inicio de sesión (protegido por la contraseña de tu sesión; puede viajar con una migración del llavero, TD-14) |
 | Preferencias | `UserDefaults` | Sin secretos |
 | Modelos | `~/Library/Application Support/FluidAudio/Models/` | Públicos (Hugging Face, FluidInference) |
 | Copia temporal de una pista sin silencios largos (solo durante su transcripción, TD-22) | `$TMPDIR/mi-asr-<uuid>.wav` | Directorio del usuario 0700; se borra al terminar la transcripción, también si falla |
@@ -33,8 +33,10 @@ No se registran tokens, credenciales ni texto de transcripciones en los logs del
 
 - Se crean **solo** con consentimiento registrado (texto de consentimiento + fecha) y muestras autorizadas.
 - Se actualizan únicamente con muestras **validadas** por ti.
-- Revocar el consentimiento borra todas las huellas; eliminar el perfil lo borra por completo.
-- Conservación configurable por perfil (90/180/365 días sin uso).
+- Revocar el consentimiento (también por caducidad) borra todas las huellas: las muestras del perfil y las de sus
+  hablantes en las reuniones. Eliminar el perfil lo borra por completo.
+- Conservación configurable por perfil (90/180/365 días sin uso), contados desde la última actividad: reconocimiento,
+  consentimiento renovado o muestra añadida.
 - Nunca se exportan, nunca se envían a proveedores de IA y nunca se exponen por MCP.
 - Una identidad solo se asigna automáticamente si supera un umbral calibrado con tus datos; si no, se muestra
   "Participante desconocido". Un LLM nunca decide identidades.
@@ -46,10 +48,13 @@ No se registran tokens, credenciales ni texto de transcripciones en los logs del
   envíos siguientes a **ese** proveedor sin la confirmación; se revierte en Inteligencia › Proveedores («Confirmar
   antes de enviar»). El envío sigue empezando solo cuando pulsas «Analizar» o preguntas en el chat con IA.
 - Ejecutar un CLI en tu Mac **no** implica que el modelo sea local: esos modelos procesan los datos en la nube.
-- Ollama solo acepta endpoints locales (127.0.0.1/localhost).
-- Se envía solo texto (transcripción o extractos); nunca audio ni datos biométricos.
+- Ollama solo acepta endpoints locales (127.0.0.1/localhost). Sus modelos *cloud* (p. ej. `gpt-oss:120b-cloud`) envían
+  la transcripción a ollama.com, así que piden la misma confirmación que los proveedores en la nube.
+- Se envía solo texto (transcripción o extractos); nunca audio ni datos biométricos. Los mensajes de error no
+  incluyen texto de la reunión.
 - Los agentes se ejecutan sin herramientas ni permisos de sistema y la transcripción se trata como contenido no
-  confiable: las instrucciones que aparezcan en ella no se ejecutan. Codex se ejecuta sin cargar tu `config.toml`
+  confiable: las instrucciones que aparezcan en ella no se ejecutan. Claude Code se ejecuta en `--safe-mode`: no carga
+  tu `CLAUDE.md`, *hooks*, plugins, skills ni servidores MCP (TD-12). Codex se ejecuta sin cargar tu `config.toml`
   (servidores MCP, plugins, hooks, búsqueda web) y sin poder ejecutar comandos (TD-12). GitHub Copilot CLI se ejecuta
   sin ninguna herramienta y con una configuración temporal vacía: no carga tus *hooks*, plugins, servidores MCP ni
   instrucciones, y no deja la transcripción en `~/.copilot` (TD-12).
@@ -70,6 +75,9 @@ Deshabilitado por defecto. Solo lectura. Puede limitarse a reuniones concretas. 
 
 ## Eliminación
 
-- Eliminar una reunión borra su audio, transcripción, hablantes y análisis.
-- Eliminar un participante borra su perfil de voz y deja sus intervenciones como "desconocido".
+- Eliminar una reunión borra su audio, transcripción, hablantes y análisis. No se puede eliminar mientras se graba.
+- Eliminar un participante borra su perfil de voz, sus huellas en las reuniones y los registros de fusión con sus
+  datos, y deja sus intervenciones como "desconocido".
 - Conservación de audio: se puede borrar automáticamente el audio de reuniones ya transcritas tras N días.
+- Al arrancar se borran las carpetas de audio que no pertenecen a ninguna reunión (restos de un borrado interrumpido),
+  solo si la biblioteca se abrió bien, tiene reuniones y la carpeta lleva más de 1 h sin cambios.

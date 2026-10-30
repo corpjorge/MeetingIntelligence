@@ -15,11 +15,11 @@ struct SpeakerAvatar: View {
     var body: some View {
         let tint = isUnknown ? DS.Color.textTertiary : DS.Color.speaker(colorIndex ?? StableHash.index(name))
         ZStack {
-            Circle().fill(tint.opacity(0.16))
+            Circle().fill(tint.opacity(DS.Opacity.avatarFill))
             if isUnknown {
-                Image(systemName: "person.fill.questionmark").font(.system(size: size * 0.42)).foregroundStyle(tint)
+                Image(systemName: "person.fill.questionmark").font(.system(size: size * DS.Size.avatarSymbolScale)).foregroundStyle(tint)
             } else {
-                Text(initials).font(.system(size: size * 0.38, weight: .semibold)).foregroundStyle(tint)
+                Text(initials).font(.system(size: size * DS.Size.avatarInitialsScale, weight: .semibold)).foregroundStyle(tint)
             }
         }
         .frame(width: size, height: size)
@@ -35,20 +35,20 @@ struct LevelMeterView: View {
 
     var body: some View {
         GeometryReader { geo in
-            let spacing: CGFloat = 2
+            let spacing = DS.Space.xxs
             let width = (geo.size.width - spacing * CGFloat(segments - 1)) / CGFloat(segments)
             HStack(spacing: spacing) {
                 ForEach(0..<segments, id: \.self) { i in
                     let threshold = Double(i) / Double(segments)
                     let lit = level > threshold
-                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    RoundedRectangle(cornerRadius: DS.Radius.meterSegment, style: .continuous)
                         .fill(lit ? color(for: threshold) : DS.Color.border)
                         .frame(width: max(1, width))
                 }
             }
         }
-        .frame(height: 8)
-        .animation(.linear(duration: 0.08), value: level)
+        .frame(height: DS.Size.levelMeterHeight)
+        .animation(DS.Motion.meterLevel, value: level)
         .accessibilityLabel("Nivel de audio")
         .accessibilityValue("\(Int(level * 100)) por ciento")
     }
@@ -59,14 +59,15 @@ struct LevelMeterView: View {
 }
 
 struct RecordingDot: View {
-    var size: CGFloat = 10
+    var size: CGFloat = DS.Size.recordingDot
     @State private var pulsing = false
 
     var body: some View {
         Circle()
             .fill(DS.Color.recording)
             .frame(width: size, height: size)
-            .overlay(Circle().stroke(DS.Color.recording.opacity(0.4), lineWidth: 3).scaleEffect(pulsing ? 1.9 : 1)
+            .overlay(Circle().stroke(DS.Color.recording.opacity(DS.Opacity.recordingHalo), lineWidth: DS.Stroke.recordingHalo)
+                .scaleEffect(pulsing ? DS.Scale.recordingPulse : 1)
                 .opacity(pulsing ? 0 : 1))
             .onAppear { withAnimation(DS.Motion.pulse) { pulsing = true } }
             .accessibilityLabel("Grabando")

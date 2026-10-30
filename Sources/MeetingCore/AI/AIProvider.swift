@@ -93,6 +93,15 @@ public protocol AIProvider: Sendable {
     func complete(_ request: AIRequest, configuration: AIProviderConfiguration) async throws -> AIResponse
 }
 
+extension AIProviderKind {
+    public func sendsDataToRemoteService(model: String?) -> Bool {
+        switch self {
+        case .ollama: model.map(OllamaProvider.isCloudModel) ?? false
+        default: sendsDataToRemoteService
+        }
+    }
+}
+
 public enum AIProviders {
     public static func provider(for kind: AIProviderKind) -> any AIProvider {
         switch kind {

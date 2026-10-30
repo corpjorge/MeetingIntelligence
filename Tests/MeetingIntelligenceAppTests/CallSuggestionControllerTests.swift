@@ -96,4 +96,58 @@ struct CallSuggestionControllerTests {
         #expect(calls.startSuggestion == nil)
         #expect(!recording.isActive) // the recording view still needs the user's explicit start
     }
+
+    @Test func endSuggestionNeverOutlivesItsRecording() async throws {
+        let suite = try IsolatedDefaults()
+        defer { suite.remove() }
+        let paths = try AppFixture.temporaryPaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        _ = NSApplication.shared
+        let db = try AppDatabase.open(paths: paths)
+        let settings = AppSettings(defaults: suite.defaults)
+        settings.systemNotifications = false
+        settings.liveTranscription = false
+        let recording = RecordingController(importer: MeetingImportService(database: db, paths: paths), paths: paths,
+                                            settings: settings, asr: ParakeetUltraProvider(), startCapture: { _ in })
+        let calls = CallSuggestionController(settings: settings, recording: recording)
+
+        calls.handle(.callStarted(Self.activity()))
+        #expect(calls.startSuggestion != nil)
+        await recording.start(title: "FIXTURE 1", target: .application(Self.zoom), captureMicrophone: false)
+        #expect(recording.state == .recording)
+        let first = try #require(recording.meeting?.id)
+        try await waitUntil { calls.startSuggestion == nil }
+
+        calls.handle(.callEnded(Self.zoom, .microphoneReleased))
+        #expect(calls.endSuggestion == Self.zoom)
+        recording.stop()
+        try await waitUntil { !recording.isActive }
+        try await waitUntil { calls.endSuggestion == nil }
+
+        await recording.start(title: "FIXTURE 2", target: .application(Self.zoom), captureMicrophone: false)
+        let second = try #require(recording.meeting?.id)
+        #expect(second != first)
+        #expect(calls.endSuggestion == nil)
+
+        calls.handleNotification(.stop(app: Self.zoom.groupKey, meeting: first))
+        calls.handleNotification(.stop(app: Self.zoom.groupKey, meeting: nil))
+        calls.stopRecordingFromSuggestion()
+        #expect(recording.state == .recording)
+
+        calls.handle(.callEnded(Self.zoom, .appClosed))
+        #expect(calls.endSuggestion == Self.zoom)
+        calls.handleNotification(.stop(app: Self.zoom.groupKey, meeting: second))
+        #expect(calls.endSuggestion == nil)
+        try await waitUntil { !recording.isActive }
+        #expect(try db.meeting(id: second)?.status == .recorded)
+    }
+
+    @Test func notificationActionsCarryTheRecordingTheyWereMadeFor() {
+        #expect(NotificationBridge.Action(identifier: "STOP", app: "a", meeting: "m") == .stop(app: "a", meeting: "m"))
+        #expect(NotificationBridge.Action(identifier: "KEEP", app: "a", meeting: nil) == .keep(app: "a", meeting: nil))
+        #expect(NotificationBridge.Action(identifier: "RECORD", app: "a", meeting: nil) == .record)
+        #expect(NotificationBridge.Action(identifier: "IGNORE", app: "a", meeting: nil) == .ignore("a"))
+        #expect(NotificationBridge.Action(identifier: "com.apple.UNNotificationDefaultActionIdentifier", app: "a",
+                                          meeting: nil) == .open)
+    }
 }

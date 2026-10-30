@@ -12,7 +12,7 @@ struct ModelVersionsSection: View {
         Section("Versiones y actualizaciones") {
             HStack(spacing: DS.Space.m) {
                 Button("Buscar actualizaciones") { Task { await updates.checkForUpdates() } }
-                    .disabled(updates.isChecking)
+                    .disabled(updates.isChecking || updates.isUpdating)
                 if updates.isChecking { ProgressView().controlSize(.small) }
                 Spacer()
                 if let last = updates.lastChecked {

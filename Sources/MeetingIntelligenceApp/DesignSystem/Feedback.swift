@@ -24,15 +24,15 @@ struct StatusPill: View {
 
     var body: some View {
         HStack(spacing: DS.Space.xs) {
-            if let systemImage { Image(systemName: systemImage).font(.system(size: 9, weight: .bold)) }
+            if let systemImage { Image(systemName: systemImage).font(DS.Font.pillIcon) }
             Text(text).font(DS.Font.captionEmphasis)
         }
         .padding(.horizontal, DS.Space.s)
-        .padding(.vertical, DS.Space.xxs + 1)
+        .padding(.vertical, DS.Space.xxs + DS.Space.xxxs)
         .lineLimit(1)
         .fixedSize()
         .foregroundStyle(tone.color)
-        .background(tone.color.opacity(0.12), in: Capsule())
+        .background(tone.color.opacity(DS.Opacity.pillFill), in: Capsule())
         .accessibilityElement(children: .combine)
     }
 }
@@ -46,16 +46,16 @@ struct EmptyStateView<Actions: View>: View {
     var body: some View {
         VStack(spacing: DS.Space.m) {
             Image(systemName: systemImage)
-                .font(.system(size: 28, weight: .light))
+                .font(DS.Font.emptyStateIcon)
                 .foregroundStyle(DS.Color.textTertiary)
-                .frame(width: 56, height: 56)
+                .frame(width: DS.Size.emptyStateIconTile, height: DS.Size.emptyStateIconTile)
                 .background(DS.Color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.Radius.l, style: .continuous))
             Text(title).font(DS.Font.headline).foregroundStyle(DS.Color.textPrimary)
             Text(message)
                 .font(DS.Font.body)
                 .foregroundStyle(DS.Color.textSecondary)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: 380)
+                .frame(maxWidth: DS.Layout.emptyStateMessageMaxWidth)
             HStack(spacing: DS.Space.s) { actions }.padding(.top, DS.Space.xs)
         }
         .padding(DS.Space.xxl)
@@ -76,7 +76,7 @@ struct LoadingStateView: View {
     var body: some View {
         VStack(spacing: DS.Space.m) {
             if let progress {
-                ProgressView(value: progress).progressViewStyle(.linear).frame(maxWidth: 260)
+                ProgressView(value: progress).progressViewStyle(.linear).frame(maxWidth: DS.Layout.Control.loadingProgressMaxWidth)
             } else {
                 ProgressView().controlSize(.small)
             }
@@ -97,9 +97,9 @@ struct InlineBanner<Action: View>: View {
     var body: some View {
         HStack(alignment: .top, spacing: DS.Space.m) {
             Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .semibold))
+                .font(DS.Font.bannerIcon)
                 .foregroundStyle(tone.color)
-                .frame(width: 18)
+                .frame(width: DS.Size.bannerIconWidth)
             VStack(alignment: .leading, spacing: DS.Space.xxs) {
                 Text(title).font(DS.Font.bodyEmphasis).foregroundStyle(DS.Color.textPrimary)
                 if let message {
@@ -111,9 +111,9 @@ struct InlineBanner<Action: View>: View {
             action
         }
         .padding(DS.Space.m)
-        .background(tone.color.opacity(0.08), in: RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
+        .background(tone.color.opacity(DS.Opacity.bannerFill), in: RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
-            .strokeBorder(tone.color.opacity(0.22), lineWidth: DS.Layout.hairline))
+            .strokeBorder(tone.color.opacity(DS.Opacity.bannerBorder), lineWidth: DS.Layout.hairline))
         .accessibilityElement(children: .combine)
     }
 }

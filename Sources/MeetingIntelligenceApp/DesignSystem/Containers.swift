@@ -165,24 +165,24 @@ struct DSTabBar<Tab: Hashable & Identifiable>: View {
                         Group {
                             switch variant {
                             case .iconAndTitle:
-                                HStack(spacing: DS.Space.xs + 1) {
+                                HStack(spacing: DS.Space.xs + DS.Space.xxxs) {
                                     Image(systemName: icon(tab))
                                     Text(title(tab))
                                 }
                             case .title: Text(title(tab))
-                            case .icon: Image(systemName: icon(tab)).frame(minWidth: 28)
+                            case .icon: Image(systemName: icon(tab)).frame(minWidth: DS.Size.tabIconMinWidth)
                             }
                         }
                             .font(DS.Font.bodyEmphasis)
                             .lineLimit(1)
                             .fixedSize()
                             .foregroundStyle(selected ? DS.Color.textPrimary : DS.Color.textSecondary)
-                            .padding(.horizontal, variant == .icon ? DS.Space.s : DS.Space.xs + 2)
+                            .padding(.horizontal, variant == .icon ? DS.Space.s : DS.Space.xs + DS.Space.xxs)
                             .padding(.top, DS.Space.xs)
                         ZStack {
-                            Rectangle().fill(.clear).frame(height: 2)
+                            Rectangle().fill(.clear).frame(height: DS.Size.tabUnderline)
                             if selected {
-                                Capsule().fill(DS.Color.accent).frame(height: 2)
+                                Capsule().fill(DS.Color.accent).frame(height: DS.Size.tabUnderline)
                                     .matchedGeometryEffect(id: "underline", in: underline)
                             }
                         }
@@ -194,7 +194,7 @@ struct DSTabBar<Tab: Hashable & Identifiable>: View {
                 .accessibilityLabel(title(tab))
                 .accessibilityAddTraits(selected ? .isSelected : [])
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: DS.Space.none)
         }
     }
 }

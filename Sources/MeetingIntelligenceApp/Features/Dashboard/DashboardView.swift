@@ -41,15 +41,23 @@ final class DashboardModel {
 
     private func observeItems(_ db: AppDatabase) async {
         let observation = ValueObservation.tracking { db -> ([AnalysisItem], [(AIAnalysis, String)], [String: String]) in
+            let meetings = try Meeting.fetchAll(db)
+            let titles = Dictionary(uniqueKeysWithValues: meetings.map { ($0.id, $0.title) })
+            let dates = Dictionary(uniqueKeysWithValues: meetings.map { ($0.id, $0.displayDate) })
+            let succeeded = AnalysisStatus.succeeded.rawValue
+            let latest = try String.fetchAll(db, sql: """
+                SELECT a.id FROM aiAnalysis a WHERE a.status = ? AND a.startedAt =
+                  (SELECT MAX(b.startedAt) FROM aiAnalysis b WHERE b.meetingId = a.meetingId AND b.status = ?)
+                """, arguments: [succeeded, succeeded])
             let items = try AnalysisItem
                 .filter([AnalysisCategory.actionItem.rawValue, AnalysisCategory.commitment.rawValue].contains(Column("category")))
                 .filter(Column("completedAt") == nil)
-                .order(Column("meetingId"), Column("orderIndex"), Column("id"))
+                .filter(latest.contains(Column("analysisId")))
                 .fetchAll(db)
-            let analyses = try AIAnalysis.filter(Column("status") == AnalysisStatus.succeeded.rawValue)
+            let analyses = try AIAnalysis.filter(Column("status") == succeeded)
                 .order(Column("startedAt").desc).limit(4).fetchAll(db)
-            let titles = try Dictionary(uniqueKeysWithValues: Meeting.fetchAll(db).map { ($0.id, $0.title) })
-            return (items, analyses.map { ($0, titles[$0.meetingId] ?? "") }, titles)
+            return (DashboardModel.orderedOpenItems(items, meetingDates: dates),
+                    analyses.map { ($0, titles[$0.meetingId] ?? "") }, titles)
         }
         do {
             for try await (items, analyses, titles) in observation.values(in: db.reader) {
@@ -58,6 +66,17 @@ final class DashboardModel {
                 latestAnalyses = analyses
             }
         } catch {}
+    }
+
+    nonisolated static func orderedOpenItems(_ items: [AnalysisItem], meetingDates: [String: Date]) -> [AnalysisItem] {
+        items.sorted { lhs, rhs in
+            let left = meetingDates[lhs.meetingId] ?? .distantPast
+            let right = meetingDates[rhs.meetingId] ?? .distantPast
+            if left != right { return left > right }
+            if lhs.meetingId != rhs.meetingId { return lhs.meetingId < rhs.meetingId }
+            if lhs.orderIndex != rhs.orderIndex { return lhs.orderIndex < rhs.orderIndex }
+            return lhs.id < rhs.id
+        }
     }
 }
 

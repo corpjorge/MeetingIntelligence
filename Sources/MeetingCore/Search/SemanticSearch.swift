@@ -71,7 +71,7 @@ extension AppDatabase {
                 let hash = EmbeddingCodec.textHash(text)
                 let storedModel: String? = row["model"], storedHash: String? = row["textHash"]
                 guard storedModel != model || storedHash != hash else { continue }
-                guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
                 pending.append(PendingEmbedding(segmentId: row["id"], text: text, textHash: hash))
                 if pending.count >= limit { break }
             }
@@ -97,16 +97,21 @@ extension AppDatabase {
             let total = try Int.fetchOne(db, sql: """
                 SELECT COUNT(*) FROM transcriptSegment s
                 JOIN transcript t ON t.id = s.transcriptId AND t.supersededAt IS NULL
+                WHERE \(Self.hasTextSQL)
                 """) ?? 0
             let indexed = try Int.fetchOne(db, sql: """
                 SELECT COUNT(*) FROM segmentEmbedding e
                 JOIN transcriptSegment s ON s.id = e.segmentId
                 JOIN transcript t ON t.id = s.transcriptId AND t.supersededAt IS NULL
-                WHERE e.model = ?
+                WHERE e.model = ? AND \(Self.hasTextSQL)
                 """, arguments: [model]) ?? 0
             return SemanticIndexCoverage(indexed: indexed, total: total)
         }
     }
+
+    static let hasTextSQL = """
+        TRIM(COALESCE(s.editedText, s.vocabularyText, s.asrText), ' ' || char(9) || char(10) || char(13)) != ''
+        """
 
     /// Drops every stored vector (the index is a rebuildable cache).
     public func clearSemanticIndex() throws {
@@ -132,7 +137,7 @@ extension SearchService {
                 JOIN meeting m ON m.id = s.meetingId
                 LEFT JOIN participant p ON p.id = s.participantId
                 LEFT JOIN meetingSpeaker ms ON ms.id = s.meetingSpeakerId
-                WHERE e.model = ?
+                WHERE e.model = ? AND \(AppDatabase.hasTextSQL)
                 """
             var arguments: StatementArguments = [query.model]
             if case .meetings(let ids) = scope {
@@ -141,9 +146,10 @@ extension SearchService {
                 arguments += StatementArguments(ids)
             }
             let scored = try Row.fetchAll(db, sql: sql, arguments: arguments).compactMap { row -> SearchHit? in
+                let text: String = row["text"]
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
                 let similarity = EmbeddingCodec.cosine(query.vector, EmbeddingCodec.decode(row["vector"]))
                 guard similarity >= minSimilarity else { return nil }
-                let text: String = row["text"]
                 return SearchHit(segmentId: row["segmentId"], meetingId: row["meetingId"],
                                  meetingTitle: row["meetingTitle"], meetingDate: row["meetingDate"],
                                  startTime: row["startTime"], endTime: row["endTime"],

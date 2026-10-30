@@ -73,14 +73,14 @@ enum ShortUtteranceContext {
 
     static func isShort(_ range: Range<Int>, in tokens: [ASRToken]) -> Bool {
         let duration = tokens[range.upperBound - 1].end - tokens[range.lowerBound].start
-        let words = tokens[range].filter { $0.piece.hasPrefix("▁") }.count
+        let words = tokens[range].filter { WordGrouping.startsWord($0.piece) }.count
         return duration <= maxUtteranceSeconds && max(1, words) <= maxUtteranceWords
     }
 
     static func needsContext(_ range: Range<Int>, in tokens: [ASRToken]) -> Bool {
         if isShort(range, in: tokens) { return true }
         let duration = tokens[range.upperBound - 1].end - tokens[range.lowerBound].start
-        let words = tokens[range].filter { $0.piece.hasPrefix("▁") }.count
+        let words = tokens[range].filter { WordGrouping.startsWord($0.piece) }.count
         // A misdecoded short reply can expand into many foreign words. Include
         // low-confidence replies beyond the usual six-word limit, within a bound.
         return duration <= 6 && words <= 16 && meanConfidence(tokens[range]) < 0.7
@@ -94,9 +94,10 @@ enum ShortUtteranceContext {
         var spans: [(start: Double, end: Double)] = []
         var total = 0.0
         for i in order {
+            guard maxSeconds - total > 0.2 else { break }
             let start = tokens[ranges[i].lowerBound].start, end = tokens[ranges[i].upperBound - 1].end
             let take = min(end - start, maxSeconds - total)
-            guard take > 0.2 else { break }
+            guard take > 0.2 else { continue }
             // Keep the part of a long neighbour closest to the utterance.
             spans.append(i < index ? (end - take, end) : (start, start + take))
             total += take

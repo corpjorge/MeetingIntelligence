@@ -14,4 +14,8 @@ struct AudioDeliveryWatchdog {
         if absent { return missing.insert(source).inserted ? .missing : nil }
         return missing.remove(source) != nil ? .recovered : nil
     }
+
+    mutating func reset(_ source: AudioSource) {
+        missing.remove(source)
+    }
 }

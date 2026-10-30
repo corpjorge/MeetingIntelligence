@@ -122,8 +122,48 @@ public struct ModelInstaller: Sendable {
 
     /// After a crash mid-update: an unverified swap is undone and staging copies are dropped.
     public func recoverInterrupted(_ model: ManagedModel) {
+        guard let lease = try? beginUpdate(model) else { return }
+        defer { lease.release() }
         try? rollback(model)
         try? FileManager.default.removeItem(at: Self.stagingURL(for: model))
+    }
+
+    public static func lockURL(for model: ManagedModel) -> URL {
+        model.directory.deletingLastPathComponent().appendingPathComponent(".\(model.directory.lastPathComponent).mi-lock")
+    }
+
+    public func beginUpdate(_ model: ManagedModel) throws -> ModelUpdateLease {
+        let descriptor = open(Self.lockURL(for: model).path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            let code = errno
+            close(descriptor)
+            if code == EWOULDBLOCK { throw ModelInstallError.busy("otro proceso está actualizando este modelo") }
+            throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
+        }
+        return ModelUpdateLease(descriptor: descriptor)
+    }
+}
+
+public final class ModelUpdateLease: @unchecked Sendable {
+    private let lock = NSLock()
+    private var descriptor: Int32
+
+    init(descriptor: Int32) {
+        self.descriptor = descriptor
+    }
+
+    deinit {
+        release()
+    }
+
+    public func release() {
+        lock.withLock {
+            guard descriptor >= 0 else { return }
+            flock(descriptor, LOCK_UN)
+            close(descriptor)
+            descriptor = -1
+        }
     }
 }
 

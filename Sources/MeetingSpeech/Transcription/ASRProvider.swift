@@ -20,7 +20,7 @@ public enum ModelPreparationPhase: Sendable, Equatable {
     case ready
 }
 
-/// One SentencePiece token as decoded (piece keeps its `▁` word marker).
+/// One SentencePiece token as decoded (a word-initial piece starts with a space or `▁`).
 public struct ASRToken: Sendable, Hashable {
     public var piece: String
     public var tokenId: Int

@@ -57,6 +57,7 @@ final class RecordingController {
     private(set) var liveStatus: String?
 
     var onFinished: ((String) -> Void)?
+    var blockedReason: String?
 
     var isActive: Bool { state == .recording || state == .paused || state == .starting || state == .stopping }
 
@@ -95,6 +96,10 @@ final class RecordingController {
 
     func start(title: String, target: RemoteCaptureTarget, captureMicrophone: Bool, includeVideo: Bool = false, microphoneDeviceUID: String? = nil) async {
         guard !isActive else { return }
+        if let blockedReason {
+            state = .failed(blockedReason)
+            return
+        }
         guard !includeVideo || videoSelection.canRecord else {
             state = .failed("Elige la ventana en el selector de macOS antes de grabar video.")
             return
@@ -193,7 +198,7 @@ final class RecordingController {
             if let videoRecorder { _ = try? await videoRecorder.stop(at: session?.elapsed ?? 0) }
             videoRecorder = nil
             if let meeting {
-                try? importer.database.deleteMeeting(id: meeting.id, paths: paths)
+                try? importer.database.deleteMeeting(id: meeting.id, paths: paths, allowRecording: true)
             }
             session = nil
             meeting = nil
@@ -343,11 +348,19 @@ final class RecordingController {
                 case .remoteScope(let scope):
                     self.scope = scope
                 case .sourceRecovered(let source):
-                    self.warnings.removeAll { $0 == .noAudioBuffers(source) }
+                    self.warnings.removeAll { Self.isResolved($0, byRecoveryOf: source) }
                 case .microphonePaused(let paused):
                     self.microphonePaused = paused
                 }
             }
+        }
+    }
+
+    static func isResolved(_ warning: RecordingWarning, byRecoveryOf source: AudioSource) -> Bool {
+        switch warning {
+        case .noAudioBuffers(source), .sourceFailed(source, _): true
+        case .echoReferenceUnavailable: source == .remoteSystemAudio
+        default: false
         }
     }
 
@@ -364,9 +377,16 @@ final class RecordingController {
 
     /// Flush WAV headers so a quit during recording keeps all audio; the
     /// meeting is recovered as `interrupted` on next launch.
-    private func handleTermination() {
-        guard let session, isActive else { return }
-        if state == .starting { session.requestStartCancellation(); return }
+    func handleTermination() {
+        guard isActive else { return }
+        if state == .starting {
+            cancelStart()
+            if let meeting {
+                try? importer.database.deleteMeeting(id: meeting.id, paths: paths, allowRecording: true)
+            }
+            return
+        }
+        guard let session else { return }
         session.flushToDisk()
         guard state != .stopping else { return }
         if let meeting {

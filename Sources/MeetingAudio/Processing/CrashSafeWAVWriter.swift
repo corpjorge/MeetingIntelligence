@@ -1,4 +1,34 @@
+import Darwin
 public import Foundation
+
+struct WAVWriteError: LocalizedError, Equatable {
+    let code: Int32
+
+    var errorDescription: String? {
+        switch code {
+        case ENOSPC: "No queda espacio en el disco."
+        case EDQUOT: "Se superó la cuota de disco."
+        default: "No se pudo escribir en el disco (código \(code))."
+        }
+    }
+}
+
+struct WAVFileIO {
+    var write: (Int32, UnsafeRawBufferPointer, Int64) throws -> Int
+    var synchronize: (Int32) throws -> Void
+
+    static var system: WAVFileIO {
+        WAVFileIO(write: { descriptor, bytes, offset in
+            while true {
+                let count = pwrite(descriptor, bytes.baseAddress, bytes.count, off_t(offset))
+                if count >= 0 { return count }
+                if errno != EINTR { throw WAVWriteError(code: errno) }
+            }
+        }, synchronize: { descriptor in
+            guard fsync(descriptor) == 0 else { throw WAVWriteError(code: errno) }
+        })
+    }
+}
 
 /// 16-bit PCM mono WAV writer designed for long live recordings.
 ///
@@ -13,6 +43,7 @@ public final class CrashSafeWAVWriter {
     public let sampleRate: Int
     public private(set) var framesWritten: Int64 = 0
 
+    var io = WAVFileIO.system
     private let handle: FileHandle
     private let flushInterval: Int64
     private var framesSinceFlush: Int64 = 0
@@ -30,7 +61,7 @@ public final class CrashSafeWAVWriter {
             throw CaptureError.fileCreationFailed(url.path)
         }
         handle = try FileHandle(forWritingTo: url)
-        try handle.write(contentsOf: Self.header(sampleRate: sampleRate, dataBytes: 0))
+        try writeHeader()
     }
 
     deinit {
@@ -45,10 +76,9 @@ public final class CrashSafeWAVWriter {
             let clipped = max(-1, min(1, samples[i]))
             scratch[i] = Int16((clipped * Float(Int16.max)).rounded())
         }
-        try scratch.withUnsafeBufferPointer { buffer in
-            try handle.write(contentsOf: Data(bytes: buffer.baseAddress!, count: samples.count * 2))
+        try scratch.withUnsafeBytes { bytes in
+            try writeFrames(UnsafeRawBufferPointer(rebasing: bytes.prefix(samples.count * 2)))
         }
-        try advance(by: Int64(samples.count))
     }
 
     public func append(_ samples: [Float]) throws {
@@ -58,42 +88,70 @@ public final class CrashSafeWAVWriter {
     /// Appends digital silence (used to keep tracks aligned across gaps).
     public func appendSilence(frames: Int) throws {
         guard !closed, frames > 0 else { return }
-        let chunk = Data(count: min(frames, sampleRate) * 2)
+        let zeros = [UInt8](repeating: 0, count: min(frames, sampleRate) * 2)
         var remaining = frames
         while remaining > 0 {
             let n = min(remaining, sampleRate)
-            try handle.write(contentsOf: n == min(frames, sampleRate) ? chunk : Data(count: n * 2))
+            try zeros.withUnsafeBytes { try writeFrames(UnsafeRawBufferPointer(rebasing: $0.prefix(n * 2))) }
             remaining -= n
         }
-        try advance(by: Int64(frames))
     }
 
     public var durationSeconds: Double { Double(framesWritten) / Double(sampleRate) }
 
-    private func advance(by frames: Int64) throws {
-        framesWritten += frames
-        framesSinceFlush += frames
+    private var dataEnd: Int64 { Int64(Self.headerSize) + framesWritten * 2 }
+
+    private func writeFrames(_ bytes: UnsafeRawBufferPointer) throws {
+        var written = 0
+        do {
+            try write(bytes, at: dataEnd, written: &written)
+        } catch {
+            advance(by: Int64(written / 2))
+            throw error
+        }
+        advance(by: Int64(written / 2))
         if framesSinceFlush >= flushInterval {
             try flushHeader()
+        }
+    }
+
+    private func advance(by frames: Int64) {
+        framesWritten += frames
+        framesSinceFlush += frames
+    }
+
+    private func write(_ bytes: UnsafeRawBufferPointer, at offset: Int64, written: inout Int) throws {
+        while written < bytes.count {
+            let count = try io.write(handle.fileDescriptor, UnsafeRawBufferPointer(rebasing: bytes[written...]),
+                                     offset + Int64(written))
+            guard count > 0 else { throw WAVWriteError(code: EIO) }
+            written += count
+        }
+    }
+
+    private func writeHeader() throws {
+        var written = 0
+        try Self.header(sampleRate: sampleRate, dataBytes: framesWritten * 2).withUnsafeBytes {
+            try write($0, at: 0, written: &written)
         }
     }
 
     /// Rewrites the header with the current sizes and forces data to disk.
     public func flushHeader() throws {
         guard !closed else { return }
-        let end = try handle.offset()
-        try handle.seek(toOffset: 0)
-        try handle.write(contentsOf: Self.header(sampleRate: sampleRate, dataBytes: framesWritten * 2))
-        try handle.seek(toOffset: end)
-        try handle.synchronize()
+        try writeHeader()
+        try io.synchronize(handle.fileDescriptor)
         framesSinceFlush = 0
     }
 
     public func close() throws {
         guard !closed else { return }
+        defer {
+            closed = true
+            try? handle.close()
+        }
+        _ = ftruncate(handle.fileDescriptor, off_t(dataEnd))
         try flushHeader()
-        try handle.close()
-        closed = true
     }
 
     static func header(sampleRate: Int, dataBytes: Int64) -> Data {

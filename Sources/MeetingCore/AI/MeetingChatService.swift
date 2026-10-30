@@ -116,15 +116,18 @@ public struct MeetingChatService: Sendable {
 
     public func answer(question: String, retrieval: Retrieval, provider: any AIProvider,
                        configuration: AIProviderConfiguration, consentGiven: Bool) async throws -> Answer {
-        if provider.kind.sendsDataToRemoteService && !consentGiven {
+        if provider.kind.sendsDataToRemoteService(model: retrieval.request.model ?? configuration.model) && !consentGiven {
             throw AIProviderError.remoteConsentRequired(provider.kind)
         }
+        try Task.checkCancellation()
         let response = try await provider.complete(retrieval.request, configuration: configuration)
         struct Raw: Decodable { var answer: String; var citations: [String]; var found: Bool }
         let raw = try JSONDecoder().decode(Raw.self, from: response.json)
         let byRef = Dictionary(uniqueKeysWithValues: retrieval.context.map { ($0.reference, $0) })
         // Only citations that exist in the retrieved excerpts are kept.
+        var seen = Set<String>()
         let citations = raw.citations.compactMap { byRef[$0.trimmingCharacters(in: CharacterSet(charactersIn: "[] "))] }
+            .filter { seen.insert($0.id).inserted }
         return Answer(question: question, text: raw.answer, citations: citations, excerpts: retrieval.context,
                       provider: provider.kind, model: response.model, notFound: !raw.found || citations.isEmpty)
     }

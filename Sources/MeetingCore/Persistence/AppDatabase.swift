@@ -44,6 +44,7 @@ public final class AppDatabase: Sendable {
         config.foreignKeysEnabled = true
         config.label = readOnly ? "MeetingIntelligence.readonly" : "MeetingIntelligence"
         config.prepareDatabase { db in
+            db.add(function: SearchService.wordPrefixMatch)
             // Deleted content is overwritten on disk (privacy: deleted meetings/profiles).
             if !db.configuration.readonly {
                 try db.execute(sql: "PRAGMA secure_delete = ON")

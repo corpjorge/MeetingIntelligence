@@ -111,7 +111,7 @@ struct AudioSettings: View {
                 Text("Alternativa desactivada por defecto. Puede impedir que te escuchen en Teams. Al activarla se desactiva la reducción de eco anterior; solo se utiliza una opción a la vez. Los cambios se aplican a la próxima grabación.")
                     .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
                 if let input = AudioDevices.defaultInput() {
-                    LabeledContent("Entrada actual", value: "\(input.name) (\(input.transport.rawValue))")
+                    LabeledContent("Entrada actual", value: "\(input.name) (\(Self.transportLabel(input.transport)))")
                 }
                 if let output = AudioDevices.defaultOutput() {
                     LabeledContent("Salida actual", value: "\(output.name)\(output.isLikelySpeakers ? " · riesgo de eco" : "")")
@@ -124,6 +124,19 @@ struct AudioSettings: View {
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
                 }
             }
+        }
+    }
+
+    static func transportLabel(_ transport: DeviceTransport) -> String {
+        switch transport {
+        case .builtIn: "integrado"
+        case .bluetooth: "Bluetooth"
+        case .bluetoothLE: "Bluetooth LE"
+        case .usb: "USB"
+        case .virtual: "virtual"
+        case .aggregate: "agregado"
+        case .airPlay: "AirPlay"
+        case .other: "otro"
         }
     }
 }

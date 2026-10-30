@@ -3,19 +3,47 @@ import CoreAudio
 import Foundation
 import OSLog
 
+struct TapStreamFormat: Equatable {
+    var sampleRate: Double
+    var isFloat: Bool
+    var channels: UInt32
+    var bitsPerChannel: UInt32
+
+    init(sampleRate: Double, isFloat: Bool, channels: UInt32, bitsPerChannel: UInt32) {
+        self.sampleRate = sampleRate
+        self.isFloat = isFloat
+        self.channels = channels
+        self.bitsPerChannel = bitsPerChannel
+    }
+
+    init(_ description: AudioStreamBasicDescription) {
+        self.init(sampleRate: description.mSampleRate,
+                  isFloat: (description.mFormatFlags & kAudioFormatFlagIsFloat) != 0,
+                  channels: description.mChannelsPerFrame,
+                  bitsPerChannel: description.mBitsPerChannel)
+    }
+
+    var effectiveSampleRate: Double { sampleRate > 0 ? sampleRate : 48_000 }
+
+    func requiresRebuild(for reported: TapStreamFormat) -> Bool {
+        reported.sampleRate.isFinite && reported.sampleRate > 0 && reported != self
+    }
+}
+
 /// Captures the audio output of selected processes with a Core Audio process
 /// tap (macOS 14.2+), read through a private aggregate device.
 ///
 /// Teams mode taps only Microsoft Teams processes (by object ID). The tap is
 /// rebuilt when the set of Teams audio processes or the default output device
 /// changes; the `TrackRecorder` pads the short gap so the track stays aligned.
-final class ProcessTapSource: @unchecked Sendable {
+final class ProcessTapSource: RemoteAudioTap, @unchecked Sendable {
     enum Target: Equatable {
         case processes([AudioObjectID])
         case systemWideExcluding([AudioObjectID])
     }
 
     private let recorder: TrackRecorder
+    private let onFormatChange: @Sendable (Double) -> Void
     private let queue = DispatchQueue(label: "mi.tap.control")
     private let ioQueue = DispatchQueue(label: "mi.tap.io", qos: .userInteractive)
     private let logger = Logger(subsystem: "dev.meetingintelligence", category: "process-tap")
@@ -23,19 +51,17 @@ final class ProcessTapSource: @unchecked Sendable {
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var aggregateID = AudioObjectID(kAudioObjectUnknown)
     private var ioProcID: AudioDeviceIOProcID?
-    private var currentTarget: Target?
-    private var tapIsFloat = true
-    private var tapSampleRate: Double = 48_000
+    private var formatListener: HALPropertyListener?
+    private var runningFormat: TapStreamFormat?
+    private var generation = 0
+    private var formatChangeReported = false
 
-    init(recorder: TrackRecorder) {
+    init(recorder: TrackRecorder, onFormatChange: @escaping @Sendable (Double) -> Void = { _ in }) {
         self.recorder = recorder
+        self.onFormatChange = onFormatChange
     }
 
     var isRunning: Bool { queue.sync { ioProcID != nil } }
-
-    func start(target: Target) throws {
-        try queue.sync { try startLocked(target: target) }
-    }
 
     /// Rebuilds the tap for a new target (e.g. a new Teams helper process).
     func rebuild(target: Target) throws {
@@ -49,9 +75,10 @@ final class ProcessTapSource: @unchecked Sendable {
         queue.sync { stopLocked() }
     }
 
-    var target: Target? { queue.sync { currentTarget } }
-
     private func startLocked(target: Target) throws {
+        generation += 1
+        formatChangeReported = false
+        let generation = self.generation
         let description: CATapDescription
         switch target {
         case .processes(let ids):
@@ -69,6 +96,9 @@ final class ProcessTapSource: @unchecked Sendable {
             throw CaptureError.tapCreationFailed(status)
         }
         tapID = newTap
+        formatListener = HALPropertyListener(object: newTap, selector: kAudioTapPropertyFormat, queue: queue) { [weak self] in
+            self?.tapFormatChanged(generation: generation)
+        }
 
         let aggregateDescription: [String: Any] = [
             kAudioAggregateDeviceNameKey: "Meeting Intelligence Capture",
@@ -82,24 +112,19 @@ final class ProcessTapSource: @unchecked Sendable {
         var newAggregate = AudioObjectID(kAudioObjectUnknown)
         status = AudioHardwareCreateAggregateDevice(aggregateDescription as CFDictionary, &newAggregate)
         guard status == noErr, newAggregate != kAudioObjectUnknown else {
-            AudioHardwareDestroyProcessTap(tapID)
-            tapID = AudioObjectID(kAudioObjectUnknown)
+            teardownDevices()
             throw CaptureError.aggregateDeviceFailed(status)
         }
         aggregateID = newAggregate
 
-        var format = AudioStreamBasicDescription()
-        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
-        var addr = HAL.address(kAudioTapPropertyFormat)
-        status = AudioObjectGetPropertyData(tapID, &addr, 0, nil, &size, &format)
-        guard status == noErr else {
+        let format: TapStreamFormat
+        do { format = try Self.readFormat(of: tapID) } catch {
             teardownDevices()
-            throw CaptureError.coreAudio("formato del tap", status)
+            throw error
         }
-        tapIsFloat = (format.mFormatFlags & kAudioFormatFlagIsFloat) != 0
-        tapSampleRate = format.mSampleRate > 0 ? format.mSampleRate : 48_000
-        let sampleRate = tapSampleRate
-        let isFloat = tapIsFloat
+        runningFormat = format
+        let sampleRate = format.effectiveSampleRate
+        let isFloat = format.isFloat
         let recorder = self.recorder
 
         let block: AudioDeviceIOBlock = { _, inputData, inputTime, _, _ in
@@ -124,8 +149,25 @@ final class ProcessTapSource: @unchecked Sendable {
             teardownDevices()
             throw CaptureError.deviceStartFailed(status)
         }
-        currentTarget = target
         logger.info("Tap started: \(String(describing: target), privacy: .public) @ \(sampleRate) Hz float=\(isFloat)")
+    }
+
+    private static func readFormat(of tap: AudioObjectID) throws -> TapStreamFormat {
+        var format = AudioStreamBasicDescription()
+        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        var address = HAL.address(kAudioTapPropertyFormat)
+        let status = AudioObjectGetPropertyData(tap, &address, 0, nil, &size, &format)
+        guard status == noErr else { throw CaptureError.coreAudio("formato del tap", status) }
+        return TapStreamFormat(format)
+    }
+
+    private func tapFormatChanged(generation: Int) {
+        guard generation == self.generation, ioProcID != nil, !formatChangeReported,
+              let running = runningFormat, let reported = try? Self.readFormat(of: tapID),
+              running.requiresRebuild(for: reported) else { return }
+        formatChangeReported = true
+        logger.notice("Tap format changed: \(running.sampleRate) Hz → \(reported.sampleRate) Hz float=\(reported.isFloat)")
+        onFormatChange(reported.sampleRate)
     }
 
     private func stopLocked() {
@@ -135,10 +177,12 @@ final class ProcessTapSource: @unchecked Sendable {
             ioProcID = nil
         }
         teardownDevices()
-        currentTarget = nil
     }
 
     private func teardownDevices() {
+        formatListener?.invalidate()
+        formatListener = nil
+        runningFormat = nil
         if aggregateID != kAudioObjectUnknown {
             AudioHardwareDestroyAggregateDevice(aggregateID)
             aggregateID = AudioObjectID(kAudioObjectUnknown)

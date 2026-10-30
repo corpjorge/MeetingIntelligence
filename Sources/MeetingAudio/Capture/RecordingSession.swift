@@ -32,13 +32,17 @@ public final class RecordingSession: @unchecked Sendable {
     private var remoteRecorder: TrackRecorder?
     private var microphone: MicrophoneSource?
     private var tap: ProcessTapSource?
+    private var remote: RemoteTapSupervisor?
+    private var remoteRetry: DispatchWorkItem?
     private var listeners: [HALPropertyListener] = []
     private var scope: CaptureScope = .microphoneOnly
-    private var tappedProcesses: [AudioProcessInfo] = []
     private var warnings: [RecordingWarning] = []
     private let warningLock = NSLock()
+    private var acceptsRecoveries = true
     private var started = false
     private var stopped = false
+    private let pauseLock = NSLock()
+    private var pausableMicrophone: TrackRecorder?
     private var microphonePaused = false
     private var captureStartedHost: Double?
     private var deliveryWatchdog = AudioDeliveryWatchdog()
@@ -110,6 +114,9 @@ public final class RecordingSession: @unchecked Sendable {
             let onWarning: @Sendable (RecordingWarning) -> Void = { [weak self] warning in
                 self?.report(warning)
             }
+            let onRecovered: @Sendable (RecordingWarning) -> Void = { [weak self] warning in
+                self?.retract(warning, recovered: .remoteSystemAudio)
+            }
             // Both converted streams and AEC state are confined to this queue.
             let trackQueue = DispatchQueue(label: "mi.recording.tracks", qos: .userInitiated)
             let echoCanceller = configuration.usesRecordingEchoCancellation
@@ -122,7 +129,7 @@ public final class RecordingSession: @unchecked Sendable {
                     url: configuration.directory.appendingPathComponent(Self.microphoneFileName),
                     outputSampleRate: configuration.outputSampleRate, clock: clock,
                     queue: trackQueue, echoCanceller: echoCanceller,
-                    onLevel: onLevel, onWarning: onWarning)
+                    onLevel: onLevel, onWarning: onWarning, onRecovered: onRecovered)
                 recorder.onSamples = { [weak self] source, samples in self?.onSamples?(source, samples) }
                 micRecorder = recorder
                 let mic = MicrophoneSource(
@@ -154,7 +161,13 @@ public final class RecordingSession: @unchecked Sendable {
                     onLevel: onLevel, onWarning: onWarning)
                 recorder.onSamples = { [weak self] source, samples in self?.onSamples?(source, samples) }
                 remoteRecorder = recorder
-                tap = ProcessTapSource(recorder: recorder)
+                let tap = ProcessTapSource(recorder: recorder) { [weak self] sampleRate in
+                    self?.control.async { [weak self] in self?.remoteFormatChanged(sampleRate: sampleRate) }
+                }
+                self.tap = tap
+                let supervisor = RemoteTapSupervisor(tap: tap)
+                supervisor.onEvent = { [weak self] event in self?.handle(event) }
+                remote = supervisor
                 try startRemoteLocked()
                 try checkStartCancellation()
                 installListenersLocked()
@@ -167,6 +180,7 @@ public final class RecordingSession: @unchecked Sendable {
             }
             captureStartedHost = HostClock.nowSeconds()
             succeeded = true
+            pauseLock.withLock { pausableMicrophone = micRecorder }
             continuation.yield(.remoteScope(scope))
         }
     }
@@ -182,9 +196,14 @@ public final class RecordingSession: @unchecked Sendable {
             // Freeze the shared endpoint before shutting down either audio or video.
             clock.pause()
             let end = clock.elapsed
+            warningLock.withLock { acceptsRecoveries = false }
+            pauseLock.withLock { pausableMicrophone = nil }
+            remoteRetry?.cancel()
+            remoteRetry = nil
             listeners.forEach { $0.invalidate() }
             listeners.removeAll()
             microphone?.stop()
+            remote?.stop()
             tap?.stop()
             var stats: [TrackStatistics] = []
             var micPauses: [PauseInterval] = []
@@ -201,7 +220,7 @@ public final class RecordingSession: @unchecked Sendable {
             continuation.finish()
             return RecordingResult(
                 durationSeconds: end, tracks: stats, captureScope: scope,
-                remoteProcessDescription: describe(tappedProcesses),
+                remoteProcessDescription: describe(remote?.tappedProcesses ?? []),
                 inputDeviceName: inputDeviceName,
                 warnings: warningLock.withLock { warnings },
                 sourceApp: { if case .application(let selector) = configuration.remoteTarget { selector } else { nil } }(),
@@ -219,20 +238,25 @@ public final class RecordingSession: @unchecked Sendable {
     /// Check them independently of the UI meters, without opening any devices.
     public func checkAudioDelivery() {
         control.async { [self] in
-            guard started, !stopped, !clock.isPaused, let start = captureStartedHost else { return }
+            guard started, !stopped else { return }
+            remote?.retryIfDue()
+            guard !clock.isPaused, let start = captureStartedHost else { return }
             let now = HostClock.nowSeconds()
             guard now - start >= 5 else { return }
             for (source, recorder) in [(AudioSource.localMicrophone, micRecorder), (.remoteSystemAudio, remoteRecorder)] {
                 guard let recorder else { continue }
-                if source == .localMicrophone && microphonePaused { continue }
-                if source == .remoteSystemAudio && tap?.isRunning != true { continue }
-                let change = deliveryWatchdog.check(source: source, lastReceivedAt: recorder.lastReceivedHostTime, startedAt: start, now: now)
+                if source == .localMicrophone && isMicrophonePaused { continue }
+                var startedAt = start
+                if source == .remoteSystemAudio {
+                    guard tap?.isRunning == true else { continue }
+                    startedAt = max(start, remote?.lastStartedAt ?? start)
+                }
+                let change = deliveryWatchdog.check(source: source, lastReceivedAt: recorder.lastReceivedHostTime, startedAt: startedAt, now: now)
                 if change == .missing {
                     continuation.yield(.level(source, .silence))
                     report(.noAudioBuffers(source))
                 } else if change == .recovered {
-                    warningLock.withLock { warnings.removeAll { $0 == .noAudioBuffers(source) } }
-                    continuation.yield(.sourceRecovered(source))
+                    retract(nil, recovered: source)
                 }
             }
         }
@@ -243,15 +267,16 @@ public final class RecordingSession: @unchecked Sendable {
     /// Pauses/resumes only the local microphone. Silence is written meanwhile so
     /// both tracks keep the same timeline; the span is reported as a pause.
     public func setMicrophonePaused(_ paused: Bool) {
-        control.async { [self] in
-            guard let micRecorder, !stopped, paused != microphonePaused else { return }
+        let time = clock.elapsed
+        pauseLock.withLock {
+            guard let recorder = pausableMicrophone, paused != microphonePaused else { return }
             microphonePaused = paused
-            micRecorder.setMuted(paused, atTimelineSeconds: clock.elapsed)
+            recorder.setMuted(paused, atTimelineSeconds: time)
             continuation.yield(.microphonePaused(paused))
         }
     }
 
-    public var isMicrophonePaused: Bool { control.sync { microphonePaused } }
+    public var isMicrophonePaused: Bool { pauseLock.withLock { microphonePaused } }
 
     // MARK: Remote capture
 
@@ -261,22 +286,21 @@ public final class RecordingSession: @unchecked Sendable {
     }
 
     private func startRemoteLocked() throws {
-        guard let tap else { return }
+        guard let remote else { return }
         switch configuration.remoteTarget {
         case .application(let selector):
             let (app, processes) = appProcesses(for: selector)
-            tappedProcesses = processes
             scope = .applicationProcesses
             if processes.isEmpty {
                 report(.waitingForAppAudio(selector.name))
             } else {
-                try tap.start(target: .processes(processes.map(\.objectID)))
+                try remote.start(.processes(processes.map(\.objectID)), processes: processes)
             }
             if app?.isolation == .shared { report(.sharedProcessCapture(app?.name ?? selector.name)) }
             continuation.yield(.remoteProcesses(processes))
         case .systemWide:
             let own = AudioProcessCatalog.currentProcessObjectID().map { [$0] } ?? []
-            try tap.start(target: .systemWideExcluding(own))
+            try remote.start(.systemWideExcluding(own))
             scope = .systemWide
             report(.systemWideCapture)
         case .none:
@@ -301,37 +325,51 @@ public final class RecordingSession: @unchecked Sendable {
     /// The chosen app started/stopped helper processes (e.g. Teams ModuleHost on
     /// joining a call): rebuild the tap; the recorder pads the short gap.
     private func processListChanged() {
-        guard !stopped, case .application(let selector) = configuration.remoteTarget, let tap else { return }
-        let (_, processes) = appProcesses(for: selector)
-        guard Set(processes.map(\.objectID)) != Set(tappedProcesses.map(\.objectID)) else { return }
-        tappedProcesses = processes
-        continuation.yield(.remoteProcesses(processes))
-        do {
-            if processes.isEmpty {
-                tap.stop()
-                report(.waitingForAppAudio(selector.name))
-            } else {
-                try tap.rebuild(target: .processes(processes.map(\.objectID)))
-                report(.remoteTapRebuilt("procesos de \(selector.name) actualizados (\(processes.count))"))
-            }
-        } catch {
-            report(.sourceFailed(.remoteSystemAudio, error.localizedDescription))
-        }
+        guard !stopped, case .application(let selector) = configuration.remoteTarget, let remote else { return }
+        remote.processesChanged(appProcesses(for: selector).processes, appName: selector.name)
     }
 
     private func outputDeviceChanged() {
-        guard !stopped, let tap, let target = tap.target else { return }
-        let name = AudioDevices.defaultOutput()?.name ?? "desconocido"
-        do {
-            try tap.rebuild(target: target)
-            report(.outputDeviceChanged(name))
-        } catch {
-            report(.sourceFailed(.remoteSystemAudio, error.localizedDescription))
-        }
+        guard !stopped, let remote else { return }
+        remote.outputDeviceChanged(AudioDevices.defaultOutput()?.name ?? "desconocido")
         if configuration.captureMicrophone, let output = AudioDevices.defaultOutput(), output.isLikelySpeakers,
            !configuration.usesRecordingEchoCancellation, !configuration.usesAppleVoiceProcessing {
             report(.speakerEchoRisk(output.dataSourceName ?? output.name))
         }
+    }
+
+    private func remoteFormatChanged(sampleRate: Double) {
+        guard !stopped else { return }
+        remote?.formatChanged(sampleRate: sampleRate)
+    }
+
+    private func handle(_ event: RemoteTapEvent) {
+        switch event {
+        case .warning(let warning):
+            report(warning)
+        case .processes(let processes):
+            continuation.yield(.remoteProcesses(processes))
+        case .recovered(let failure):
+            deliveryWatchdog.reset(.remoteSystemAudio)
+            retract(failure, recovered: .remoteSystemAudio)
+        case .retryScheduled(let delay):
+            remoteRetry?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, !self.stopped else { return }
+                self.remote?.retryIfDue()
+            }
+            remoteRetry = work
+            control.asyncAfter(deadline: .now() + delay + 0.01, execute: work)
+        }
+    }
+
+    private func retract(_ warning: RecordingWarning?, recovered source: AudioSource) {
+        let accepted = warningLock.withLock { () -> Bool in
+            guard acceptsRecoveries else { return false }
+            warnings.removeAll { $0 == warning || $0 == .noAudioBuffers(source) }
+            return true
+        }
+        if accepted { continuation.yield(.sourceRecovered(source)) }
     }
 
     private func report(_ warning: RecordingWarning) {

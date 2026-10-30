@@ -12,7 +12,7 @@ scripts/build-app.sh [release|debug]      # bundle firmado en build/
 scripts/package-release.sh                # dist/: DMG, ZIP, firma de actualización (.zip.sig), sumas (TD-29)
 scripts/publish-release.sh docs/releases/<versión>.md [--prerelease]   # tag + release en GitHub
 scripts/generate-fixtures.sh              # fixtures sintéticos
-MI_SNAPSHOT_DIR=/tmp/s open -n -W --env MI_SNAPSHOT_DIR=/tmp/s "build/Meeting Intelligence.app"   # capturas de UI
+MI_SNAPSHOT_DIR=/tmp/s open -n -W --env MI_SNAPSHOT_DIR=/tmp/s --env MEETING_INTELLIGENCE_HOME=/tmp/mi-snapshot-library "build/Meeting Intelligence.app"   # capturas de UI (biblioteca aparte; TD-39)
 ```
 Nunca uses `swift build` directo sin Xcode: falla por las macros de SwiftUI del SDK 27.
 

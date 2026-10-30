@@ -34,6 +34,17 @@ enum MeetingDetailTab: String, CaseIterable, Identifiable, Hashable {
 }
 
 @Observable
+final class SegmentDraft {
+    let segmentId: String
+    var text: String
+
+    init(segmentId: String, text: String) {
+        self.segmentId = segmentId
+        self.text = text
+    }
+}
+
+@Observable
 final class MeetingDetailModel {
     var detail: MeetingDetail?
     var analyses: [AIAnalysis] = []
@@ -42,11 +53,39 @@ final class MeetingDetailModel {
     var allParticipants: [Participant] = []
     var loaded = false
     let player = MeetingAudioPlayer()
+    var editingSegmentId: String?
+    private(set) var segmentDrafts: [String: SegmentDraft] = [:]
 
     var latestAnalysis: AIAnalysis? { analyses.first { $0.status == .succeeded } }
     var latestItems: [AnalysisItem] {
         guard let id = latestAnalysis?.id else { return [] }
         return items.filter { $0.analysisId == id }
+    }
+
+    func beginEditing(_ segment: TranscriptSegment) {
+        if let current = editingSegmentId, current != segment.id, !hasUnsavedDraft(current) {
+            segmentDrafts[current] = nil
+        }
+        if segmentDrafts[segment.id] == nil {
+            segmentDrafts[segment.id] = SegmentDraft(segmentId: segment.id, text: segment.displayText)
+        }
+        editingSegmentId = segment.id
+    }
+
+    func discardDraft(_ segmentId: String) {
+        segmentDrafts[segmentId] = nil
+        if editingSegmentId == segmentId { editingSegmentId = nil }
+    }
+
+    func hasUnsavedDraft(_ segmentId: String) -> Bool {
+        guard let draft = segmentDrafts[segmentId] else { return false }
+        let saved = detail?.segments.first { $0.id == segmentId }?.displayText
+        return draft.text.trimmingCharacters(in: .whitespacesAndNewlines) != saved
+    }
+
+    func resetEdits() {
+        editingSegmentId = nil
+        segmentDrafts = [:]
     }
 
     /// Stable color slot per speaker (order of appearance across sources).
@@ -86,6 +125,7 @@ struct MeetingDetailView: View {
     @State private var tab: MeetingDetailTab = .transcript
     @State private var editingTitle = false
     @State private var titleDraft = ""
+    @State private var titleMeetingId: String?
     @FocusState private var titleFocused: Bool
 
     var body: some View {
@@ -114,6 +154,7 @@ struct MeetingDetailView: View {
                         .padding(.horizontal, DS.Space.xl)
                     }
                     content(detail)
+                        .id(meetingId)
                     if model.player.isLoaded {
                         PlayerBar(player: model.player)
                     }
@@ -127,6 +168,7 @@ struct MeetingDetailView: View {
         }
         .background(DS.Color.background)
         .task(id: meetingId) { await model.observe(env.database, meetingId: meetingId) }
+        .onChange(of: meetingId) { resetForMeetingChange() }
         .task(id: model.detail) {
             if let detail = model.detail { await model.player.load(tracks: detail.tracks, paths: env.paths, video: detail.video) }
         }
@@ -183,14 +225,23 @@ struct MeetingDetailView: View {
                 InlineBanner(tone: detail.meeting.status == .failed ? .danger : .warning,
                              systemImage: "exclamationmark.triangle.fill", title: "Atención", message: error) {
                     Button("Procesar") { env.processing.enqueue(meetingId) }.buttonStyle(.ds(.secondary, size: .small))
+                        .disabled(isBeingRecorded)
                 }
             } else if detail.meeting.status == .recorded || detail.meeting.status == .interrupted {
                 InlineBanner(tone: .info, systemImage: "waveform", title: "Audio listo para transcribir",
                              message: "Parakeet Ultra transcribirá localmente y la diarización separará a los hablantes.") {
                     Button("Procesar ahora") { env.processing.enqueue(meetingId) }.buttonStyle(.ds(.primary, size: .small))
+                        .disabled(isBeingRecorded)
                 }
             }
         }
+    }
+
+    private var isBeingRecorded: Bool {
+        guard let meeting = model.detail?.meeting, meeting.id == meetingId else {
+            return env.recording.meeting?.id == meetingId
+        }
+        return MeetingDeletion.isRecording(meeting, recordingMeetingId: env.recording.meeting?.id)
     }
 
     @ViewBuilder
@@ -209,18 +260,29 @@ struct MeetingDetailView: View {
 
     private func beginEditingTitle(_ current: String) {
         titleDraft = current
+        titleMeetingId = meetingId
         editingTitle = true
         titleFocused = true
     }
 
     /// Empty names are ignored (keeps the previous one); every rename is a `CorrectionEvent`.
     private func commitTitle() {
+        let target = titleMeetingId
         editingTitle = false
+        titleMeetingId = nil
+        guard target == meetingId else { return }
         do {
             try env.database.renameMeeting(id: meetingId, title: titleDraft)
         } catch {
             NSAlert(error: error).runModal()
         }
+    }
+
+    private func resetForMeetingChange() {
+        editingTitle = false
+        titleDraft = ""
+        titleMeetingId = nil
+        model.resetEdits()
     }
 
     // MARK: Content
@@ -248,7 +310,7 @@ struct MeetingDetailView: View {
             } label: {
                 Label(model.detail?.meeting.status == .ready ? "Volver a procesar" : "Procesar", systemImage: "gearshape.2")
             }
-            .disabled(env.processing.isBusy(meetingId) || model.detail?.tracks.isEmpty != false)
+            .disabled(env.processing.isBusy(meetingId) || model.detail?.tracks.isEmpty != false || isBeingRecorded)
             .help("Transcribir con Parakeet Ultra y diarizar (local)")
 
             Menu {
@@ -279,6 +341,7 @@ struct MeetingDetailView: View {
                 }
                 Divider()
                 Button("Eliminar reunión…", role: .destructive) { confirmDelete() }
+                    .disabled(isBeingRecorded)
             } label: {
                 Label("Más", systemImage: "ellipsis.circle")
             }

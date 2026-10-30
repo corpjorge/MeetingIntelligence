@@ -14,7 +14,13 @@ Framework: **Swift Testing** (XCTest no está disponible con Command Line Tools)
 preferencias) tiene su propio target, `MeetingIntelligenceAppTests`; las vistas se verifican con capturas (TD-15). Las pruebas de integración con
 modelos reales se ejecutan solo si Parakeet Ultra y la diarización ya están en caché (nunca descargan en CI).
 
-## Inventario (138 pruebas, todas pasan al 22-oct-2026; 4 más bajo demanda)
+## Inventario (331 pruebas ejecutadas correctamente al 30-oct-2026; 8 omitidas bajo demanda)
+
+Validación del candidato 0.2.8 (build 10): `scripts/test.sh` terminó con código 0. Swift Testing registró
+339 pruebas en 81 suites: 331 ejecutadas correctamente y 8 omitidas por sus condiciones de activación.
+La ejecución incluyó los modelos locales disponibles (Ultra, diarización, transcripción provisional y ciclo
+de vida de modelos) y las exportaciones sintéticas M4A/WAV/MP4. No se activaron llamadas a proveedores de IA
+ni descargas de actualización desde Hugging Face. La validación manual del candidato sigue pendiente.
 
 | Suite | Cubre |
 |---|---|

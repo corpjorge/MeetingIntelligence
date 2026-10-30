@@ -29,6 +29,7 @@ enum DS {
         static let m: CGFloat = 10
         static let l: CGFloat = 14
         static let pill: CGFloat = 999
+        static let meterSegment: CGFloat = 1.5
     }
 
     // MARK: Layout
@@ -59,6 +60,7 @@ enum DS {
         static let editorMinHeight: CGFloat = 64
         static let videoPreviewHeight: CGFloat = 200
         static let videoPlayerHeight: CGFloat = 360
+        static let emptyStateMessageMaxWidth: CGFloat = 380
 
         enum Window {
             static let minWidth: CGFloat = 1000
@@ -91,6 +93,7 @@ enum DS {
             static let fieldNarrowMaxWidth: CGFloat = 280
             static let fieldMaxWidth: CGFloat = 320
             static let progressBarMaxWidth: CGFloat = 240
+            static let loadingProgressMaxWidth: CGFloat = 260
             static let meterLabelWidth: CGFloat = 190
             /// Level meter numeric readout and compact (menu bar) meter label.
             static let meterCompactWidth: CGFloat = 52
@@ -104,11 +107,14 @@ enum DS {
         static let dotS: CGFloat = 7
         static let dotM: CGFloat = 8
         static let dotL: CGFloat = 12
+        static let recordingDot: CGFloat = 10
 
         // Speaker avatars (the regular one is `Layout.avatarSize`)
         static let avatarSmall: CGFloat = 20
         static let avatarMedium: CGFloat = 36
         static let avatarLarge: CGFloat = 52
+        static let avatarSymbolScale: CGFloat = 0.42
+        static let avatarInitialsScale: CGFloat = 0.38
 
         static let appIcon: CGFloat = 22
         static let featureIcon: CGFloat = 24
@@ -117,17 +123,40 @@ enum DS {
         static let iconTile: CGFloat = 30
         static let playButton: CGFloat = 30
         static let dateBadge: CGFloat = 38
+        static let emptyStateIconTile: CGFloat = 56
+        static let bannerIconWidth: CGFloat = 18
+        static let buttonHeightSmall: CGFloat = 24
+        static let buttonHeight: CGFloat = 28
+        static let buttonHeightLarge: CGFloat = 36
+        static let levelMeterHeight: CGFloat = 8
+        static let tabIconMinWidth: CGFloat = 28
+        static let tabUnderline: CGFloat = 2
     }
 
     // MARK: Strokes
     enum Stroke {
         static let emphasis: CGFloat = 2
         static let dropTarget = StrokeStyle(lineWidth: emphasis, dash: [6])
+        static let recordingHalo: CGFloat = 3
     }
 
     // MARK: Opacity
     enum Opacity {
         static let disabled: Double = 0.5
+        static let disabledButton: Double = 0.45
+        static let pressedFill: Double = 0.88
+        static let pillFill: Double = 0.12
+        static let bannerFill: Double = 0.08
+        static let bannerBorder: Double = 0.22
+        static let destructiveFill: Double = 0.08
+        static let destructivePressedFill: Double = 0.14
+        static let avatarFill: Double = 0.16
+        static let recordingHalo: Double = 0.4
+    }
+
+    enum Scale {
+        static let pressed: CGFloat = 0.98
+        static let recordingPulse: CGFloat = 1.9
     }
 
     // MARK: Typography (SF Pro / SF Mono, Dynamic Type aware via relativeTo)
@@ -152,6 +181,10 @@ enum DS {
         /// Leading icon of a sheet header.
         static let headerIcon = SwiftUI.Font.system(size: 24)
         static let heroIcon = SwiftUI.Font.system(size: 40)
+        static let pillIcon = SwiftUI.Font.system(size: 9, weight: .bold)
+        static let emptyStateIcon = SwiftUI.Font.system(size: 28, weight: .light)
+        static let bannerIcon = SwiftUI.Font.system(size: 14, weight: .semibold)
+        static let iconButton = SwiftUI.Font.system(size: 13, weight: .medium)
     }
 
     // MARK: Colors (semantic, dynamic)
@@ -237,6 +270,7 @@ enum DS {
         static let standard = Animation.smooth(duration: 0.24)
         static let emphasized = Animation.spring(response: 0.38, dampingFraction: 0.82)
         static let pulse = Animation.easeInOut(duration: 0.9).repeatForever(autoreverses: true)
+        static let meterLevel = Animation.linear(duration: 0.08)
     }
 }
 

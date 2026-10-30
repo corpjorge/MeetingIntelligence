@@ -83,6 +83,7 @@ Uso gratuito según [LICENSE](LICENSE); componentes de terceros en [THIRD_PARTY_
 | Edición de transcripción con historial | ✅ | Pruebas de persistencia |
 | Marca de fragmentos de baja confianza del ASR (< 0,7, "revisar") | ✅ | Prueba de la regla; capturas claro/oscuro con una reunión real autorizada (solo verificación local); detecta solo ~40 % de los errores (TD-22) |
 | Identidades manuales conservadas al reprocesar | ✅ | Integración real: asignar → reprocesar → identidad conservada |
+| Correcciones de texto conservadas al reprocesar | ✅ | Pruebas: se trasladan solo las inequívocas (mismo texto ASR, inicio a ≤ 0,5 s, 1:1) y se avisa de las demás (TD-16) |
 | Diccionario personalizado | ✅ | Pruebas + integración |
 | Análisis IA con evidencia (Codex) | ✅ | Ejecución real con Codex CLI sobre reunión fixture |
 | Análisis IA y chat con GitHub Copilot CLI | ✅ | Ejecución real sobre reunión fixture; sin herramientas comprobado con una sonda; `COPILOT_HOME` aislado (TD-12) |
@@ -101,7 +102,7 @@ Uso gratuito según [LICENSE](LICENSE); componentes de terceros en [THIRD_PARTY_
 | Micrófono por dispositivo e inicio cancelable | ✅ | Prueba física integrada de 3 s y pruebas de cancelación; sin cambiar la salida de Teams (TD-38) |
 | Selección del proveedor/modelo en chat y ortografía nativa | ✅ | Pruebas de selección, envío y editor nativo; Enter/Mayús+Enter |
 
-210 pruebas automatizadas pasan (`scripts/test.sh`). Las integraciones y mediciones adicionales de catálogos,
+331 pruebas automatizadas pasan (`scripts/test.sh`, 30-oct-2026; otras 8 quedan omitidas bajo demanda). Las integraciones y mediciones adicionales de catálogos,
 vocabulario, contexto, e5-small y actualización desde Hugging Face se activan bajo demanda; ver `TESTING.md`.
 
 ## Requisitos

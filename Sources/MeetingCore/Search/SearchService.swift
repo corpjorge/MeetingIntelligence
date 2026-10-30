@@ -40,6 +40,13 @@ public struct SearchService: Sendable {
         self.reader = reader
     }
 
+    static let wordPrefixMatch = DatabaseFunction("mi_matches_word_prefixes", argumentCount: 2, pure: true) { values in
+        guard let text = String.fromDatabaseValue(values[0]), let query = String.fromDatabaseValue(values[1]) else {
+            return false
+        }
+        return TextNormalization.matchesWordPrefixes(text, query: query)
+    }
+
     /// - Parameters:
     ///   - query: free text or a natural-language question. Stopwords are dropped
     ///     and remaining terms are matched as prefixes (any term), ranked by BM25.
@@ -77,21 +84,20 @@ public struct SearchService: Sendable {
                 sql += " AND s.meetingId IN (\(ids.map { _ in "?" }.joined(separator: ",")))"
                 arguments += StatementArguments(ids)
             }
+            if let speakerName {
+                sql += " AND \(Self.wordPrefixMatch.name)(\(Self.speakerNameSQL), ?)"
+                arguments += [speakerName]
+            }
             sql += " ORDER BY rank LIMIT ?"
-            arguments += [limit * 3]
+            arguments += [limit]
 
-            var hits = try Row.fetchAll(db, sql: sql, arguments: arguments).map { row in
+            return try Row.fetchAll(db, sql: sql, arguments: arguments).map { row in
                 SearchHit(segmentId: row["segmentId"], meetingId: row["meetingId"],
                           meetingTitle: row["meetingTitle"], meetingDate: row["meetingDate"],
                           startTime: row["startTime"], endTime: row["endTime"],
                           speakerName: row["speakerName"], text: row["text"],
                           snippet: row["snippet"], rank: row["rank"])
             }
-            if let speakerName {
-                let wanted = TextNormalization.comparable(speakerName)
-                hits = hits.filter { TextNormalization.comparable($0.speakerName).contains(wanted) }
-            }
-            return Array(hits.prefix(limit))
         }
     }
 

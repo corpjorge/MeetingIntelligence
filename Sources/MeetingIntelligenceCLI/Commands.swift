@@ -99,7 +99,7 @@ enum Commands {
               + (t.boostedSegments > 0 ? " · \(t.boostedSegments) segmentos con términos reforzados" : ""))
         }
         print(String(format: "Total: %.2f s", summary.totalSeconds))
-        try show(Arguments([meetingId]), paths: paths)
+        try show(Arguments(positional: [meetingId]), paths: paths)
     }
 
     // MARK: list / show / search
@@ -196,7 +196,7 @@ enum Commands {
                   + (s.authenticated.map { $0 ? " · sesión activa" : " · SIN sesión" } ?? "")
                   + (s.models.isEmpty ? "" : " · modelos: \(s.models.prefix(6).joined(separator: ", "))")
                   + (s.effortLevels.isEmpty ? "" : " · esfuerzo: \(s.effortLevels.joined(separator: "/"))")
-                  + (kind.sendsDataToRemoteService ? " · NUBE" : " · LOCAL"))
+                  + (kind.sendsDataToRemoteService(model: config.model) ? " · NUBE" : " · LOCAL"))
             if let detail = s.authDetail { print("   \(detail)") }
             if let path = s.executablePath { print("   \(path)") }
         }
@@ -211,9 +211,10 @@ enum Commands {
         if let effort = args.options["effort"] { config.effort = effort }
         let service = MeetingAnalysisService(database: db)
         let prepared = try service.prepare(meetingId: id, model: config.model, effort: config.effort, timeout: config.timeoutSeconds)
-        print("Proveedor: \(kind.displayName) (\(kind.sendsDataToRemoteService ? "nube" : "local"))")
+        let remote = kind.sendsDataToRemoteService(model: config.model)
+        print("Proveedor: \(kind.displayName)\(config.model.map { " · modelo \($0)" } ?? "") (\(remote ? "nube" : "local"))")
         print(prepared.sharedSummary)
-        if kind.sendsDataToRemoteService && !args.flags.contains("share") {
+        if remote && !args.flags.contains("share") {
             throw CLIError(message: "No se envió nada. Repite con --share para autorizar el envío descrito arriba.")
         }
         let analysis = try await service.run(meetingId: id, provider: AIProviders.provider(for: kind), configuration: config,
@@ -251,7 +252,7 @@ enum Commands {
         let retrieval = try chat.retrieve(question: question, scope: scope, model: config.model, timeout: config.timeoutSeconds,
                                           semantic: semantic)
         print(retrieval.sharedSummary)
-        if kind.sendsDataToRemoteService && !args.flags.contains("share") {
+        if kind.sendsDataToRemoteService(model: config.model) && !args.flags.contains("share") {
             throw CLIError(message: "No se envió nada. Repite con --share para autorizar el envío descrito arriba.")
         }
         let answer = try await chat.answer(question: question, retrieval: retrieval, provider: AIProviders.provider(for: kind),
@@ -282,11 +283,13 @@ enum Commands {
     static func models(_ args: Arguments, paths: AppPaths) async throws {
         let installer = ModelInstaller()
         let models = managedModels(paths: paths)
-        for model in models { installer.recoverInterrupted(model) }
         if args.positional.first == "update" {
             guard let id = args.positional.dropFirst().first, let model = models.first(where: { $0.id == id }) else {
                 throw CLIError(message: "Indica el modelo: " + models.map(\.id).joined(separator: ", "))
             }
+            installer.recoverInterrupted(model)
+            let lease = try installer.beginUpdate(model)
+            defer { lease.release() }
             guard case .updateAvailable(let plan) = try await installer.check(model) else {
                 print("\(model.id): no hay actualización."); return
             }

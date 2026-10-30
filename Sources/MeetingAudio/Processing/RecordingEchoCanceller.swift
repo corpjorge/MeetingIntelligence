@@ -8,15 +8,19 @@ final class RecordingEchoCanceller {
     let frameSize: Int
     let referenceLookahead: Int
     let maximumPendingFrames: Int
+    let recoveryFrames: Int
     private let maximumReferenceFrames: Int
     private let echo: OpaquePointer
     private var microphone = SampleFIFO()
     private var reference = SampleFIFO()
     private var finished = false
+    private var referenceStarted = false
     private var warnedAboutReference = false
+    private var framesWithReference = 0
 
     var onOutput: (([Float]) -> Void)?
     var onMissingReference: (() -> Void)?
+    var onReferenceRecovered: (() -> Void)?
 
     init(sampleRate: Int) throws {
         guard (8_000...48_000).contains(sampleRate) else {
@@ -26,6 +30,7 @@ final class RecordingEchoCanceller {
         // Make small timestamp/resampler offsets causal for the adaptive filter.
         referenceLookahead = sampleRate * 80 / 1_000
         maximumPendingFrames = sampleRate / 2
+        recoveryFrames = 50
         maximumReferenceFrames = sampleRate * 2
         guard let echo = speex_echo_state_init(Int32(frameSize), Int32(sampleRate * 3 / 10)) else {
             throw CaptureError.unsupportedFormat("no se pudo crear el cancelador de eco")
@@ -47,6 +52,7 @@ final class RecordingEchoCanceller {
 
     func appendReference(_ samples: [Float]) {
         guard !finished else { return }
+        if !samples.isEmpty { referenceStarted = true }
         reference.append(samples)
         drain(final: false)
         // A stopped/disconnected microphone must not retain the whole meeting.
@@ -78,16 +84,25 @@ final class RecordingEchoCanceller {
                 // reference is late or unavailable. Never block capture.
                 output = mic
                 speex_echo_state_reset(echo)
+                framesWithReference = 0
                 // Both tracks normally end together, leaving no future reference
                 // for the last lookahead window. Pass it through without a false
                 // missing-source warning; never filter it with invented silence.
                 let unexpectedGap = !final || reference.end <= start || reference.start > referenceStart
-                if unexpectedGap, !warnedAboutReference, mic.contains(where: { $0 != 0 }) {
+                if unexpectedGap, referenceStarted, !warnedAboutReference, mic.contains(where: { $0 != 0 }) {
                     warnedAboutReference = true
                     onMissingReference?()
                 }
             } else {
                 output = cancel(microphone: mic, reference: reference.read(start: referenceStart, count: count))
+                if warnedAboutReference {
+                    framesWithReference += 1
+                    if framesWithReference >= recoveryFrames {
+                        warnedAboutReference = false
+                        framesWithReference = 0
+                        onReferenceRecovered?()
+                    }
+                }
             }
             microphone.discard(before: start + count)
             reference.discard(before: microphone.start + referenceLookahead)

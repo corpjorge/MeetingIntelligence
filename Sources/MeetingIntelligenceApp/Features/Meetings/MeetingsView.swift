@@ -226,12 +226,14 @@ struct MeetingsView: View {
 
     @ViewBuilder
     private func rowMenu(_ row: MeetingSummaryRow) -> some View {
+        let recordingNow = MeetingDeletion.isRecording(row.meeting, recordingMeetingId: env.recording.meeting?.id)
         Button("Abrir") { router.openMeeting(row.id) }
         Button("Renombrar…") { renameDraft = row.meeting.title; renaming = row.meeting }
         Button(row.meeting.status == .ready ? "Volver a procesar" : "Procesar") { env.processing.enqueue(row.id) }
-            .disabled(env.processing.isBusy(row.id))
+            .disabled(env.processing.isBusy(row.id) || recordingNow)
         Divider()
         Button("Eliminar…", role: .destructive) { confirmDelete(row.meeting) }
+            .disabled(recordingNow)
     }
 
     private func confirmDelete(_ meeting: Meeting) {
@@ -240,13 +242,17 @@ struct MeetingsView: View {
 
     private func importFiles(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
+        if let reason = env.libraryBlockedReason {
+            model.importError = reason
+            return
+        }
         model.importing = true
         model.importError = nil
         Task {
             for url in urls {
                 do {
                     let meeting = try await env.importer.importAudio(at: url, language: env.settings.language)
-                    if env.models.asrStatus == .ready || env.settings.autoProcessAfterRecording {
+                    if env.settings.autoProcessAfterRecording {
                         env.processing.enqueue(meeting.id)
                     }
                 } catch {

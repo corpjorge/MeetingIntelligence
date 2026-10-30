@@ -91,9 +91,7 @@ public enum MeetingMediaExporter {
                               progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws {
         let sources = tracks.map { paths.resolve(relativePath: $0.relativePath).standardizedFileURL.resolvingSymlinksInPath() }
             + (video.map { [paths.resolve(relativePath: $0.relativePath).standardizedFileURL.resolvingSymlinksInPath()] } ?? [])
-        guard !sources.contains(destination.standardizedFileURL.resolvingSymlinksInPath()) else {
-            throw MediaError.unavailable("El destino no puede reemplazar un archivo original de la reunión.")
-        }
+        try ensureDestination(destination, replacesNoneOf: sources)
         if format == .mp4, video == nil { throw MediaError.unavailable("Esta reunión se grabó solo con audio.") }
         let media = try await composition(tracks: tracks, video: format == .mp4 ? video : nil, paths: paths)
         let temporary = destination.deletingLastPathComponent()
@@ -123,11 +121,30 @@ public enum MeetingMediaExporter {
             }
         }
         try Task.checkCancellation()
+        try ensureDestination(destination, replacesNoneOf: sources)
         // Same-directory rename publishes the complete export atomically, including replacement.
         guard rename(temporary.path, destination.path) == 0 else {
             throw MediaError.unavailable("No se pudo guardar la exportación en el destino elegido.")
         }
         progress(1)
+    }
+
+    static func ensureDestination(_ destination: URL, replacesNoneOf sources: [URL]) throws {
+        let refusal = MediaError.unavailable("El destino no puede reemplazar un archivo original de la reunión.")
+        guard !sources.contains(destination.standardizedFileURL.resolvingSymlinksInPath()) else { throw refusal }
+        guard let target = fileIdentity(destination) else { return }
+        if sources.contains(where: { fileIdentity($0) == target }) { throw refusal }
+    }
+
+    private struct FileIdentity: Equatable {
+        let device: dev_t
+        let inode: ino_t
+    }
+
+    private static func fileIdentity(_ url: URL) -> FileIdentity? {
+        var info = stat()
+        guard stat(url.path, &info) == 0 else { return nil }
+        return FileIdentity(device: info.st_dev, inode: info.st_ino)
     }
 
     private static func exportWAV(_ media: MeetingMediaComposition, to url: URL,

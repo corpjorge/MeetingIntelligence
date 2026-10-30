@@ -161,23 +161,35 @@ struct SplitWordTests {
         ASRToken(piece: piece, tokenId: 0, start: start, end: end, confidence: 1)
     }
 
-    @Test func leadingPieceMovesNextToItsContinuation() {
-        let tokens = [token("▁aviso", 335.4, 336.1), token(".", 336.1, 336.16), token("▁¿", 336.16, 336.3),
-                      token("Qu", 353.76, 353.9), token("ién", 353.9, 354.0), token("▁sigue", 354.0, 354.5)]
+    @Test(arguments: ["▁", " "])
+    func leadingPieceMovesNextToItsContinuation(marker: String) {
+        let tokens = [token(marker + "aviso", 335.4, 336.1), token(".", 336.1, 336.16), token(marker + "¿", 336.16, 336.3),
+                      token("Qu", 353.76, 353.9), token("ién", 353.9, 354.0), token(marker + "sigue", 354.0, 354.5)]
         let fixed = ParakeetUltraProvider.reattachSplitWords(tokens)
         #expect(fixed[2].start >= 353.5 && fixed[2].end == 353.76)
-        #expect(fixed[0] == tokens[0] && fixed[3] == tokens[3])
+        #expect(fixed[0] == tokens[0] && fixed[1] == tokens[1] && fixed[3] == tokens[3] && fixed[5] == tokens[5])
         let words = WordGrouping.words(from: fixed.map { ($0.piece, $0.start, $0.end, $0.confidence) })
         #expect(words.map(\.word) == ["aviso.", "¿Quién", "sigue"])
         #expect(words[1].start > 353)
         // A closing mark emitted after the gap goes back to its word.
-        let late = ParakeetUltraProvider.reattachSplitWords([token("▁Listo", 10, 10.4), token(".", 30, 30.1),
-                                                             token("▁Dale", 30.1, 30.5)])
-        #expect(late[1].start == 10.4 && late[2] == token("▁Dale", 30.1, 30.5))
+        let late = ParakeetUltraProvider.reattachSplitWords([token(marker + "Listo", 10, 10.4), token(".", 30, 30.1),
+                                                             token(marker + "Dale", 30.1, 30.5)])
+        #expect(late[1].start == 10.4 && late[2] == token(marker + "Dale", 30.1, 30.5))
         // Pieces with letters are never moved, and a new word after a pause is left alone.
-        #expect(ParakeetUltraProvider.reattachSplitWords([token("▁Qu", 0, 0.2), token("ién", 5, 5.2)])
-                == [token("▁Qu", 0, 0.2), token("ién", 5, 5.2)])
-        #expect(ParakeetUltraProvider.reattachSplitWords([token("▁hola", 0, 1), token("▁adiós", 5, 6)])
-                == [token("▁hola", 0, 1), token("▁adiós", 5, 6)])
+        #expect(ParakeetUltraProvider.reattachSplitWords([token(marker + "Qu", 0, 0.2), token("ién", 5, 5.2)])
+                == [token(marker + "Qu", 0, 0.2), token("ién", 5, 5.2)])
+        #expect(ParakeetUltraProvider.reattachSplitWords([token(marker + "hola", 0, 1), token(marker + "adiós", 5, 6)])
+                == [token(marker + "hola", 0, 1), token(marker + "adiós", 5, 6)])
+    }
+
+    @Test(arguments: ["▁", " "])
+    func closingMarkBeforeAPauseStaysWithItsWord(marker: String) {
+        let tokens = [token(marker + "Listo", 10.0, 10.4), token(".", 10.4, 10.48), token(marker + "Dale", 30.1, 30.5)]
+        let fixed = ParakeetUltraProvider.reattachSplitWords(tokens)
+        #expect(fixed == tokens)
+        #expect(fixed[1].start == 10.4 && fixed[1].end == 10.48)
+        let words = WordGrouping.words(from: fixed.map { ($0.piece, $0.start, $0.end, $0.confidence) })
+        #expect(words.map(\.word) == ["Listo.", "Dale"])
+        #expect(words[0].end == 10.48)
     }
 }

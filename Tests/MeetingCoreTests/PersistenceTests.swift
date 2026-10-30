@@ -33,7 +33,7 @@ struct PersistenceTests {
         for expected in ["meeting", "audioTrack", "transcript", "transcriptSegment", "participant", "speakerProfile",
                          "voiceSample", "meetingSpeaker", "speakerAssignment", "aiAnalysis", "analysisItem",
                          "aiProviderConfiguration", "processingJob", "correctionEvent", "vocabularyTerm",
-                         "transcriptSegmentFts", "analysisItemFts"] {
+                         "transcriptSegmentFts", "analysisItemFts", "speakerAssignmentArchive"] {
             #expect(tables.contains(expected), "Falta la tabla \(expected)")
         }
         let fkViolations = try db.reader.read { db in try Row.fetchAll(db, sql: "PRAGMA foreign_key_check") }

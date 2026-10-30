@@ -13,17 +13,17 @@ MeetingCore              Dominio, persistencia (GRDB/SQLite WAL + FTS5), búsque
   ├─ Speakers/           SpeakerMatcher + SpeakerCalibration (puro, testeable)
   ├─ Export/             TXT, Markdown, JSON (documento completo), SRT, PDF (Core Text)
   ├─ AI/                 ProcessRunner, ToolEnvironment, AIProvider (+5 proveedores),
-  │                      MeetingAnalysisService, MeetingChatService
+  │                      MeetingAnalysisService, MeetingChatService, CommandLineArguments (CLI `mi`)
   ├─ MCP/                MCPServerCore (JSON-RPC dual-era), MCPTools, MCPAccessPolicy
   ├─ Security/           KeychainStore, BiometricVault (AES-GCM)
   ├─ Storage/            AppIdentity, AppPaths, StorageMaintenance (borrado completo, VACUUM, restos; TD-28)
-  ├─ Models/             ManagedModel, ModelInstaller, HuggingFaceHub, ModelInventory (actualizaciones; TD-27)
+  ├─ Models/             ManagedModel, ModelInstaller (+ ModelUpdateLease), HuggingFaceHub, ModelInventory (actualizaciones; TD-27)
   ├─ Updates/            AppVersion, AppRelease + GitHubReleases, GitHubReleaseSource, UpdateSignature (Ed25519),
   │                      AppUpdateInstaller (verificar, intercambiar, reiniciar), CodeSignature (TD-29)
   └─ Utilities/          Timecode, TextNormalization, VocabularyCorrector, Metrics (WER/DER)
 
 MeetingAudio             Captura y DSP. Depende de MeetingCore.
-  ├─ Capture/            RecordingSession, ProcessTapSource (Core Audio taps), MicrophoneSource
+  ├─ Capture/            RecordingSession, ProcessTapSource (Core Audio taps) + RemoteTapSupervisor (reintentos), MicrophoneSource
   │                      (AVCaptureSession por UID; AVAudioEngine solo para VPIO), TrackRecorder, CaptureClock, catálogo HAL de procesos/dispositivos,
   │                      ConversationApps (agrupación de procesos por app + catálogo descriptivo),
   │                      CallMonitor/CallDetector (detección de llamadas de cualquier app)
@@ -43,7 +43,7 @@ MeetingSpeech            FluidAudio. Depende de MeetingCore y MeetingAudio.
   ├─ Diarization/        DiarizationService (OfflineDiarizerManager), SpeakerAlignment, EchoDetector
   ├─ SpeakerRecognition/ SpeakerRecognitionService (enrolamiento, muestras validadas, reconocimiento)
   ├─ Pipeline/           MeetingProcessor (etapas + ProcessingJob), MeetingImportService
-  └─ Models/             SerialGate, ExclusiveBox
+  └─ Models/             SerialGate, ExclusiveBox, SharedPreparation (CancellableWait, PreparationProgress)
 
 MeetingSemantic          Embeddings locales (multilingual-e5-small, swift-embeddings). Depende de MeetingCore.
   └─ SemanticSearchEngine  descarga opcional, vectores de consulta, indexación incremental
@@ -64,6 +64,17 @@ MeetingReleaseTool       Ejecutable `mi-release` (clave y firma de actualizacion
 
 Regla: las capas inferiores nunca importan a las superiores. La UI no importa FluidAudio.
 
+## Arranque (TD-39)
+
+```
+LibraryLock (flock .instance.lock) → AppDatabase.open → LibraryStartupPolicy → servicios
+   → StartupMaintenance (solo si la biblioteca es propia y abrió: recuperación, retención, huérfanos, VideoRecovery)
+```
+
+Si la base no abrió o si otra copia tiene la biblioteca, `blockedReason` bloquea grabar, importar, procesar e indexar,
+y no se ejecuta ningún mantenimiento. `ModelUpdateController` suspende y reanuda la cola de procesamiento mientras
+intercambia un modelo.
+
 ## Captura (cualquier app + micrófono)
 
 ```
@@ -82,21 +93,27 @@ AVCaptureAudioDataOutput ── copia ──► remuestreo + alineación ──�
 - **Alineación** (`TimelineAligner`): cada buffer trae el host time de su primera muestra; se insertan silencios
   ante huecos (cambios de dispositivo, inicio tardío de Teams) y se descartan muestras ante deriva > 40 ms.
 - **Formato**: 16 kHz, mono, PCM 16 bits — el formato que consumen Parakeet y la diarización.
-- **Resiliencia**: cabecera WAV reescrita + `fsync` cada 2 s; al iniciar, las reuniones en estado `recording`
-  pasan a `interrupted` y `WAVRepair` recupera el audio escrito.
+- **Resiliencia**: cabecera WAV reescrita con escritura posicional (`pwrite`) + `fsync` cada 2 s; al iniciar, las
+  reuniones en estado `recording` pasan a `interrupted` y `WAVRepair` recupera el audio escrito. Un fallo de escritura
+  (p. ej. disco lleno) no desplaza la pista: lo no escrito se rellena con silencio en cuanto el disco vuelve a aceptar
+  datos.
 - **Micrófono**: AVCaptureSession abre únicamente el dispositivo elegido por UID, sin salida de reproducción ni
   agregado de entrada/salida predeterminadas. El formato de cada CMSampleBuffer se convierte a mono y se alinea
   mediante el reloj de la sesión y el reloj host. AVAudioEngine queda reservado para VPIO explícito (TD-38).
 - **Cambios de dispositivo**: AVCapture gestiona los formatos del micrófono seleccionado; un fallo se avisa sin
   cambiar silenciosamente a otro dispositivo. Listeners del HAL reconstruyen el tap remoto cuando cambian los
-  procesos de Teams o la salida por defecto. En VPIO, AVAudioEngineConfigurationChange conserva recuperación acotada.
+  procesos de Teams, la salida por defecto o `kAudioTapPropertyFormat`. Si la reconstrucción falla,
+  `RemoteTapSupervisor` conserva el objetivo y reintenta con espera progresiva (1–30 s) desde un temporizador,
+  `checkAudioDelivery` y el HAL; al recuperarse emite `sourceRecovered(.remoteSystemAudio)` y la pista remota tiene
+  5 s de gracia antes de avisar de falta de datos. En VPIO, AVAudioEngineConfigurationChange conserva recuperación acotada.
 - **Inicio y cierre**: operaciones de hardware en colas de trabajo, con cancelación entre fases y aviso/cancelación
   al superar 15 s de inicio. La transcripción provisional se prepara después de que la captura empiece; conectar
   su consumidor de muestras es seguro durante la grabación y una preparación tardía no reactiva una toma terminada.
 - **Cualquier app**: `AudioApplicationResolver` agrupa los procesos de audio por el `.app` más externo que los
   contiene (o por bundle ID si no hay bundle). El catálogo solo describe (nombre, tipo, aislamiento); nunca limita.
 - **Pausa del micrófono**: el `TrackRecorder` del micrófono escribe silencio mientras está en pausa (la línea de
-  tiempo se conserva) y registra el intervalo (`recordingPause`). Silenciarse en la app de la llamada no es legible
+  tiempo se conserva) y registra el intervalo (`recordingPause`). El instante se toma en el llamador y el silencio se
+  aplica por posición en la línea de tiempo, incluidos los búferes ya encolados. Silenciarse en la app de la llamada no es legible
   (TD-23): la vista de grabación muestra un recordatorio estático (`CallMuteReminder`) cuyo botón solo pausa.
 - **Eco/duplicación** (TD-33): por defecto el micrófono se captura sin Voice Processing de Apple; no se modifican la ganancia,
   el mute ni la configuración de Teams. Al capturar ambas pistas, `RecordingEchoCanceller` (SpeexDSP 1.2.1,
@@ -104,8 +121,9 @@ AVCaptureAudioDataOutput ── copia ──► remuestreo + alineación ──�
   serial compartida. El audio remoto es referencia; solo se filtra el micrófono antes del WAV y de la transcripción
   provisional. Tramas de 20 ms, referencia adelantada 80 ms para absorber diferencias de timestamps y filtro de
   300 ms; no hay AGC ni puerta de ruido. Se conserva silencio exacto en pausas/huecos. La referencia se cierra primero
-  para vaciar el último bloque del micrófono sin cambiar su duración. Si falta referencia durante 0,5 s, se conserva
-  el micrófono sin filtrar y se avisa; los búferes de referencia se limitan a 2 s. La opción de reducción de eco está
+  para vaciar el último bloque del micrófono sin cambiar su duración. Si falta referencia durante 0,5 s (una vez que
+  ya había empezado), se conserva el micrófono sin filtrar y se avisa; el aviso se retira y se rearma tras 1 s de
+  referencia continua. Los búferes de referencia se limitan a 2 s. La opción de reducción de eco está
   activada por defecto y no se aplica a grabaciones de una sola fuente. `EchoDetector` sigue marcando texto como
   defensa adicional; no sustituye la limpieza del audio. Se conserva Apple Voice Processing como alternativa
   desactivada por defecto, con advertencia del conflicto observado en Teams. Ambos controles se excluyen: al
@@ -141,13 +159,18 @@ reunión a la vez, con progreso real (FluidAudio) y cancelación cooperativa (`T
   local; si detecta varios, se crean "Local 1, Local 2…" y solo el reconocimiento o tú asignan identidades.
 - **Remoto/importado**: clusters "Hablante N" → reconocimiento → nombre solo si supera el umbral calibrado.
 - **Re-procesar**: las identidades manuales previas se re-aplican a los clusters nuevos por solapamiento temporal
-  con mayoría mutua (`ManualIdentityRemapper`, TD-16); lo ambiguo queda como desconocido.
+  con mayoría mutua (`ManualIdentityRemapper`, TD-16); lo ambiguo queda como desconocido. Las correcciones de texto se
+  trasladan solo si la correspondencia es inequívoca (mismo `asrText`, inicio a ≤ 0,5 s, 1:1) y la app avisa de las
+  demás. Las pistas se guardan todas juntas al final (cancelar antes no cambia nada) y, si falta el audio, se falla
+  sin tocar la reunión.
 
 ## Concurrencia
 
 - Swift 6 (modo estricto). Motores como `actor` (`ParakeetUltraProvider`, `DiarizationService`,
   `SpeakerRecognitionService`, `MeetingProcessor`, `LiveTranscriber`).
-- Los actores son reentrantes: `SerialGate` garantiza una inferencia a la vez sobre cada instancia de modelo.
+- Los actores son reentrantes: `SerialGate` garantiza una inferencia a la vez sobre cada instancia de modelo; también
+  `unload()` espera a la compuerta.
+- `LiveTranscriber.feed` es síncrono y ordenado (una cola por fuente con un solo consumidor).
 - `OfflineDiarizerManager` (no `Sendable`) vive en `ExclusiveBox`, accedido solo bajo la compuerta.
 - La captura usa colas seriales confinadas (`@unchecked Sendable` documentado); nunca bloquea el hilo principal.
 - La UI observa la base de datos con `ValueObservation` (GRDB) → `AsyncSequence`.
@@ -155,16 +178,19 @@ reunión a la vez, con progreso real (FluidAudio) y cancelación cooperativa (`T
 ## Persistencia
 
 SQLite (GRDB 7.11.1, WAL). Migraciones `v1-core`, `v2-conversation-apps`, `v3-chat-history`,
-`v4-segment-embeddings`, `v5-video-assets`. Relación verificable:
+`v4-segment-embeddings`, `v5-video-assets`, `v6-speaker-assignment-archive`. Relación verificable:
 `AudioTrack → Transcript → TranscriptSegment (startTime/endTime, palabras) → MeetingSpeaker → Participant`.
 
 - `asrText` (inmutable), `vocabularyText` (diccionario), `editedText` (usuario): nunca se sobrescribe el original.
 - Re-transcribir marca el transcript anterior con `supersededAt` (no se borra).
-- `SpeakerAssignment` es un registro inmutable de decisiones (método, similitud, margen, umbral).
-- `diarizedSpeakerId` inmutable permite deshacer fusiones de hablantes.
+- `SpeakerAssignment` es un registro inmutable de decisiones (método, similitud, margen, umbral). Al reprocesar, las de
+  los hablantes reemplazados se copian a `speakerAssignmentArchive`.
+- `diarizedSpeakerId` inmutable permite deshacer fusiones de hablantes; `totalSpeechSeconds` se recalcula al fusionar,
+  separar o mover segmentos.
 - `analysisItem` reúne decisiones, tareas, temas, riesgos… con evidencia (`Decision`, `ActionItem`,
   `MeetingTopic` son vistas tipadas).
-- FTS5 sincronizado por triggers (`transcriptSegmentFts`, `analysisItemFts`), `unicode61` sin diacríticos.
+- FTS5 sincronizado por triggers (`transcriptSegmentFts`, `analysisItemFts`), `unicode61` sin diacríticos. El filtro
+  por hablante usa la función SQL `mi_matches_word_prefixes` (registrada en cada conexión) antes del `LIMIT`.
 - Historial del chat (`chatMessage` + `chatMessageSource`): un hilo por reunión y uno entre reuniones; borrar una
   reunión borra su hilo y, por trigger, todo mensaje que la cite.
 - `segmentEmbedding`: caché reconstruible de vectores (modelo + hash del texto), en cascada con el segmento.
@@ -173,7 +199,9 @@ SQLite (GRDB 7.11.1, WAL). Migraciones `v1-core`, `v2-conversation-apps`, `v3-ch
 
 `AIProvider` común; `ToolEnvironment` resuelve el PATH del shell de inicio de sesión (los GUI no lo heredan).
 Las CLIs se ejecutan en un directorio temporal vacío, con timeout y cancelación; nunca con flags que omitan
-permisos. Codex no carga la configuración del usuario y se ejecuta sin herramientas de ejecución (TD-12). La
+permisos. Una cancelación anterior al lanzamiento nunca lanza la CLI, y timeout o cancelación terminan todo el árbol
+de procesos. Claude Code corre en `--safe-mode` y Codex no carga la configuración del usuario y se ejecuta sin
+herramientas de ejecución (TD-12). Los modelos cloud de Ollama cuentan como nube. La
 transcripción va por stdin con `F_SETNOSIGPIPE`: una CLI que termina antes no cierra la app. El análisis valida
 localmente cada cita contra el segmento citado.
 
@@ -200,4 +228,5 @@ activa `WindowVideoRecorder`; captura pantalla sin audio. `RecordingController` 
 `CaptureClock`, finaliza video antes de anunciar la grabación guardada y conserva WAV si falla el video.
 `VideoAsset` pertenece a una reunión y se guarda bajo su carpeta. El reproductor usa la misma composición para
 imagen, audio y saltos por cita. `MediaExportController` presenta destino/progreso/cancelación; `MeetingMediaExporter`
-genera audio mezclado o video con audio sin esperar al análisis. El exportador documental sigue en Core.
+genera audio mezclado o video con audio sin esperar al análisis, y rechaza un destino que sea el mismo archivo que un
+original (dispositivo + inodo, también con otras mayúsculas o enlaces duros). El exportador documental sigue en Core.

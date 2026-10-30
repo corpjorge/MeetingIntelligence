@@ -7,6 +7,7 @@ struct ChatMessage: Identifiable {
     let question: String
     var answer: MeetingChatService.Answer?
     var isLoading = true
+    var aiError: String?
 }
 
 /// Question answering over one meeting or many (local retrieval + optional AI).
@@ -21,6 +22,7 @@ struct ChatPanel: View {
     @State private var useAI = true
     @State private var confirmClear = false
     @State private var historyError: String?
+    @State private var historyGeneration = 0
 
     var body: some View {
         VStack(spacing: DS.Space.none) {
@@ -78,7 +80,7 @@ struct ChatPanel: View {
                     Button("Preguntar", action: send).buttonStyle(.dsPrimary)
                         .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).count < 3)
                     IconButton(systemImage: "trash", help: "Borrar el historial de este chat") { confirmClear = true }
-                        .disabled(messages.isEmpty)
+                        .disabled(messages.isEmpty || messages.contains(where: \.isLoading))
                 }
             }
             .padding(.horizontal, DS.Space.xl)
@@ -86,9 +88,7 @@ struct ChatPanel: View {
             .background(DS.Color.surface)
             .overlay(alignment: .top) { Rectangle().fill(DS.Color.border).frame(height: DS.Layout.hairline) }
         }
-        .sheet(item: Binding(get: { env.ai.pendingConsent }, set: { if $0 == nil { env.ai.declineConsent() } })) { request in
-            RemoteConsentSheet(request: request)
-        }
+        .remoteConsentSheet(env.ai)
         .confirmationDialog("¿Borrar el historial de este chat?", isPresented: $confirmClear) {
             Button("Borrar historial", role: .destructive, action: clearHistory)
         } message: {
@@ -113,6 +113,7 @@ struct ChatPanel: View {
     private func clearHistory() {
         do {
             try env.database.clearChatHistory(thread)
+            historyGeneration += 1
             messages = []
             historyError = nil
         } catch {
@@ -126,20 +127,23 @@ struct ChatPanel: View {
         draft = ""
         let message = ChatMessage(question: question)
         messages.append(message)
-        let scope = scope, thread = thread, useAI = useAI
+        let scope = scope, thread = thread, useAI = useAI, generation = historyGeneration
         // Freeze the visible selection before the asynchronous semantic lookup.
         let configuration = env.ai.configuration(for: env.ai.selectedProvider)
         Task {
             let semantic = await env.semantic.query(for: question)
-            let answer = await env.ai.ask(question: question, scope: scope, useAI: useAI, semantic: semantic, configuration: configuration)
+            let reply = await env.ai.reply(question: question, scope: scope, useAI: useAI, semantic: semantic,
+                                           configuration: configuration)
+            guard generation == historyGeneration else { return }
             if let i = messages.firstIndex(where: { $0.id == message.id }) {
-                messages[i].answer = answer
+                messages[i].answer = reply.answer
+                messages[i].aiError = reply.aiError
                 messages[i].isLoading = false
             }
             let scopeIds: [String]? = if case .meetings(let ids) = scope { ids } else { nil }
             do {
                 try env.database.appendChatMessage(
-                    ChatHistoryMessage(id: message.id, question: question, answer: answer, scopeMeetingIds: scopeIds),
+                    ChatHistoryMessage(id: message.id, question: question, answer: reply.answer, scopeMeetingIds: scopeIds),
                     thread: thread)
             } catch {
                 historyError = "La respuesta no se guardó en el historial: \(error.localizedDescription)"
@@ -164,6 +168,11 @@ struct ChatPanel: View {
                     .font(DS.Font.callout).foregroundStyle(DS.Color.warning)
             } else if let answer = message.answer {
                 VStack(alignment: .leading, spacing: DS.Space.s) {
+                    if let aiError = message.aiError {
+                        InlineBanner(tone: .warning, systemImage: "exclamationmark.triangle",
+                                     title: "La IA no respondió; se muestran los resultados de la búsqueda local",
+                                     message: aiError)
+                    }
                     if let text = answer.text {
                         HStack(spacing: DS.Space.s) {
                             StatusPill(text: "Respuesta de IA", tone: .ai, systemImage: "sparkles")
@@ -228,6 +237,14 @@ struct MeetingChatTab: View {
 struct AudioTab: View {
     let model: MeetingDetailModel
 
+    static func trackDetail(_ source: AudioSource) -> String {
+        switch source {
+        case .localMicrophone: "Tu voz"
+        case .remoteSystemAudio: "Los demás participantes"
+        case .imported: "Archivo de audio"
+        }
+    }
+
     var body: some View {
         @Bindable var player = model.player
         ScrollView {
@@ -282,7 +299,7 @@ struct AudioTab: View {
                                 HStack(spacing: DS.Space.s) {
                                     Text(track.source == .localMicrophone ? "Micrófono local" : (track.source == .remoteSystemAudio ? "Audio remoto" : "Audio importado"))
                                         .font(DS.Font.bodyEmphasis)
-                                    Text(track.source.rawValue).font(DS.Font.mono).foregroundStyle(DS.Color.textTertiary)
+                                    Text(Self.trackDetail(track.source)).font(DS.Font.caption).foregroundStyle(DS.Color.textTertiary)
                                 }
                                 Text(track.captureDetail ?? "").font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
                                 HStack(spacing: DS.Space.m) {

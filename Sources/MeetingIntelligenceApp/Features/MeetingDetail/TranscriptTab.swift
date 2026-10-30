@@ -7,7 +7,8 @@ struct TranscriptTab: View {
     @Environment(AppEnvironment.self) private var env
     @State private var query = ""
     @State private var followPlayback = true
-    @State private var editingId: String?
+    @State private var saveError: (segmentId: String, message: String)?
+    @State private var actionError: String?
 
     private var segments: [TranscriptSegment] {
         guard let detail = model.detail else { return [] }
@@ -64,6 +65,14 @@ struct TranscriptTab: View {
             .padding(.horizontal, DS.Space.xxl)
             .padding(.vertical, DS.Space.m)
 
+            if let actionError {
+                InlineBanner(tone: .danger, systemImage: "exclamationmark.triangle.fill", title: actionError) {
+                    IconButton(systemImage: "xmark", help: "Cerrar") { self.actionError = nil }
+                }
+                .padding(.horizontal, DS.Space.xxl)
+                .padding(.bottom, DS.Space.m)
+            }
+
             if segments.isEmpty {
                 emptyState
             } else {
@@ -82,16 +91,14 @@ struct TranscriptTab: View {
                                     isActive: activeId == segment.id,
                                     isMatch: matches.contains(segment.id),
                                     query: query,
-                                    isEditing: editingId == segment.id,
+                                    isEditing: model.editingSegmentId == segment.id,
+                                    draft: model.segmentDrafts[segment.id],
+                                    saveError: saveError?.segmentId == segment.id ? saveError?.message : nil,
                                     onSeek: { model.player.seek(to: segment.startTime, play: true) },
-                                    onEdit: { editingId = segment.id },
-                                    onSave: { text in
-                                        try? env.database.editSegmentText(segmentId: segment.id, newText: text)
-                                        editingId = nil
-                                        env.semantic.schedule()
-                                    },
-                                    onCancel: { editingId = nil },
-                                    onRevert: { try? env.database.revertSegmentText(segmentId: segment.id) })
+                                    onEdit: { beginEditing(segment) },
+                                    onSave: { text in save(segment, text: text) },
+                                    onCancel: { cancelEditing(segment) },
+                                    onRevert: { revert(segment) })
                                 .id(segment.id)
                             }
                         }
@@ -101,7 +108,7 @@ struct TranscriptTab: View {
                         .frame(maxWidth: .infinity)
                     }
                     .onChange(of: activeId) { _, id in
-                        guard followPlayback, model.player.isPlaying, let id, editingId == nil else { return }
+                        guard followPlayback, model.player.isPlaying, let id, model.editingSegmentId == nil else { return }
                         withAnimation(DS.Motion.standard) { proxy.scrollTo(id, anchor: .center) }
                     }
                     .onChange(of: query) {
@@ -137,6 +144,9 @@ struct TranscriptTab: View {
         if env.processing.isBusy(meetingId) {
             LoadingStateView(message: env.processing.progress(for: meetingId)?.message ?? "En cola para procesar…",
                              progress: env.processing.progress(for: meetingId)?.fraction)
+        } else if status == .recording || env.recording.meeting?.id == meetingId {
+            EmptyStateView(systemImage: "record.circle", title: "Grabación en curso",
+                           message: "Podrás procesar la reunión cuando termine la grabación.")
         } else if status == .ready {
             EmptyStateView(systemImage: "waveform.slash", title: "Sin voz detectada",
                            message: "Parakeet Ultra no encontró habla en las pistas de esta reunión.")
@@ -145,6 +155,37 @@ struct TranscriptTab: View {
                            message: "Procesa la reunión para transcribirla localmente con Parakeet Ultra.") {
                 Button("Procesar ahora") { env.processing.enqueue(meetingId) }.buttonStyle(.dsPrimary)
             }
+        }
+    }
+
+    private func beginEditing(_ segment: TranscriptSegment) {
+        if saveError?.segmentId != segment.id { saveError = nil }
+        model.beginEditing(segment)
+    }
+
+    private func save(_ segment: TranscriptSegment, text: String) {
+        do {
+            try env.database.editSegmentText(segmentId: segment.id, newText: text)
+        } catch {
+            saveError = (segment.id, error.localizedDescription)
+            return
+        }
+        saveError = nil
+        model.discardDraft(segment.id)
+        env.semantic.schedule()
+    }
+
+    private func cancelEditing(_ segment: TranscriptSegment) {
+        if saveError?.segmentId == segment.id { saveError = nil }
+        model.discardDraft(segment.id)
+    }
+
+    private func revert(_ segment: TranscriptSegment) {
+        do {
+            try env.database.revertSegmentText(segmentId: segment.id)
+            actionError = nil
+        } catch {
+            actionError = "No se pudo restaurar el texto original: \(error.localizedDescription)"
         }
     }
 }
@@ -158,6 +199,8 @@ struct SegmentRow: View {
     let isMatch: Bool
     let query: String
     let isEditing: Bool
+    var draft: SegmentDraft? = nil
+    var saveError: String? = nil
     let onSeek: () -> Void
     let onEdit: () -> Void
     let onSave: (String) -> Void
@@ -165,10 +208,14 @@ struct SegmentRow: View {
     let onRevert: () -> Void
 
     @State private var hovering = false
-    @State private var draft = ""
 
     private var isUnknown: Bool {
         segment.participantId == nil && segment.attribution != .localUserTrack
+    }
+
+    private var hasUnsavedDraft: Bool {
+        guard let draft else { return false }
+        return draft.text.trimmingCharacters(in: .whitespacesAndNewlines) != segment.displayText
     }
 
     private let gutter = DS.Layout.timecodeGutter
@@ -194,8 +241,8 @@ struct SegmentRow: View {
                 }
                 .buttonStyle(.plain)
                 .help("Reproducir desde aquí")
-                if isEditing {
-                    editor
+                if isEditing, let draft {
+                    editor(draft)
                 } else {
                     Text(highlighted)
                         .font(DS.Font.reading)
@@ -203,6 +250,10 @@ struct SegmentRow: View {
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if !showSpeaker { badges }
+                    if hasUnsavedDraft {
+                        StatusPill(text: "borrador sin guardar", tone: .warning, systemImage: "pencil.circle")
+                            .help("Este fragmento tiene cambios sin guardar. Usa Editar texto para continuar.")
+                    }
                     actions.opacity(hovering ? 1 : 0)
                 }
             }
@@ -257,21 +308,25 @@ struct SegmentRow: View {
         }
     }
 
-    private var editor: some View {
-        VStack(alignment: .leading, spacing: DS.Space.s) {
-            TextEditor(text: $draft)
+    private func editor(_ draft: SegmentDraft) -> some View {
+        @Bindable var draft = draft
+        return VStack(alignment: .leading, spacing: DS.Space.s) {
+            TextEditor(text: $draft.text)
                 .font(DS.Font.reading)
                 .scrollContentBackground(.hidden)
                 .padding(DS.Space.s)
                 .frame(minHeight: DS.Layout.editorMinHeight)
                 .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: DS.Radius.s))
                 .overlay(RoundedRectangle(cornerRadius: DS.Radius.s).strokeBorder(DS.Color.accent))
-                .onAppear { draft = segment.displayText }
+            if let saveError {
+                InlineBanner(tone: .danger, systemImage: "exclamationmark.triangle.fill",
+                             title: "No se pudo guardar el cambio", message: saveError)
+            }
             HStack {
                 Text("Original: \(segment.asrText)").font(DS.Font.caption).foregroundStyle(DS.Color.textTertiary).lineLimit(2)
                 Spacer()
                 Button("Cancelar", action: onCancel).buttonStyle(.ds(.ghost, size: .small)).keyboardShortcut(.escape, modifiers: [])
-                Button("Guardar") { onSave(draft) }.buttonStyle(.ds(.primary, size: .small)).keyboardShortcut(.return, modifiers: .command)
+                Button("Guardar") { onSave(draft.text) }.buttonStyle(.ds(.primary, size: .small)).keyboardShortcut(.return, modifiers: .command)
             }
         }
     }

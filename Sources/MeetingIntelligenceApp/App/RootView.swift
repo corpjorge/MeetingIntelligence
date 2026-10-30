@@ -4,6 +4,7 @@ import SwiftUI
 struct RootView: View {
     @Environment(AppEnvironment.self) private var env
     @Environment(AppRouter.self) private var router
+    @State private var startupErrorSeen = false
 
     var body: some View {
         @Bindable var router = router
@@ -25,6 +26,14 @@ struct RootView: View {
                 }
             }
             .background(DS.Color.background)
+            .safeAreaInset(edge: .top, spacing: DS.Space.none) {
+                if let reason = env.libraryBlockedReason {
+                    InlineBanner(tone: .warning, systemImage: "lock.fill", title: "Biblioteca en modo de solo consulta",
+                                 message: reason)
+                        .padding(.horizontal, DS.Space.xl)
+                        .padding(.vertical, DS.Space.s)
+                }
+            }
             .overlay(alignment: .top) { AppUpdateBanner() }
         }
         .overlay(alignment: .bottom) { ProcessingToast() }
@@ -45,10 +54,17 @@ struct RootView: View {
         // Processing and live transcription load the models on first use; reflect a download done there.
         .onChange(of: env.processing.active == nil) { _, idle in if idle { Task { await env.models.refresh() } } }
         .onChange(of: env.recording.isActive) { _, active in if !active { Task { await env.models.refresh() } } }
-        .alert("Error de la biblioteca", isPresented: .constant(env.startupError != nil)) {
-            Button("Entendido", role: .cancel) {}
+        .alert("Error de la biblioteca", isPresented: Binding(get: { env.startupError != nil && !startupErrorSeen },
+                                                              set: { if !$0 { startupErrorSeen = true } })) {
+            Button("Entendido", role: .cancel) { startupErrorSeen = true }
         } message: {
             Text(env.startupError ?? "")
+        }
+        .alert("No disponible", isPresented: Binding(get: { router.blockedNotice != nil },
+                                                     set: { if !$0 { router.blockedNotice = nil } })) {
+            Button("Entendido", role: .cancel) { router.blockedNotice = nil }
+        } message: {
+            Text(router.blockedNotice ?? "")
         }
     }
 }
@@ -158,6 +174,20 @@ struct ProcessingToast: View {
                     HStack {
                         Button("Ver") { router.openMeeting(error.meetingId) }.buttonStyle(.ds(.ghost, size: .small))
                         IconButton(systemImage: "xmark", help: "Cerrar") { env.processing.dismissError() }
+                    }
+                }
+                .frame(maxWidth: DS.Layout.toastMaxWidth)
+                .background(DS.Color.surfaceRaised, in: RoundedRectangle(cornerRadius: DS.Radius.m))
+                .elevation(.overlay)
+                .padding(.bottom, DS.Space.l)
+            } else if let notice = env.processing.notice {
+                InlineBanner(tone: .warning, systemImage: "exclamationmark.triangle",
+                             title: notice.title, message: notice.message) {
+                    HStack {
+                        if let meetingId = notice.meetingId {
+                            Button("Ver") { router.openMeeting(meetingId) }.buttonStyle(.ds(.ghost, size: .small))
+                        }
+                        IconButton(systemImage: "xmark", help: "Cerrar") { env.processing.dismissNotice() }
                     }
                 }
                 .frame(maxWidth: DS.Layout.toastMaxWidth)

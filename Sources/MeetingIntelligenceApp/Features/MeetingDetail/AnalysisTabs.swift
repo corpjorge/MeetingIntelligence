@@ -21,9 +21,9 @@ struct AnalysisRunBar: View {
                     HStack(spacing: DS.Space.m) { Spacer(minLength: DS.Space.none); actions }
                 }
             }
-            if let error = env.ai.lastError {
+            if let error = env.ai.analysisError(for: meetingId) {
                 InlineBanner(tone: .danger, systemImage: "exclamationmark.triangle.fill", title: "El análisis falló", message: error) {
-                    IconButton(systemImage: "xmark", help: "Cerrar") { env.ai.dismissError() }
+                    IconButton(systemImage: "xmark", help: "Cerrar") { env.ai.dismissAnalysisError(for: meetingId) }
                 }
             }
             if let status = env.ai.statuses[env.ai.selectedProvider],
@@ -144,10 +144,14 @@ struct SummaryTab: View {
                     if model.analyses.count > 1 {
                         AnalysisHistory(analyses: model.analyses)
                     }
-                } else if let failed = model.analyses.first {
-                    InlineBanner(tone: .warning, systemImage: "exclamationmark.triangle",
-                                 title: "El último análisis no se completó (\(failed.status.rawValue))",
-                                 message: failed.errorMessage)
+                } else if let last = model.analyses.first {
+                    if last.status == .running {
+                        LoadingStateView(message: "Análisis en curso…")
+                    } else {
+                        InlineBanner(tone: .warning, systemImage: "exclamationmark.triangle",
+                                     title: "El último análisis no se completó (\(AnalysisStatusLabel.text(last.status).lowercased()))",
+                                     message: last.errorMessage)
+                    }
                 } else {
                     EmptyStateView(systemImage: "sparkles", title: "Sin análisis todavía",
                                    message: "Elige un proveedor y analiza la reunión. Cada hallazgo incluirá la cita exacta y su timestamp; lo que no tenga evidencia se marca como “Información no confirmada”.")
@@ -157,9 +161,7 @@ struct SummaryTab: View {
             .frame(maxWidth: DS.Layout.contentMaxWidth, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
-        .sheet(item: Binding(get: { env.ai.pendingConsent }, set: { if $0 == nil { env.ai.declineConsent() } })) { request in
-            RemoteConsentSheet(request: request)
-        }
+        .remoteConsentSheet(env.ai)
     }
 
     private func summaryCard(_ title: String, _ text: String) -> some View {
@@ -200,7 +202,7 @@ struct AnalysisHistory: View {
                     HStack {
                         Text(a.startedAt.formatted(date: .abbreviated, time: .shortened)).font(DS.Font.mono)
                         Text("\(a.provider.displayName)\(a.model.map { " · \($0)" } ?? "")").font(DS.Font.caption)
-                        StatusPill(text: a.status.rawValue, tone: a.status == .succeeded ? .success : (a.status == .running ? .accent : .danger))
+                        StatusPill(text: AnalysisStatusLabel.text(a.status), tone: AnalysisStatusLabel.tone(a.status))
                         if let error = a.errorMessage { Text(error).font(DS.Font.caption).foregroundStyle(DS.Color.textTertiary).lineLimit(1) }
                     }
                 }
@@ -396,8 +398,37 @@ struct AnalysisItemsTab: View {
             .frame(maxWidth: DS.Layout.contentMaxWidth, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
-        .sheet(item: Binding(get: { env.ai.pendingConsent }, set: { if $0 == nil { env.ai.declineConsent() } })) { request in
+        .remoteConsentSheet(env.ai)
+    }
+}
+
+enum AnalysisStatusLabel {
+    static func text(_ status: AnalysisStatus) -> String {
+        switch status {
+        case .running: "En curso"
+        case .succeeded: "Completado"
+        case .invalidOutput: "Respuesta no válida"
+        case .failed: "Falló"
+        case .cancelled: "Cancelado"
+        }
+    }
+
+    static func tone(_ status: AnalysisStatus) -> Tone {
+        switch status {
+        case .succeeded: .success
+        case .running: .accent
+        case .cancelled: .neutral
+        case .invalidOutput, .failed: .danger
+        }
+    }
+}
+
+extension View {
+    func remoteConsentSheet(_ ai: AIController) -> some View {
+        sheet(item: Binding(get: { ai.pendingConsent }, set: { _ in })) { request in
             RemoteConsentSheet(request: request)
+                .id(request.id)
+                .onDisappear { ai.declineConsent(request.id) }
         }
     }
 }
@@ -413,8 +444,10 @@ struct RemoteConsentSheet: View {
             HStack(spacing: DS.Space.m) {
                 Image(systemName: "icloud.and.arrow.up").font(DS.Font.headerIcon).foregroundStyle(DS.Color.warning)
                 VStack(alignment: .leading) {
-                    Text("Enviar a \(request.provider.displayName)").font(DS.Font.title)
-                    Text("El CLI se ejecuta en tu Mac, pero el modelo procesa los datos en la nube del proveedor.")
+                    Text("Enviar a \(ProviderLabel.name(request.provider))").font(DS.Font.title)
+                    Text(request.provider == .ollama
+                         ? "Ollama se ejecuta en tu Mac, pero el modelo «\(request.model ?? "")» procesa los datos en la nube de Ollama."
+                         : "El CLI se ejecuta en tu Mac, pero el modelo procesa los datos en la nube del proveedor.")
                         .font(DS.Font.callout).foregroundStyle(DS.Color.textSecondary)
                 }
             }
@@ -430,10 +463,10 @@ struct RemoteConsentSheet: View {
             HStack {
                 Toggle("No volver a preguntar", isOn: $dontAskAgain)
                     .toggleStyle(.checkbox).font(DS.Font.callout)
-                    .help("No se volverá a pedir confirmación para \(request.provider.displayName). Se puede volver a activar en Inteligencia › Proveedores.")
+                    .help("No se volverá a pedir confirmación para \(ProviderLabel.name(request.provider)). Se puede volver a activar en Inteligencia › Proveedores.")
                 Spacer()
-                Button("Cancelar") { env.ai.declineConsent() }.buttonStyle(.dsSecondary).keyboardShortcut(.cancelAction)
-                Button("Compartir y analizar") { env.ai.confirmConsent(remember: dontAskAgain) }.buttonStyle(.dsPrimary).keyboardShortcut(.defaultAction)
+                Button("Cancelar") { env.ai.declineConsent(request.id) }.buttonStyle(.dsSecondary).keyboardShortcut(.cancelAction)
+                Button("Compartir y analizar") { env.ai.confirmConsent(request.id, remember: dontAskAgain) }.buttonStyle(.dsPrimary).keyboardShortcut(.defaultAction)
             }
         }
         .padding(DS.Space.xl)

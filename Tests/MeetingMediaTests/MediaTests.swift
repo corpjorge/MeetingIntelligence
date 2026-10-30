@@ -107,6 +107,34 @@ struct MediaTests {
         #expect(try Data(contentsOf: destination) == marker)
     }
 
+    @Test func caseVariantOrHardLinkedDestinationNeverReplacesAnOriginal() async throws {
+        let paths = try paths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let track = try audio(paths, source: .localMicrophone)
+        let original = paths.resolve(relativePath: track.relativePath)
+        let originalData = try Data(contentsOf: original)
+        let caseSensitive = try paths.root.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey])
+            .volumeSupportsCaseSensitiveNames ?? true
+        let linked = paths.root.appendingPathComponent("linked-original.wav")
+        #expect(link(original.path, linked.path) == 0)
+        var destinations = [linked]
+        if !caseSensitive { destinations.append(paths.root.appendingPathComponent(original.lastPathComponent.uppercased())) }
+        for destination in destinations {
+            for format in [MediaExportFormat.wav, .m4a] {
+                await #expect(throws: MediaError.self) {
+                    try await MeetingMediaExporter.export(tracks: [track], video: nil, paths: paths, format: format, to: destination)
+                }
+                #expect(try Data(contentsOf: original) == originalData)
+                #expect(try Data(contentsOf: linked) == originalData)
+            }
+        }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: paths.root.path).allSatisfy { !$0.hasPrefix(".mi-export-") })
+        let separate = paths.root.appendingPathComponent("copy.wav")
+        try FileManager.default.copyItem(at: original, to: separate)
+        try await MeetingMediaExporter.export(tracks: [track], video: nil, paths: paths, format: .wav, to: separate)
+        #expect(try Data(contentsOf: original) == originalData)
+    }
+
     @Test func unfinishedPlayableVideoIsRecoveredAndMissingVideoIsMarkedFailed() async throws {
         let paths = try paths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
@@ -145,6 +173,7 @@ struct MediaTests {
         #expect(try db.video(meetingId: meeting.id) == video)
         #expect(try db.meetingDetail(id: meeting.id)?.video == video)
         #expect(try db.unfinishedVideos().count == 1)
+        try db.updateMeeting(id: meeting.id) { $0.status = .recorded }
         try db.deleteMeeting(id: meeting.id, paths: paths)
         #expect(try db.video(meetingId: meeting.id) == nil)
     }

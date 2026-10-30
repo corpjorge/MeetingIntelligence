@@ -11,30 +11,7 @@ struct CLIError: LocalizedError {
     var errorDescription: String? { message }
 }
 
-struct Arguments {
-    var positional: [String] = []
-    var options: [String: String] = [:]
-    var flags: Set<String> = []
-
-    init(_ raw: [String]) {
-        var i = 0
-        while i < raw.count {
-            let a = raw[i]
-            if a.hasPrefix("--") {
-                let key = String(a.dropFirst(2))
-                if i + 1 < raw.count, !raw[i + 1].hasPrefix("--") {
-                    options[key] = raw[i + 1]
-                    i += 1
-                } else {
-                    flags.insert(key)
-                }
-            } else {
-                positional.append(a)
-            }
-            i += 1
-        }
-    }
-}
+typealias Arguments = CommandLineArguments
 
 func printErr(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
 
@@ -69,7 +46,13 @@ struct MeetingIntelligenceCLI {
             exit(0)
         }
         raw.removeFirst()
-        let args = Arguments(raw)
+        let args: Arguments
+        do {
+            args = try Arguments(parsing: raw, specification: .mi)
+        } catch {
+            printErr("error: \(error.localizedDescription)\n\n\(usage)")
+            exit(2)
+        }
         do {
             let paths = AppPaths.resolveDefault()
             switch command {

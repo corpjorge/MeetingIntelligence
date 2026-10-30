@@ -19,7 +19,8 @@ extension AppDatabase {
     }
 
     /// Stores a finished question. Cited meetings are linked so deleting any of them removes the message.
-    public func appendChatMessage(_ message: ChatHistoryMessage, thread: ChatThread) throws {
+    @discardableResult
+    public func appendChatMessage(_ message: ChatHistoryMessage, thread: ChatThread) throws -> Bool {
         let encoder = JSONEncoder()
         let (key, meetingId) = Self.columns(thread)
         let record = ChatMessageRecord(
@@ -28,11 +29,16 @@ extension AppDatabase {
             scopeJSON: try message.scopeMeetingIds.map { try encoder.encode($0) },
             createdAt: message.createdAt)
         let cited = Set((message.answer?.excerpts ?? []).map(\.meetingId) + (message.answer?.citations ?? []).map(\.meetingId))
-        try writer.write { db in
+        let required = cited.union(meetingId.map { [$0] } ?? [])
+        return try writer.write { db in
+            for id in required where try !Meeting.exists(db, key: id) {
+                return false
+            }
             try record.insert(db)
-            for id in cited where try Meeting.exists(db, key: id) {
+            for id in cited {
                 try ChatMessageSourceRecord(chatMessageId: record.id, meetingId: id).insert(db)
             }
+            return true
         }
     }
 

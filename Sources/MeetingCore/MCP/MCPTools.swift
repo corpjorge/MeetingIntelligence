@@ -128,10 +128,10 @@ public struct MCPTools: Sendable {
 
     private func int(_ args: [String: Any], _ key: String, default value: Int, range: ClosedRange<Int>) throws -> Int {
         guard let raw = args[key] else { return value }
-        guard let number = raw as? NSNumber, !(raw is Bool), number.doubleValue == number.doubleValue.rounded() else {
+        guard let number = raw as? NSNumber, !Self.isJSONBoolean(raw), number.doubleValue == number.doubleValue.rounded() else {
             throw MCPToolError("'\(key)' debe ser un entero.")
         }
-        guard range.contains(number.intValue) else {
+        guard number.doubleValue >= Double(range.lowerBound), number.doubleValue <= Double(range.upperBound) else {
             throw MCPToolError("'\(key)' debe estar entre \(range.lowerBound) y \(range.upperBound).")
         }
         return number.intValue
@@ -139,10 +139,20 @@ public struct MCPTools: Sendable {
 
     private func double(_ args: [String: Any], _ key: String) throws -> Double? {
         guard let raw = args[key] else { return nil }
-        guard let number = raw as? NSNumber, !(raw is Bool), number.doubleValue >= 0 else {
+        guard let number = raw as? NSNumber, !Self.isJSONBoolean(raw), number.doubleValue >= 0 else {
             throw MCPToolError("'\(key)' debe ser un número ≥ 0.")
         }
         return number.doubleValue
+    }
+
+    private func bool(_ args: [String: Any], _ key: String, default value: Bool) throws -> Bool {
+        guard let raw = args[key] else { return value }
+        guard Self.isJSONBoolean(raw), let flag = raw as? Bool else { throw MCPToolError("'\(key)' debe ser true o false.") }
+        return flag
+    }
+
+    static func isJSONBoolean(_ value: Any) -> Bool {
+        CFGetTypeID(value as CFTypeRef) == CFBooleanGetTypeID()
     }
 
     private func stringArray(_ args: [String: Any], _ key: String) throws -> [String]? {
@@ -259,6 +269,7 @@ public struct MCPTools: Sendable {
                 SELECT p.id, p.displayName, p.email, p.role, p.isLocalUser, COUNT(DISTINCT s.meetingId) AS meetings
                 FROM participant p
                 JOIN transcriptSegment s ON s.participantId = p.id
+                JOIN transcript t ON t.id = s.transcriptId AND t.supersededAt IS NULL
                 WHERE s.meetingId IN (\(meetingIds.map { _ in "?" }.joined(separator: ",").nilIfEmpty ?? "NULL"))
                 GROUP BY p.id ORDER BY p.displayName
                 """, arguments: StatementArguments(meetingIds))
@@ -309,7 +320,7 @@ public struct MCPTools: Sendable {
 
     private func items(_ args: [String: Any], _ policy: MCPAccessPolicy, decisions: Bool) throws -> Output {
         let id = try string(args, "meeting_id")
-        let includeUnconfirmed = (args["include_unconfirmed"] as? Bool) ?? false
+        let includeUnconfirmed = try bool(args, "include_unconfirmed", default: false)
         let status = try string(args, "status") ?? "open"
         guard decisions || ["open", "completed", "all"].contains(status) else {
             throw MCPToolError("'status' debe ser open, completed o all.")

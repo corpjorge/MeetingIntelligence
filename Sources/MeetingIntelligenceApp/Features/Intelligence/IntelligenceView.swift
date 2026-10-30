@@ -77,7 +77,7 @@ struct ProvidersPane: View {
                 HStack {
                     InlineBanner(tone: .info, systemImage: "lock.shield",
                                  title: "Ejecutar un CLI en tu Mac no significa que el modelo sea local",
-                                 message: "Claude Code, Codex, Antigravity y GitHub Copilot envían el texto a la nube de su proveedor; la app te pide confirmación cada vez, salvo que la desactives para ese proveedor. Ollama procesa todo en este Mac. Los agentes se ejecutan sin herramientas ni permisos de sistema.")
+                                 message: "Claude Code, Codex, Antigravity y GitHub Copilot envían el texto a la nube de su proveedor; la app te pide confirmación cada vez, salvo que la desactives para ese proveedor. Ollama procesa en este Mac, salvo con modelos «cloud», que envían el texto a la nube de Ollama y también piden confirmación. Los agentes se ejecutan sin herramientas ni permisos de sistema.")
                 }
                 HStack {
                     Spacer()
@@ -107,15 +107,16 @@ struct ProviderCard: View {
 
     var body: some View {
         let status = env.ai.statuses[kind]
+        let remote = env.ai.sendsDataToRemoteService(kind)
         SurfaceCard {
             VStack(alignment: .leading, spacing: DS.Space.m) {
                 HStack(spacing: DS.Space.m) {
-                    Image(systemName: kind.sendsDataToRemoteService ? "cloud" : "desktopcomputer")
+                    Image(systemName: remote ? "cloud" : "desktopcomputer")
                         .frame(width: DS.Size.iconTile, height: DS.Size.iconTile)
                         .background(DS.Color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.Radius.s))
                     VStack(alignment: .leading, spacing: DS.Space.xxs) {
-                        Text(kind.displayName).font(DS.Font.headline)
-                        Text(kind.sendsDataToRemoteService ? "Modelo en la nube del proveedor" : "Modelo local")
+                        Text(ProviderLabel.name(kind)).font(DS.Font.headline)
+                        Text(remote ? "Modelo en la nube del proveedor" : "Modelo local")
                             .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
                     }
                     Spacer()
@@ -134,7 +135,7 @@ struct ProviderCard: View {
                         Label(note, systemImage: "info.circle").font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
                     }
                 }
-                if kind.sendsDataToRemoteService {
+                if remote {
                     Toggle("Confirmar antes de enviar (con el resumen de lo que se comparte)", isOn: Binding(
                         get: { env.ai.asksConsent(for: kind) }, set: { env.ai.setAsksConsent($0, for: kind) }))
                         .font(DS.Font.callout)
@@ -150,7 +151,7 @@ struct ProviderCard: View {
                                 save()
                             })) {
                                 Text(kind == .copilotCLI ? "Automático" : "Predeterminado").tag("")
-                                ForEach(models, id: \.self) { Text($0).tag($0) }
+                                ForEach(models, id: \.self) { Text(ProviderLabel.model($0, for: kind)).tag($0) }
                             }
                             .frame(maxWidth: DS.Layout.Control.fieldMaxWidth)
                         } else {
@@ -236,8 +237,8 @@ struct AnalysisHistoryPane: View {
                                 }
                                 Spacer()
                                 VStack(alignment: .trailing, spacing: DS.Space.xxs) {
-                                    StatusPill(text: analysis.status.rawValue,
-                                               tone: analysis.status == .succeeded ? .success : (analysis.status == .running ? .accent : .danger))
+                                    StatusPill(text: AnalysisStatusLabel.text(analysis.status),
+                                               tone: AnalysisStatusLabel.tone(analysis.status))
                                     Text(analysis.startedAt.formatted(date: .abbreviated, time: .shortened)).font(DS.Font.caption)
                                     if let d = analysis.durationSeconds { Text(String(format: "%.1f s", d)).font(DS.Font.mono) }
                                 }

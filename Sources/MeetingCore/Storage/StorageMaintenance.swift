@@ -44,20 +44,35 @@ public enum StorageMaintenance {
 
     /// `Recordings/<id>` folders whose meeting no longer exists (e.g. a crash between the
     /// database delete and the file delete).
-    public static func removeOrphanedRecordings(database: AppDatabase, paths: AppPaths) throws -> StorageCleanupReport {
+    public static func removeOrphanedRecordings(database: AppDatabase, paths: AppPaths, now: Date = Date(),
+                                                minimumAge: TimeInterval = 3600) throws -> StorageCleanupReport {
         let fm = FileManager.default
-        guard let folders = try? fm.contentsOfDirectory(at: paths.recordingsDirectory, includingPropertiesForKeys: nil) else {
-            return StorageCleanupReport(removedItems: 0, freedBytes: 0)
+        var report = StorageCleanupReport(removedItems: 0, freedBytes: 0)
+        guard let folders = try? fm.contentsOfDirectory(at: paths.recordingsDirectory,
+                                                        includingPropertiesForKeys: [.contentModificationDateKey]) else {
+            return report
         }
         let known = Set(try database.reader.read { db in try String.fetchAll(db, sql: "SELECT id FROM meeting") })
-        var report = StorageCleanupReport(removedItems: 0, freedBytes: 0)
+        guard !known.isEmpty else { return report }
         for folder in folders where folder.hasDirectoryPath && !known.contains(folder.lastPathComponent) {
+            guard let modified = latestModification(of: folder), now.timeIntervalSince(modified) >= minimumAge else { continue }
             let bytes = size(of: folder)
             try fm.removeItem(at: folder)
             report.removedItems += 1
             report.freedBytes += bytes
         }
         return report
+    }
+
+    static func latestModification(of url: URL) -> Date? {
+        let key = URLResourceKey.contentModificationDateKey
+        guard var latest = try? url.resourceValues(forKeys: [key]).contentModificationDate else { return nil }
+        let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [key])
+        while let item = enumerator?.nextObject() as? URL {
+            guard let modified = try? item.resourceValues(forKeys: [key]).contentModificationDate else { return nil }
+            latest = max(latest, modified)
+        }
+        return latest
     }
 
     /// Leftover temporary files of this app older than `age` (normally removed right after use).

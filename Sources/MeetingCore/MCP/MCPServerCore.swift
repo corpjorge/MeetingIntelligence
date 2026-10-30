@@ -32,13 +32,16 @@ public final class MCPServerCore: @unchecked Sendable {
 
     /// Handles one decoded JSON-RPC message. Returns the response object, or nil for notifications.
     public func handle(_ message: [String: Any]) -> [String: Any]? {
-        let id = message["id"]
+        guard message.keys.contains("id") else {
+            return message["method"] is String ? nil : error(nil, code: -32600, message: "Invalid Request")
+        }
+        guard let id = Self.requestID(message["id"]) else {
+            return error(nil, code: -32600, message: "Invalid Request")
+        }
         guard let method = message["method"] as? String else {
-            return id == nil ? nil : error(id, code: -32600, message: "Invalid Request")
+            return error(id, code: -32600, message: "Invalid Request")
         }
         let params = message["params"] as? [String: Any] ?? [:]
-        let isNotification = id == nil || id is NSNull
-        if isNotification { return nil } // notifications/initialized, cancelled, …
 
         // Modern request: version in _meta.
         let meta = params["_meta"] as? [String: Any]
@@ -115,6 +118,13 @@ public final class MCPServerCore: @unchecked Sendable {
         return ["jsonrpc": "2.0", "id": id ?? NSNull(), "error": err]
     }
 
+    static func requestID(_ raw: Any?) -> Any? {
+        if let text = raw as? String { return text }
+        guard let number = raw as? NSNumber, !MCPTools.isJSONBoolean(number),
+              number.doubleValue == number.doubleValue.rounded() else { return nil }
+        return number
+    }
+
     /// Processes one line of newline-delimited JSON (stdio framing).
     public func handleLine(_ line: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -123,8 +133,12 @@ public final class MCPServerCore: @unchecked Sendable {
               let object = try? JSONSerialization.jsonObject(with: data) else {
             return Self.encode(error(nil, code: -32700, message: "Parse error"))
         }
-        if let batch = object as? [[String: Any]] {
-            let responses = batch.compactMap { handle($0) }
+        if let batch = object as? [Any] {
+            guard !batch.isEmpty else { return Self.encode(error(nil, code: -32600, message: "Invalid Request")) }
+            let responses = batch.compactMap { entry -> [String: Any]? in
+                guard let message = entry as? [String: Any] else { return error(nil, code: -32600, message: "Invalid Request") }
+                return handle(message)
+            }
             return responses.isEmpty ? nil : Self.encode(responses)
         }
         guard let message = object as? [String: Any] else {

@@ -25,6 +25,13 @@ public enum TextNormalization {
         comparable(text).split(separator: " ").map(String.init)
     }
 
+    public static func matchesWordPrefixes(_ text: String, query: String) -> Bool {
+        let wanted = tokens(query)
+        guard !wanted.isEmpty else { return true }
+        let words = tokens(text)
+        return wanted.allSatisfy { prefix in words.contains { $0.hasPrefix(prefix) } }
+    }
+
     /// Spanish + English function words ignored when turning questions into search terms.
     public static let stopwords: Set<String> = [
         // Spanish

@@ -30,6 +30,8 @@ final class ModelUpdateController {
     private(set) var unusedFolders: [UnusedModelFolder] = []
     private(set) var lastChecked: Date?
     private(set) var isChecking = false
+    private(set) var updatingIds: Set<String> = []
+    var blockedReason: String?
 
     private let asr: ParakeetUltraProvider
     private let diarizer: DiarizationService
@@ -58,6 +60,8 @@ final class ModelUpdateController {
          semantic.managedModel]
     }
 
+    var isUpdating: Bool { !updatingIds.isEmpty }
+
     /// FluidAudio's shared cache (`…/FluidAudio/Models`).
     var fluidAudioModelsDirectory: URL { asr.cacheDirectory.deletingLastPathComponent() }
 
@@ -70,8 +74,16 @@ final class ModelUpdateController {
     func refreshInventory() {
         let previous = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0.state) })
         rows = models.map { model in
-            Row(model: model, bytes: StorageMaintenance.size(of: model.directory),
-                state: model.isInstalled ? (previous[model.id] ?? .unchecked) : .notInstalled)
+            let state: State = if updatingIds.contains(model.id), let current = previous[model.id] {
+                current
+            } else if !model.isInstalled {
+                .notInstalled
+            } else if let current = previous[model.id], current != .notInstalled {
+                current
+            } else {
+                .unchecked
+            }
+            return Row(model: model, bytes: StorageMaintenance.size(of: model.directory), state: state)
         }
         let used = Set([asr.managedModel.directory, diarizer.managedModel.directory,
                         booster.managedModel(inUse: true).directory])
@@ -79,69 +91,113 @@ final class ModelUpdateController {
     }
 
     func checkForUpdates() async {
-        guard !isChecking else { return }
+        guard !isChecking, !isUpdating else { return }
         isChecking = true
         defer { isChecking = false }
         refreshInventory()
-        for row in rows where row.state != .notInstalled {
+        for row in rows where row.model.isInstalled && !updatingIds.contains(row.id) {
             set(row.id, .checking)
+            let state: State
             do {
-                switch try await installer.check(row.model) {
-                case .notInstalled: set(row.id, .notInstalled)
-                case .upToDate(let revision): set(row.id, .upToDate(revision))
-                case .updateAvailable(let plan): set(row.id, .available(plan))
-                case .pinned(let revision): set(row.id, .pinned(revision))
+                state = switch try await installer.check(row.model) {
+                case .notInstalled: .notInstalled
+                case .upToDate(let revision): .upToDate(revision)
+                case .updateAvailable(let plan): .available(plan)
+                case .pinned(let revision): .pinned(revision)
                 }
             } catch {
-                set(row.id, .failed(error.localizedDescription))
+                state = .failed(error.localizedDescription)
             }
+            if !updatingIds.contains(row.id) { set(row.id, state) }
         }
         lastChecked = Date()
     }
 
     /// Why an update cannot start now, or nil.
     var busyReason: String? {
-        if recording.state == .recording { return "se graba una reunión" }
+        if let blockedReason { return blockedReason }
+        if isUpdating { return "se actualiza otro modelo" }
+        return activityReason
+    }
+
+    private var activityReason: String? {
+        if recording.isActive { return "se graba una reunión" }
         if processing.active != nil || !processing.queue.isEmpty { return "se procesa una reunión" }
         return nil
     }
 
     func update(_ id: String) async {
-        guard let row = rows.first(where: { $0.id == id }), case .available(let plan) = row.state else { return }
+        guard !updatingIds.contains(id), let row = rows.first(where: { $0.id == id }),
+              case .available(let plan) = row.state else { return }
         if let busyReason {
             set(id, .failed(ModelInstallError.busy(busyReason).localizedDescription))
             return
         }
         let model = row.model
+        guard let lease = acquireLease(for: model) else { return }
+        defer { lease.release() }
+        updatingIds.insert(id)
+        defer { updatingIds.remove(id) }
         set(id, .updating(0))
+        let report: @MainActor @Sendable (Double?) -> Void = { [weak self] fraction in
+            guard let self, case .updating(.some(_)) = self.rows.first(where: { $0.id == id })?.state else { return }
+            self.set(id, .updating(fraction))
+        }
         do {
             let staging = try await installer.stage(model, plan: plan) { done, total in
-                Task { @MainActor [weak self] in
-                    self?.set(id, .updating(total > 0 ? Double(done) / Double(total) : nil))
-                }
+                let fraction = total > 0 ? Double(done) / Double(total) : nil
+                Task { @MainActor in report(fraction) }
             }
-            await unload(model.id)
-            try installer.swapIn(model, staging: staging)
-            do {
-                set(id, .updating(nil))
-                try await verify(model.id)
-                installer.commit(model)
-                set(id, .upToDate(plan.revision))
-                logger.notice("Updated \(model.id, privacy: .public) to \(plan.revision, privacy: .public)")
-            } catch {
-                try installer.rollback(model)
-                await unload(model.id)
-                set(id, .failed("La versión nueva no cargó; se restauró la anterior. \(error.localizedDescription)"))
-            }
+            try await install(model, plan: plan, staging: staging)
         } catch {
             set(id, .failed(error.localizedDescription))
         }
         refreshInventory()
     }
 
+    private func acquireLease(for model: ManagedModel) -> ModelUpdateLease? {
+        do {
+            return try installer.beginUpdate(model)
+        } catch let error as ModelInstallError {
+            set(model.id, .failed(error.localizedDescription))
+        } catch {
+            set(model.id, .failed("No se pudo reservar el modelo para modificarlo: \(error.localizedDescription)"))
+        }
+        return nil
+    }
+
+    private func install(_ model: ManagedModel, plan: ModelUpdatePlan, staging: URL) async throws {
+        if let reason = activityReason {
+            try? FileManager.default.removeItem(at: staging)
+            throw ModelInstallError.busy(reason)
+        }
+        processing.suspendStarts()
+        defer { processing.resumeStarts() }
+        await unload(model.id)
+        if recording.isActive {
+            try? FileManager.default.removeItem(at: staging)
+            throw ModelInstallError.busy("se graba una reunión")
+        }
+        try installer.swapIn(model, staging: staging)
+        set(model.id, .updating(nil))
+        do {
+            try await verify(model.id)
+        } catch {
+            try installer.rollback(model)
+            await unload(model.id)
+            set(model.id, .failed("La versión nueva no cargó; se restauró la anterior. \(error.localizedDescription)"))
+            return
+        }
+        installer.commit(model)
+        set(model.id, .upToDate(plan.revision))
+        logger.notice("Updated \(model.id, privacy: .public) to \(plan.revision, privacy: .public)")
+    }
+
     /// Deletes a model the app does not use (it downloads again if the feature is turned on).
     func deleteUnusedModel(_ id: String) async {
-        guard let model = models.first(where: { $0.id == id }), model.unusedReason != nil else { return }
+        guard !updatingIds.contains(id), let model = models.first(where: { $0.id == id }), model.unusedReason != nil,
+              model.isInstalled, let lease = acquireLease(for: model) else { return }
+        defer { lease.release() }
         await unload(id)
         do {
             try FileManager.default.removeItem(at: model.directory)

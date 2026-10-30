@@ -103,7 +103,19 @@ struct MenuBarContent: View {
     }
 
     private func showMainWindow() {
-        openWindow(id: "main")
+        if let window = Self.mainWindow() {
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.makeKeyAndOrderFront(nil)
+        } else {
+            openWindow(id: "main")
+        }
         NSApp.activate()
+    }
+
+    static func mainWindow() -> NSWindow? {
+        NSApp.windows.first { window in
+            window.identifier?.rawValue.hasPrefix("main") == true && !(window is NSPanel)
+                && (window.isVisible || window.isMiniaturized)
+        }
     }
 }

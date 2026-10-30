@@ -20,7 +20,7 @@ struct AIProviderControls: View {
         @Bindable var ai = env.ai
         return Picker("Proveedor", selection: $ai.selectedProvider) {
             ForEach(AIProviderKind.allCases) { kind in
-                Text(kind.displayName + (kind.sendsDataToRemoteService ? " · nube" : " · local")).tag(kind)
+                Text("\(ProviderLabel.name(kind)) · \(env.ai.sendsDataToRemoteService(kind) ? "nube" : "local")").tag(kind)
             }
         }
         .frame(width: DS.Layout.Control.pickerWideWidth)
@@ -47,7 +47,7 @@ struct AIProviderControls: View {
                 Text(env.ai.selectedProvider == .copilotCLI ? "Automático"
                      : env.ai.selectedProvider == .ollama ? "Seleccionar modelo" : "Predeterminado").tag("")
                 ForEach(env.ai.modelChoices(for: env.ai.selectedProvider), id: \.self) { model in
-                    Text(model).tag(model)
+                    Text(ProviderLabel.model(model, for: env.ai.selectedProvider)).tag(model)
                 }
             }
             .frame(width: DS.Layout.Control.pickerWidth)
@@ -83,4 +83,14 @@ struct AIProviderControls: View {
         }
     }
 
+}
+
+enum ProviderLabel {
+    static func name(_ kind: AIProviderKind) -> String {
+        kind == .ollama ? "Ollama" : kind.displayName
+    }
+
+    static func model(_ model: String, for kind: AIProviderKind) -> String {
+        kind == .ollama && OllamaProvider.isCloudModel(model) ? "\(model) · nube" : model
+    }
 }

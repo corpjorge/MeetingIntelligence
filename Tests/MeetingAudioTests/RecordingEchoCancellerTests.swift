@@ -121,7 +121,62 @@ struct RecordingEchoCancellerTests {
         }
         canceller.finish()
         #expect(output == input)
-        #expect(warnings == 1)
+        #expect(warnings == 0)
+    }
+
+    @Test func microphoneStartingBeforeTheFirstReferenceDoesNotWarn() throws {
+        let canceller = try RecordingEchoCanceller(sampleRate: rate)
+        let reference = speech(seed: 9, count: rate * 3)
+        let microphone = zip(roomEcho(reference), speech(seed: 8, count: reference.count)).map(+)
+        var output: [Float] = [], warnings = 0
+        canceller.onOutput = { output += $0 }
+        canceller.onMissingReference = { warnings += 1 }
+        let late = rate * 8 / 10
+        for start in stride(from: 0, to: late, by: 320) {
+            canceller.appendMicrophone(Array(microphone[start..<min(late, start + 320)]))
+        }
+        canceller.appendReference([Float](repeating: 0, count: late))
+        for start in stride(from: late, to: microphone.count, by: 320) {
+            let end = min(microphone.count, start + 320)
+            canceller.appendReference(Array(reference[start..<end]))
+            canceller.appendMicrophone(Array(microphone[start..<end]))
+        }
+        canceller.finish()
+        #expect(output.count == microphone.count)
+        #expect(warnings == 0)
+    }
+
+    @Test func referenceLossWarnsOnceAndRearmsAfterTheReferenceReturns() throws {
+        let canceller = try RecordingEchoCanceller(sampleRate: rate)
+        let reference = speech(seed: 6, count: rate * 10)
+        let microphone = zip(roomEcho(reference), speech(seed: 5, count: reference.count)).map(+)
+        var output: [Float] = [], warnings = 0, recoveries = 0
+        canceller.onOutput = { output += $0 }
+        canceller.onMissingReference = { warnings += 1 }
+        canceller.onReferenceRecovered = { recoveries += 1 }
+        func feed(_ range: Range<Int>, reference available: Bool) {
+            for start in stride(from: range.lowerBound, to: range.upperBound, by: 320) {
+                let end = min(range.upperBound, start + 320)
+                if available { canceller.appendReference(Array(reference[start..<end])) }
+                canceller.appendMicrophone(Array(microphone[start..<end]))
+            }
+        }
+        let gap = [Float](repeating: 0, count: rate * 2)
+        feed(0..<rate * 2, reference: true)
+        #expect(warnings == 0 && recoveries == 0)
+        feed(rate * 2..<rate * 4, reference: false)
+        #expect(warnings == 1 && recoveries == 0)
+        canceller.appendReference(gap)
+        feed(rate * 4..<rate * 6, reference: true)
+        #expect(warnings == 1 && recoveries == 1)
+        feed(rate * 6..<rate * 8, reference: false)
+        #expect(warnings == 2 && recoveries == 1)
+        canceller.appendReference(gap)
+        feed(rate * 8..<rate * 10, reference: true)
+        canceller.finish()
+        #expect(warnings == 2 && recoveries == 2)
+        #expect(output.count == microphone.count)
+        #expect(Array(output[rate * 5 / 2..<rate * 17 / 5]) == Array(microphone[rate * 5 / 2..<rate * 17 / 5]))
     }
 
     @Test(arguments: [0, 113])

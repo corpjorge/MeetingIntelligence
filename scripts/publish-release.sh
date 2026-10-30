@@ -20,6 +20,9 @@ for asset in "${ASSETS[@]}"; do
   [[ -f "$asset" ]] || { echo "Falta $asset: ejecuta scripts/package-release.sh." >&2; exit 1; }
 done
 [[ -z "$(git status --porcelain)" ]] || { echo "Hay cambios sin confirmar." >&2; exit 1; }
+[[ -f dist/SOURCE_TREE ]] || { echo "Falta dist/SOURCE_TREE: ejecuta scripts/package-release.sh." >&2; exit 1; }
+[[ "$(<dist/SOURCE_TREE)" == "$(git rev-parse 'HEAD^{tree}')" ]] \
+  || { echo "dist/ no se empaquetó desde este commit: ejecuta scripts/package-release.sh otra vez." >&2; exit 1; }
 git fetch --quiet origin
 [[ "$(git rev-parse HEAD)" == "$(git rev-parse '@{u}')" ]] || { echo "Sube primero la rama (git push)." >&2; exit 1; }
 if gh release view "v$VERSION" >/dev/null 2>&1; then echo "Ya existe el release v$VERSION." >&2; exit 1; fi

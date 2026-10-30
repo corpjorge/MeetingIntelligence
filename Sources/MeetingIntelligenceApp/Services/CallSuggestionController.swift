@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import MeetingAudio
+import Observation
 import OSLog
 import UserNotifications
 
@@ -16,6 +17,8 @@ final class CallSuggestionController {
     private(set) var startSuggestion: AppAudioActivity?
     /// "Parece que la llamada de <App> terminó — ¿Detener?"
     private(set) var endSuggestion: AudioAppSelector?
+    private var endSuggestionMeetingId: String?
+    private var trackedMeetingId: String?
 
     private let monitor = CallMonitor()
     private let settings: AppSettings
@@ -28,6 +31,7 @@ final class CallSuggestionController {
     init(settings: AppSettings, recording: RecordingController) {
         self.settings = settings
         self.recording = recording
+        trackRecording()
     }
 
     func start(requestNotifications: Bool = true) {
@@ -68,13 +72,17 @@ final class CallSuggestionController {
             activeCalls.removeAll { $0.id == app.groupKey }
             if startSuggestion?.id == app.groupKey { startSuggestion = nil }
             notifications.remove(id: "call-start-\(app.groupKey)")
-            guard settings.suggestStop, recording.isActive, recording.recordingApp?.groupKey == app.groupKey else { return }
+            guard settings.suggestStop, recording.isActive, recording.recordingApp?.groupKey == app.groupKey,
+                  let meetingId = recording.meeting?.id else { return }
+            clearEndSuggestion()
             endSuggestion = app
+            endSuggestionMeetingId = meetingId
             if settings.systemNotifications {
                 let detail = reason == .appClosed ? "\(app.name) se cerró." : "\(app.name) dejó de usar el micrófono."
-                notifications.post(id: "call-end-\(app.groupKey)", title: "Parece que la llamada terminó",
+                notifications.post(id: Self.endNotificationId(app.groupKey), title: "Parece que la llamada terminó",
                                    body: "\(detail) ¿Detener y guardar la grabación?",
-                                   category: NotificationBridge.endCategory, userInfo: ["app": app.groupKey])
+                                   category: NotificationBridge.endCategory,
+                                   userInfo: ["app": app.groupKey, "meeting": meetingId])
             }
         }
     }
@@ -106,29 +114,86 @@ final class CallSuggestionController {
     }
 
     func stopRecordingFromSuggestion() {
-        endSuggestion = nil
-        recording.stop()
+        guard let app = endSuggestion, let meetingId = endSuggestionMeetingId else { return }
+        clearEndSuggestion()
+        stopIfCurrent(app: app.groupKey, meetingId: meetingId)
     }
 
     func keepRecording() {
-        if let app = endSuggestion { notifications.remove(id: "call-end-\(app.groupKey)") }
-        endSuggestion = nil
+        clearEndSuggestion()
     }
 
-    private func handleNotification(_ action: NotificationBridge.Action) {
+    func handleNotification(_ action: NotificationBridge.Action) {
         switch action {
         case .record: acceptStart()
         case .ignore(let id): ignoreApp(id)
-        case .stop: stopRecordingFromSuggestion()
-        case .keep: keepRecording()
+        case .stop(let app, let meetingId):
+            if endSuggestionMeetingId == meetingId { clearEndSuggestion() }
+            guard let meetingId, stopIfCurrent(app: app, meetingId: meetingId) else {
+                notifications.remove(id: Self.endNotificationId(app))
+                NSApp.activate()
+                return
+            }
+        case .keep(let app, let meetingId):
+            if endSuggestionMeetingId == meetingId { clearEndSuggestion() }
+            notifications.remove(id: Self.endNotificationId(app))
         case .open: NSApp.activate()
         }
     }
+
+    @discardableResult
+    private func stopIfCurrent(app: String, meetingId: String) -> Bool {
+        guard recording.isActive, recording.meeting?.id == meetingId, recording.recordingApp?.groupKey == app else {
+            logger.notice("Ignored a stop suggestion for a recording that is no longer active")
+            return false
+        }
+        recording.stop()
+        return true
+    }
+
+    private func clearEndSuggestion() {
+        if let app = endSuggestion { notifications.remove(id: Self.endNotificationId(app.groupKey)) }
+        endSuggestion = nil
+        endSuggestionMeetingId = nil
+    }
+
+    private func trackRecording() {
+        let current = withObservationTracking {
+            recording.isActive ? recording.meeting?.id : nil
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.trackRecording() }
+        }
+        recordingChanged(to: current)
+    }
+
+    private func recordingChanged(to meetingId: String?) {
+        defer { trackedMeetingId = meetingId }
+        if endSuggestion != nil, endSuggestionMeetingId != meetingId { clearEndSuggestion() }
+        if meetingId != nil, trackedMeetingId != meetingId { dismissStart() }
+    }
+
+    private static func endNotificationId(_ groupKey: String) -> String { "call-end-\(groupKey)" }
 }
 
 /// Wraps UNUserNotificationCenter (delegate callbacks arrive off the main actor).
 final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
-    enum Action { case record, ignore(String), stop, keep, open }
+    nonisolated enum Action: Sendable, Equatable {
+        case record
+        case ignore(String)
+        case stop(app: String, meeting: String?)
+        case keep(app: String, meeting: String?)
+        case open
+
+        init(identifier: String, app: String, meeting: String?) {
+            self = switch identifier {
+            case "RECORD": .record
+            case "IGNORE": .ignore(app)
+            case "STOP": .stop(app: app, meeting: meeting)
+            case "KEEP": .keep(app: app, meeting: meeting)
+            default: .open
+            }
+        }
+    }
 
     static let startCategory = "CALL_START"
     static let endCategory = "CALL_END"
@@ -168,26 +233,21 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate, @unc
     }
 
     func remove(id: String) {
+        center?.removePendingNotificationRequests(withIdentifiers: [id])
         center?.removeDeliveredNotifications(withIdentifiers: [id])
     }
 
-    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
-                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                            withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .sound])
     }
 
-    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
-                                withCompletionHandler completionHandler: @escaping () -> Void) {
-        let app = response.notification.request.content.userInfo["app"] as? String ?? ""
-        let action: Action = switch response.actionIdentifier {
-        case "RECORD": .record
-        case "IGNORE": .ignore(app)
-        case "STOP": .stop
-        case "KEEP": .keep
-        default: .open
-        }
-        let handler = onAction
-        Task { @MainActor in handler?(action) }
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completionHandler: @escaping () -> Void) {
+        let userInfo = response.notification.request.content.userInfo
+        let action = Action(identifier: response.actionIdentifier, app: userInfo["app"] as? String ?? "",
+                            meeting: userInfo["meeting"] as? String)
+        Task { @MainActor [weak self] in self?.onAction?(action) }
         completionHandler()
     }
 }

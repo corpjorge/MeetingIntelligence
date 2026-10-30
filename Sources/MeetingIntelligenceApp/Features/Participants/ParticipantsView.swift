@@ -326,8 +326,12 @@ struct ParticipantDetailView: View {
                             .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
                         Spacer()
                         Button("Separar") {
-                            try? env.database.undoParticipantMerge(eventId: merge.id)
-                            message = (.success, "Participante separado. Las muestras de voz fusionadas permanecen en este perfil.")
+                            do {
+                                try env.database.undoParticipantMerge(eventId: merge.id)
+                                message = (.success, "Participante separado. Las muestras de voz fusionadas permanecen en este perfil.")
+                            } catch {
+                                message = (.danger, "No se pudo separar el participante: \(error.localizedDescription)")
+                            }
                         }
                         .buttonStyle(.ds(.secondary, size: .small))
                     }
@@ -398,8 +402,14 @@ struct EnrollmentSheet: View {
     @State private var elapsed: Double = 0
     @State private var level = AudioLevel.silence
     @State private var showImporter = false
+    @State private var initialized = false
+    @State private var recordingTask: Task<Void, Never>?
+    @State private var levelTask: Task<Void, Never>?
+    @State private var enrollTask: Task<Void, Never>?
 
     enum Phase: Equatable { case idle, recording, processing, failed(String) }
+
+    static let retentionOptions = [90, 180, 365]
 
     static let readingText = """
     Hoy revisamos el estado del proyecto. El equipo de backend terminó el servicio de viabilidad inicial y \
@@ -422,9 +432,12 @@ struct EnrollmentSheet: View {
             TextField("Detalle del consentimiento (cómo y cuándo se otorgó)", text: $statement).textFieldStyle(.roundedBorder)
             Picker("Conservación", selection: $retentionDays) {
                 Text("Hasta que se elimine").tag(Int?.none)
-                Text("90 días sin uso").tag(Int?.some(90))
-                Text("180 días sin uso").tag(Int?.some(180))
-                Text("365 días sin uso").tag(Int?.some(365))
+                ForEach(Self.retentionOptions, id: \.self) { days in
+                    Text("\(days) días sin uso").tag(Int?.some(days))
+                }
+                if let days = retentionDays, !Self.retentionOptions.contains(days) {
+                    Text("\(days) días sin uso").tag(Int?.some(days))
+                }
             }
             Divider()
             switch phase {
@@ -457,7 +470,14 @@ struct EnrollmentSheet: View {
         }
         .padding(DS.Space.xl)
         .frame(width: DS.Layout.Sheet.xl)
-        .onAppear { statement = existingProfile?.consentStatement ?? "Autorización verbal otorgada el \(Date().formatted(date: .long, time: .omitted))" }
+        .interactiveDismissDisabled(phase == .recording || phase == .processing)
+        .onAppear {
+            guard !initialized else { return }
+            initialized = true
+            statement = existingProfile?.consentStatement ?? "Autorización verbal otorgada el \(Date().formatted(date: .long, time: .omitted))"
+            retentionDays = existingProfile?.retentionDays
+        }
+        .onDisappear { stopAndDiscard() }
         .fileImporter(isPresented: $showImporter, allowedContentTypes: [.audio]) { result in
             if case .success(let url) = result { enroll(url: url, temporary: false) }
         }
@@ -470,64 +490,98 @@ struct EnrollmentSheet: View {
 
     private func startRecording() {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mi-enroll-\(UUID().uuidString)")
-        Task {
+        recordingTask?.cancel()
+        recordingTask = Task {
             if !RecordingSession.microphonePermissionGranted() {
-                guard await RecordingSession.requestMicrophonePermission() else {
+                let granted = await RecordingSession.requestMicrophonePermission()
+                guard !Task.isCancelled else { return }
+                guard granted else {
                     phase = .failed(CaptureError.microphonePermissionDenied.localizedDescription); return
                 }
             }
+            guard !Task.isCancelled, self.session == nil else { return }
             let session = RecordingSession(configuration: RecordingConfiguration(directory: dir, remoteTarget: .none))
             do {
                 try session.start()
-                self.session = session
-                phase = .recording
-                Task {
-                    for await event in session.events {
-                        if case .level(_, let l) = event { level = l }
-                    }
-                }
-                while phase == .recording {
-                    elapsed = session.elapsed
-                    try? await Task.sleep(for: .milliseconds(200))
-                }
             } catch {
+                try? FileManager.default.removeItem(at: dir)
                 phase = .failed(error.localizedDescription)
+                return
+            }
+            self.session = session
+            elapsed = 0
+            phase = .recording
+            levelTask = Task {
+                for await event in session.events {
+                    if case .level(_, let l) = event { level = l }
+                }
+            }
+            while !Task.isCancelled, phase == .recording {
+                elapsed = session.elapsed
+                try? await Task.sleep(for: .milliseconds(200))
             }
         }
     }
 
     private func finishRecording() {
         guard let session else { return }
+        stopTasks()
         let result = session.stop()
         self.session = nil
-        guard let url = result.tracks.first?.url else { phase = .failed("No se grabó audio."); return }
+        guard let url = result.tracks.first?.url else {
+            try? FileManager.default.removeItem(at: session.configuration.directory)
+            phase = .failed("No se grabó audio.")
+            return
+        }
         enroll(url: url, temporary: true)
     }
 
     private func enroll(url: URL, temporary: Bool) {
         phase = .processing
-        Task {
+        let recognizer = env.recognizer
+        let participant = self.participant
+        let statement = self.statement
+        let retentionDays = self.retentionDays
+        enrollTask?.cancel()
+        enrollTask = Task {
             let accessing = url.startAccessingSecurityScopedResource()
             defer {
                 if accessing { url.stopAccessingSecurityScopedResource() }
                 if temporary { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
             }
             do {
-                try await env.recognizer.enroll(participantId: participant.id, audioURL: url,
-                                                consentStatement: statement, retentionDays: retentionDays)
+                try await recognizer.enroll(participantId: participant.id, audioURL: url,
+                                            consentStatement: statement, retentionDays: retentionDays)
                 onFinish((.success, "Muestra de voz registrada para \(participant.displayName)."))
-                dismiss()
+                if !Task.isCancelled { dismiss() }
             } catch {
+                guard !Task.isCancelled else { return }
                 phase = .failed(error.localizedDescription)
             }
         }
     }
 
     private func cancel() {
-        if let session {
-            let result = session.stop()
-            if let dir = result.tracks.first?.url.deletingLastPathComponent() { try? FileManager.default.removeItem(at: dir) }
-        }
+        stopAndDiscard()
         dismiss()
+    }
+
+    private func stopTasks() {
+        recordingTask?.cancel()
+        recordingTask = nil
+        levelTask?.cancel()
+        levelTask = nil
+    }
+
+    private func stopAndDiscard() {
+        stopTasks()
+        enrollTask?.cancel()
+        enrollTask = nil
+        if let session {
+            _ = session.stop()
+            try? FileManager.default.removeItem(at: session.configuration.directory)
+            self.session = nil
+        }
+        phase = .idle
     }
 }

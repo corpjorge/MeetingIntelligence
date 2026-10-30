@@ -35,12 +35,21 @@ public struct ClaudeCodeProvider: AIProvider {
 
     /// Never includes flags that bypass permissions; tools are disabled entirely.
     static func arguments(for request: AIRequest) -> [String] {
-        var args = ["-p", "--output-format", "json", "--json-schema", request.jsonSchema,
+        var args = ["-p", "--safe-mode", "--output-format", "json", "--json-schema", request.jsonSchema,
                     "--tools", "", "--strict-mcp-config", "--no-session-persistence",
                     "--permission-mode", "dontAsk", "--system-prompt", request.instructions]
         if let model = request.model, !model.isEmpty { args += ["--model", model] }
         if let effort = request.effort, effortLevels.contains(effort) { args += ["--effort", effort] }
         return args
+    }
+
+    static let safeModeMissing = "esta versión de Claude Code no permite desactivar CLAUDE.md, hooks, plugins ni servidores MCP "
+        + "del usuario (--safe-mode); no se envió nada. Actualiza Claude Code."
+
+    static func requireSafeMode(executable: URL, environment: [String: String]) async throws {
+        guard try await ClaudeSafeModeCache.shared.supportsSafeMode(executable: executable, environment: environment) else {
+            throw AIProviderError.failed(.claudeCode, safeModeMissing)
+        }
     }
 
     public func detect(configuration: AIProviderConfiguration) async -> ProviderStatus {
@@ -53,6 +62,11 @@ public struct ClaudeCodeProvider: AIProvider {
                                     models: ["sonnet", "opus", "haiku"],
                                     notes: ["Se ejecuta localmente, pero el modelo de Anthropic procesa los datos en la nube."])
         status.effortLevels = Self.effortLevels
+        do {
+            try await Self.requireSafeMode(executable: exe, environment: env)
+        } catch let error as AIProviderError {
+            status.notes.append(error.localizedDescription)
+        } catch {}
         if let result = try? await ProcessRunner.run(executable: exe, arguments: ["auth", "status", "--json"],
                                                      environment: env, timeout: 20),
            let json = try? JSONSerialization.jsonObject(with: result.stdout) as? [String: Any] {
@@ -68,12 +82,15 @@ public struct ClaudeCodeProvider: AIProvider {
         guard let exe = await ToolEnvironment.shared.locate("claude", configuredPath: configuration.executablePath) else {
             throw AIProviderError.notInstalled(kind)
         }
+        let env = await ToolEnvironment.shared.environment()
+        try await Self.requireSafeMode(executable: exe, environment: env)
         let workdir = try CLISupport.makeSandboxDirectory()
         defer { try? FileManager.default.removeItem(at: workdir) }
         let args = Self.arguments(for: request)
+        try Task.checkCancellation()
         let result = try await ProcessRunner.run(executable: exe, arguments: args, stdin: Data(request.input.utf8),
-                                                 environment: await ToolEnvironment.shared.environment(),
-                                                 workingDirectory: workdir, timeout: request.timeoutSeconds)
+                                                 environment: env, workingDirectory: workdir,
+                                                 timeout: request.timeoutSeconds)
         if result.timedOut { throw ProcessRunnerError.timedOut(request.timeoutSeconds) }
         guard let envelope = try? JSONSerialization.jsonObject(with: result.stdout) as? [String: Any] else {
             throw AIProviderError.failed(kind, CLISupport.shortError(result.stderrText + result.stdoutText))
@@ -155,6 +172,23 @@ public struct CodexProvider: AIProvider {
         return requiredDisabledFeatures + optionalDisabledFeatures.filter(available.contains)
     }
 
+    static func errorSummary(stderr: String, prompt: String, exitCode: Int32) -> String {
+        func flat(_ text: some StringProtocol) -> String { text.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+        let flatPrompt = flat(prompt)
+        let echoed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let output = echoed.isEmpty ? stderr : stderr.replacingOccurrences(of: echoed, with: "\n")
+        let errors = output.split(whereSeparator: \.isNewline).compactMap { raw -> String? in
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard let marker = line.range(of: "ERROR:", options: .backwards)
+                    ?? (line.hasPrefix("Error:") ? line.range(of: "Error:") : nil) else { return nil }
+            let message = line[marker.upperBound...].trimmingCharacters(in: .whitespaces)
+            guard !message.isEmpty, !flatPrompt.contains(flat(line)), !flatPrompt.contains(flat(message)) else { return nil }
+            return String(line[marker.lowerBound...].prefix(300))
+        }
+        guard !errors.isEmpty else { return "terminó con el código \(exitCode)" }
+        return CLISupport.shortError(errors.joined(separator: "\n"))
+    }
+
     public func detect(configuration: AIProviderConfiguration) async -> ProviderStatus {
         guard let exe = await ToolEnvironment.shared.locate("codex", configuredPath: configuration.executablePath) else {
             return ProviderStatus(kind: kind, installed: false)
@@ -203,12 +237,14 @@ public struct CodexProvider: AIProvider {
         let args = Self.arguments(for: request, schemaPath: schemaURL.path, outputPath: outURL.path, workingDirectory: runDir.path,
                                   disabledFeatures: disabled, defaults: CodexUserDefaults.load(environment: env))
         let prompt = request.instructions + "\n\n" + request.input
+        try Task.checkCancellation()
         let result = try await ProcessRunner.run(executable: exe, arguments: args, stdin: Data(prompt.utf8),
                                                  environment: env, workingDirectory: runDir, timeout: request.timeoutSeconds)
         if result.timedOut { throw ProcessRunnerError.timedOut(request.timeoutSeconds) }
         let lastMessage = (try? String(contentsOf: outURL, encoding: .utf8)) ?? ""
         guard result.exitCode == 0 else {
-            throw AIProviderError.failed(kind, CLISupport.shortError(result.stderrText))
+            throw AIProviderError.failed(kind, Self.errorSummary(stderr: result.stderrText, prompt: prompt,
+                                                                 exitCode: result.exitCode))
         }
         guard let data = JSONExtraction.object(in: lastMessage.isEmpty ? result.stdoutText : lastMessage,
                                                requiredKeys: request.requiredKeys) else {
@@ -467,6 +503,25 @@ actor CodexFeatureCache {
     }
 }
 
+actor ClaudeSafeModeCache {
+    static let shared = ClaudeSafeModeCache()
+    private var cache: [String: (stamp: Date?, supported: Bool)] = [:]
+
+    func supportsSafeMode(executable: URL, environment: [String: String]) async throws -> Bool {
+        let stamp = (try? FileManager.default.attributesOfItem(
+            atPath: executable.resolvingSymlinksInPath().path)[.modificationDate]) as? Date
+        if let hit = cache[executable.path], hit.stamp == stamp { return hit.supported }
+        let result = try await ProcessRunner.run(executable: executable, arguments: ["--help"],
+                                                 environment: environment, timeout: 20)
+        guard result.exitCode == 0, !result.timedOut else {
+            throw AIProviderError.failed(.claudeCode, "no se pudo consultar `claude --help`; no se envió nada.")
+        }
+        let supported = (result.stdoutText + "\n" + result.stderrText).contains("--safe-mode")
+        cache[executable.path] = (stamp, supported)
+        return supported
+    }
+}
+
 // MARK: - Antigravity
 
 /// `agy -p` (headless). Tool requests are auto-denied by headless mode; we never
@@ -521,8 +576,9 @@ public struct AntigravityProvider: AIProvider {
         let workdir = try CLISupport.makeSandboxDirectory()
         defer { try? FileManager.default.removeItem(at: workdir) }
         let args = Self.arguments(for: request, prompt: prompt)
-        let result = try await ProcessRunner.run(executable: exe, arguments: args,
-                                                 environment: await ToolEnvironment.shared.environment(),
+        let env = await ToolEnvironment.shared.environment()
+        try Task.checkCancellation()
+        let result = try await ProcessRunner.run(executable: exe, arguments: args, environment: env,
                                                  workingDirectory: workdir, timeout: request.timeoutSeconds + 15)
         if result.timedOut { throw ProcessRunnerError.timedOut(request.timeoutSeconds) }
         guard let envelope = try? JSONSerialization.jsonObject(with: result.stdout) as? [String: Any] else {

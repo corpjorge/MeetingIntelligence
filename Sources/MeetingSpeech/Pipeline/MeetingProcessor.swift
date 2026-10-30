@@ -1,4 +1,4 @@
-import Foundation
+public import Foundation
 public import MeetingCore
 import OSLog
 
@@ -45,6 +45,20 @@ public struct ProcessingSummary: Sendable {
     }
     public var tracks: [TrackSummary]
     public var totalSeconds: Double
+    public var carriedEdits: Int = 0
+    public var droppedEdits: Int = 0
+}
+
+public enum MeetingProcessingError: LocalizedError, Sendable {
+    case audioUnavailable([String])
+
+    public var errorDescription: String? {
+        switch self {
+        case .audioUnavailable(let files):
+            "No se encontró el audio de la reunión (\(files.joined(separator: ", "))). Es posible que la retención de "
+                + "audio lo haya eliminado. La reunión no se modificó."
+        }
+    }
 }
 
 /// Runs the offline pipeline for one meeting:
@@ -79,19 +93,24 @@ public actor MeetingProcessor {
         }
         let tracks = detail.tracks.sorted { Self.order($0.source) < Self.order($1.source) }
         guard !tracks.isEmpty else { throw AppDatabaseError.invalidOperation("La reunión no tiene pistas de audio.") }
+        let missing = tracks.filter { !FileManager.default.fileExists(atPath: paths.resolve(relativePath: $0.relativePath).path) }
+        guard missing.isEmpty else {
+            throw MeetingProcessingError.audioUnavailable(missing.map { URL(fileURLWithPath: $0.relativePath).lastPathComponent })
+        }
         let previousStatus = detail.meeting.status
         let started = Date()
         try database.updateMeeting(id: meetingId) { $0.status = .processing; $0.lastError = nil }
 
         do {
-            let summary = try await run(meetingId: meetingId, tracks: tracks, options: options, progress: progress)
+            let outcome = try await run(meetingId: meetingId, tracks: tracks, options: options, progress: progress)
             let duration = tracks.map { $0.durationSeconds + $0.timelineOffsetSeconds }.max() ?? 0
             try database.updateMeeting(id: meetingId) {
                 $0.status = .ready
                 $0.durationSeconds = max($0.durationSeconds, duration)
                 $0.language = options.language
             }
-            return ProcessingSummary(tracks: summary, totalSeconds: Date().timeIntervalSince(started))
+            return ProcessingSummary(tracks: outcome.tracks, totalSeconds: Date().timeIntervalSince(started),
+                                     carriedEdits: outcome.carriedEdits, droppedEdits: outcome.droppedEdits)
         } catch is CancellationError {
             try? database.updateMeeting(id: meetingId) {
                 $0.status = previousStatus == .processing ? .recorded : previousStatus
@@ -118,7 +137,8 @@ public actor MeetingProcessor {
     // MARK: Stages
 
     private func run(meetingId: String, tracks: [AudioTrack], options: ProcessingOptions,
-                     progress: @escaping @Sendable (PipelineProgress) -> Void) async throws -> [ProcessingSummary.TrackSummary] {
+                     progress: @escaping @Sendable (PipelineProgress) -> Void) async throws
+        -> (tracks: [ProcessingSummary.TrackSummary], carriedEdits: Int, droppedEdits: Int) {
         // 1. Model preparation (download on first run, then load once per process).
         try await stage(.modelPreparation, meetingId: meetingId, track: nil, audioSeconds: nil) {
             progress(.init(meetingId: meetingId, stage: .modelPreparation, source: nil, fraction: nil,
@@ -161,6 +181,8 @@ public actor MeetingProcessor {
         var summaries: [ProcessingSummary.TrackSummary] = []
         var remoteWords: [WordTiming] = []
         var remoteContext: [ASRContextTrack] = []
+        var pending: [(built: BuiltTrack, corrections: [CorrectionEvent])] = []
+        var carriedEdits = 0, droppedEdits = 0, unsealedEmbeddings = 0
 
         for track in tracks {
             try Task.checkCancellation()
@@ -221,7 +243,7 @@ public actor MeetingProcessor {
                             end: $0.end + track.timelineOffsetSeconds, quality: $0.quality)
             }
 
-            // 4. Alignment, echo flagging, persistence.
+            // 4. Alignment and echo flagging.
             progress(.init(meetingId: meetingId, stage: .alignment, source: track.source, fraction: nil,
                            message: "Alineando hablantes y transcripción"))
             // Manual identities of the clusters about to be replaced (re-processing).
@@ -240,8 +262,12 @@ public actor MeetingProcessor {
                                                             vocabulary: vocabulary, language: options.language,
                                                             logger: logger)
             }
-            try database.storeProcessedTrack(transcript: built.transcript, segments: built.segments,
-                                             speakers: built.speakers, assignments: built.assignments)
+            let previousEdits = try database.editedSegments(meetingId: meetingId, source: track.source)
+            let carried = Self.carryEdits(previousEdits, into: &built.segments, meetingId: meetingId)
+            carriedEdits += carried.corrections.count
+            droppedEdits += carried.dropped
+            unsealedEmbeddings += built.unsealedEmbeddings
+            pending.append((built, carried.corrections))
 
             summaries.append(.init(source: track.source, audioSeconds: track.durationSeconds,
                                    asrSeconds: transcription.processingSeconds,
@@ -252,16 +278,28 @@ public actor MeetingProcessor {
                                    boostedSegments: boostedSegments))
         }
 
+        try Task.checkCancellation()
+        for (built, corrections) in pending {
+            try database.storeProcessedTrack(transcript: built.transcript, segments: built.segments,
+                                             speakers: built.speakers, assignments: built.assignments,
+                                             corrections: corrections)
+        }
+        if carriedEdits + droppedEdits > 0 {
+            logger.info("Manual text edits: \(carriedEdits) carried over, \(droppedEdits) not carried")
+        }
+
         // 5. Speaker recognition against consented voice profiles.
         if let recognizer {
             try await stage(.speakerRecognition, meetingId: meetingId, track: nil, audioSeconds: nil) {
                 progress(.init(meetingId: meetingId, stage: .speakerRecognition, source: nil, fraction: nil,
                                message: "Reconociendo participantes registrados"))
                 let report = try await recognizer.recognize(meetingId: meetingId)
+                guard unsealedEmbeddings > 0 else { return report.summary }
                 return report.summary
+                    + " · \(unsealedEmbeddings) huella(s) de voz sin guardar: no se pudo usar la clave del Llavero"
             }
         }
-        return summaries
+        return (summaries, carriedEdits, droppedEdits)
     }
 
     /// Writes boosted text into `vocabularyText` (deterministic dictionary on top). Returns changed segments.
@@ -296,6 +334,7 @@ public actor MeetingProcessor {
         var segments: [TranscriptSegment]
         var speakers: [MeetingSpeaker]
         var assignments: [SpeakerAssignment]
+        var unsealedEmbeddings = 0
     }
 
     func buildRecords(meetingId: String, track: AudioTrack, transcription: ASRTranscription,
@@ -333,13 +372,22 @@ public actor MeetingProcessor {
         var speakers: [MeetingSpeaker] = []
         var speakerIDByKey: [String: String] = [:]
         var assignments: [SpeakerAssignment] = []
+        var unsealedEmbeddings = 0
         for (index, key) in orderedKeys.enumerated() {
-            let embedding = diarization?.embeddings[key]
+            var ciphertext: Data?
+            if let embedding = diarization?.embeddings[key], let recognizer {
+                do {
+                    ciphertext = try recognizer.seal(embedding)
+                } catch {
+                    unsealedEmbeddings += 1
+                    logger.error("Voice fingerprint not stored: \(error.localizedDescription, privacy: .public)")
+                }
+            }
             let speaker = MeetingSpeaker(
                 meetingId: meetingId, source: track.source, clusterKey: key, ordinal: index + 1,
                 totalSpeechSeconds: speechByKey[key] ?? 0,
-                embeddingCiphertext: try embedding.flatMap { try recognizer?.seal($0) },
-                embeddingModel: embedding == nil ? nil : diarization?.modelIdentifier)
+                embeddingCiphertext: ciphertext,
+                embeddingModel: ciphertext == nil ? nil : diarization?.modelIdentifier)
             speakers.append(speaker)
             speakerIDByKey[key] = speaker.id
         }
@@ -404,7 +452,47 @@ public actor MeetingProcessor {
                 meetingSpeakerId: speakerID, participantId: participantID, speakerConfidence: confidence,
                 attribution: attribution))
         }
-        return BuiltTrack(transcript: transcript, segments: segments, speakers: speakers, assignments: assignments)
+        return BuiltTrack(transcript: transcript, segments: segments, speakers: speakers, assignments: assignments,
+                          unsealedEmbeddings: unsealedEmbeddings)
+    }
+
+    static let editCarryMaxStartShift = 0.5
+
+    static func matchEdits(previous: [TranscriptSegment], new: [TranscriptSegment]) -> [(previous: Int, new: Int)] {
+        let newTexts = new.map { TextNormalization.comparable($0.asrText) }
+        let candidates = previous.map { old -> [Int] in
+            let text = TextNormalization.comparable(old.asrText)
+            return new.indices.filter { j in
+                let candidate = new[j]
+                let overlaps = min(old.endTime, candidate.endTime) > max(old.startTime, candidate.startTime)
+                    || (old.startTime == candidate.startTime && old.endTime == candidate.endTime)
+                return newTexts[j] == text && overlaps
+                    && abs(candidate.startTime - old.startTime) <= editCarryMaxStartShift + 1e-9
+            }
+        }
+        var claims: [Int: Int] = [:]
+        for list in candidates {
+            for j in list { claims[j, default: 0] += 1 }
+        }
+        return candidates.enumerated().compactMap { i, list in
+            guard list.count == 1, let j = list.first, claims[j] == 1 else { return nil }
+            return (i, j)
+        }
+    }
+
+    static func carryEdits(_ previous: [TranscriptSegment], into segments: inout [TranscriptSegment],
+                           meetingId: String) -> (corrections: [CorrectionEvent], dropped: Int) {
+        let edits = previous.filter { $0.editedText != nil }
+        var corrections: [CorrectionEvent] = []
+        for match in matchEdits(previous: edits, new: segments) {
+            guard let text = edits[match.previous].editedText else { continue }
+            segments[match.new].editedText = text
+            segments[match.new].editedAt = edits[match.previous].editedAt ?? Date()
+            corrections.append(CorrectionEvent(meetingId: meetingId, entityType: "transcriptSegment",
+                                               entityId: segments[match.new].id, field: "editedText",
+                                               previousValue: nil, newValue: text))
+        }
+        return (corrections, edits.count - corrections.count)
     }
 
     /// Re-applies manual identities to new clusters when the temporal evidence is

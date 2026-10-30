@@ -329,6 +329,27 @@ extension AppDatabase {
             }
         }
 
+        migrator.registerMigration("v6-speaker-assignment-archive") { db in
+            try db.create(table: "speakerAssignmentArchive") { t in
+                t.primaryKey("id", .text)
+                t.belongsTo("meeting", onDelete: .cascade).notNull()
+                t.column("meetingSpeakerId", .text).notNull()
+                t.column("speakerSource", .text).notNull()
+                t.column("speakerClusterKey", .text).notNull()
+                t.column("speakerOrdinal", .integer).notNull()
+                t.belongsTo("participant", onDelete: .setNull)
+                t.column("method", .text).notNull()
+                t.column("decision", .text).notNull()
+                t.column("similarity", .double)
+                t.column("margin", .double)
+                t.column("threshold", .double)
+                t.column("note", .text)
+                t.column("createdAt", .datetime).notNull()
+                t.column("supersededAt", .datetime)
+                t.column("archivedAt", .datetime).notNull()
+            }
+        }
+
         return migrator
     }
 }

@@ -31,6 +31,9 @@ final class AppEnvironment {
 
     private(set) var startupError: String?
     private(set) var recoveredMeetings: [String] = []
+    let startupPolicy: LibraryStartupPolicy
+    var libraryBlockedReason: String? { startupPolicy.blockedReason }
+    private let libraryLock: LibraryLock?
 
     static let logger = Logger(subsystem: "dev.meetingintelligence", category: "app")
 
@@ -38,18 +41,37 @@ final class AppEnvironment {
         let paths = AppPaths.resolveDefault()
         self.paths = paths
         // Snapshot runs must not alter the user's real preferences.
-        let settings = AppSettings(defaults: SnapshotDriver.directory != nil
-                                   ? UserDefaults(suiteName: "dev.meetingintelligence.snapshot") ?? .standard : .standard)
+        let snapshotDefaults = SnapshotDriver.directory != nil
+            ? UserDefaults(suiteName: "dev.meetingintelligence.snapshot") : nil
+        let settings = AppSettings(defaults: snapshotDefaults ?? .standard)
         self.settings = settings
+        let lockState: LibraryStartupPolicy.LockState
+        switch LibraryLock.acquire(in: paths.root) {
+        case .acquired(let lock):
+            libraryLock = lock
+            lockState = .exclusive
+        case .heldByAnotherInstance:
+            libraryLock = nil
+            lockState = .heldByAnotherInstance
+            Self.logger.notice("Library in use by another instance; maintenance and capture are disabled")
+        case .unavailable(let reason):
+            libraryLock = nil
+            lockState = .unavailable
+            Self.logger.error("Library lock unavailable: \(reason, privacy: .public)")
+        }
         let database: AppDatabase
+        var openError: String?
         do {
             database = try AppDatabase.open(paths: paths)
         } catch {
             Self.logger.fault("Database open failed: \(error.localizedDescription, privacy: .public)")
             // Keep the app usable to show the error; nothing is persisted in this state.
             database = try! AppDatabase.inMemory()
-            startupError = "No se pudo abrir la biblioteca en \(paths.root.path): \(error.localizedDescription)"
+            openError = "No se pudo abrir la biblioteca en \(paths.root.path): \(error.localizedDescription)"
         }
+        startupError = openError
+        let policy = LibraryStartupPolicy.decide(databaseOpened: openError == nil, lock: lockState)
+        startupPolicy = policy
         self.database = database
         asr = ParakeetUltraProvider()
         diarizer = DiarizationService(segmentationStepRatio: settings.diarizationStepRatio)
@@ -58,58 +80,42 @@ final class AppEnvironment {
         processor = MeetingProcessor(database: database, paths: paths, asr: asr, diarizer: diarizer, recognizer: recognizer,
                                      booster: booster)
         importer = MeetingImportService(database: database, paths: paths)
-        processing = ProcessingCoordinator(processor: processor, settings: settings)
+        processing = ProcessingCoordinator(processor: processor, settings: settings, database: database)
+        processing.blockedReason = policy.blockedReason
         recording = RecordingController(importer: importer, paths: paths, settings: settings, asr: asr)
+        recording.blockedReason = policy.blockedReason
         models = ModelStatusModel(asr: asr, diarizer: diarizer)
-        ai = AIController(database: database)
+        ai = AIController(database: database, defaults: snapshotDefaults ?? .standard)
         semantic = SemanticIndexController(paths: paths, database: database, settings: settings)
+        semantic.blockedReason = policy.blockedReason
         calls = CallSuggestionController(settings: settings, recording: recording)
         modelUpdates = ModelUpdateController(asr: asr, diarizer: diarizer, booster: booster, semantic: semantic,
                                              settings: settings, processing: processing, recording: recording)
-        modelUpdates.recoverInterruptedUpdates()
+        modelUpdates.blockedReason = policy.sharedWithAnotherInstance ? "otra copia de la app usa la biblioteca" : nil
+        if policy.runsMaintenance { modelUpdates.recoverInterruptedUpdates() }
         updates = AppUpdateController(configuration: AppUpdateConfiguration.fromMainBundle(), settings: settings,
                                       busyReason: { [recording, processing, modelUpdates] in
+            if policy.sharedWithAnotherInstance { return "otra copia de la app usa la biblioteca" }
             if recording.isActive { return "se graba una reunión" }
             if processing.active != nil || !processing.queue.isEmpty { return "se procesa una reunión" }
-            if modelUpdates.rows.contains(where: { if case .updating = $0.state { true } else { false } }) {
-                return "se actualiza un modelo"
-            }
+            if modelUpdates.isUpdating { return "se actualiza un modelo" }
             return nil
         })
-        updates.handleLaunch()
-        if SnapshotDriver.directory == nil { updates.startAutomaticChecks() }
+        if !policy.sharedWithAnotherInstance {
+            updates.handleLaunch()
+            if SnapshotDriver.directory == nil { updates.startAutomaticChecks() }
+        }
         // The call monitor needs no permission; snapshot runs skip notifications.
-        calls.start(requestNotifications: SnapshotDriver.directory == nil)
+        if policy.blockedReason == nil { calls.start(requestNotifications: SnapshotDriver.directory == nil) }
         recording.onFinished = { [processing, settings] meetingId in
             if settings.autoProcessAfterRecording { processing.enqueue(meetingId) }
         }
         processing.onCompleted = { [semantic] _ in semantic.schedule() }
         semantic.refresh()
-        recoverAfterCrash()
-        Task { await VideoRecovery.recover(database: database, paths: paths) }
-    }
-
-    /// Meetings left mid-recording by a crash get their WAV headers repaired and become `interrupted`.
-    private func recoverAfterCrash() {
-        do {
-            let ids = try database.recoverInterruptedMeetings()
-            for id in ids {
-                let recovered = try importer.recoverInterruptedRecording(meetingId: id)
-                Self.logger.notice("Recovered \(recovered) track(s) for interrupted meeting")
-            }
-            recoveredMeetings = ids
-            try database.enforceProfileRetention()
-            try AudioRetention(database: database, paths: paths).apply(days: settings.audioRetentionDays)
-            try VideoRetention(database: database, paths: paths).apply(days: settings.videoRetentionDays)
-            // Files left behind by an interrupted delete or a crash mid-transcription.
-            let orphans = try StorageMaintenance.removeOrphanedRecordings(database: database, paths: paths)
-            let temporary = StorageMaintenance.sweepTemporaryFiles()
-            if orphans.removedItems + temporary.removedItems > 0 {
-                Self.logger.notice("Removed \(orphans.removedItems + temporary.removedItems) leftover item(s), \(orphans.freedBytes + temporary.freedBytes) bytes")
-            }
-        } catch {
-            Self.logger.error("Recovery failed: \(error.localizedDescription, privacy: .public)")
-        }
+        recoveredMeetings = StartupMaintenance(database: database, importer: importer, paths: paths,
+                                               audioRetentionDays: settings.audioRetentionDays,
+                                               videoRetentionDays: settings.videoRetentionDays).run(policy: policy)
+        if policy.runsMaintenance { Task { await VideoRecovery.recover(database: database, paths: paths) } }
     }
 }
 

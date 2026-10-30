@@ -192,7 +192,16 @@ struct SpeakersTab: View {
         case .merge: "Fusión"
         case .split: "Separación"
         }
-        return "\(method): \(entry.decision.rawValue) → \(who)"
+        return "\(method): \(Self.decisionLabel(entry.decision)) → \(who)"
+    }
+
+    static func decisionLabel(_ decision: AssignmentDecision) -> String {
+        switch decision {
+        case .accepted: "aceptada"
+        case .suggested: "sugerida"
+        case .rejected: "rechazada"
+        case .unknown: "sin coincidencia"
+        }
     }
 }
 

@@ -90,8 +90,62 @@ struct DashboardModelTests {
         #expect(undone?.text == item.text && undone?.evidenceQuote == item.evidenceQuote)
     }
 
-    private func analysis(meetingId: String) -> AIAnalysis {
+    @Test func listsOnlyLatestSuccessfulAnalysisOrderedByMeetingDate() async throws {
+        let db = try AppDatabase.inMemory()
+        let base = Date(timeIntervalSince1970: 1_800_000_000)
+        var olderDraft = try AppFixture.meeting(db)
+        olderDraft.startedAt = base
+        let older = olderDraft
+        var newerDraft = try AppFixture.meeting(db)
+        newerDraft.title = "FIXTURE · Reciente"
+        newerDraft.startedAt = base.addingTimeInterval(86_400)
+        let newer = newerDraft
+        let superseded = analysis(meetingId: older.id, startedAt: base.addingTimeInterval(60))
+        let current = analysis(meetingId: older.id, startedAt: base.addingTimeInterval(120))
+        let failed = AIAnalysis(meetingId: older.id, provider: .ollama, model: "fixture", promptVersion: "fixture",
+                                sharedContentSummary: "FIXTURE", status: .failed, startedAt: base.addingTimeInterval(180))
+        let newerRun = analysis(meetingId: newer.id, startedAt: base.addingTimeInterval(240))
+        func item(_ run: AIAnalysis, _ text: String, _ index: Int) -> AnalysisItem {
+            AnalysisItem(analysisId: run.id, meetingId: run.meetingId, category: index == 0 ? .commitment : .actionItem,
+                         nature: .fact, text: text, evidenceStatus: .unconfirmed, orderIndex: index)
+        }
+        let stale = [item(superseded, "Copia anterior 0", 0), item(superseded, "Copia anterior 1", 1)]
+        let currentItems = [item(current, "Actual 1", 1), item(current, "Actual 0", 0)]
+        let failedItem = item(failed, "Análisis fallido", 0)
+        let newerItems = [item(newerRun, "Reciente 1", 1), item(newerRun, "Reciente 0", 0)]
+        try await db.writer.write { database in
+            try older.update(database)
+            try newer.update(database)
+            for run in [superseded, current, failed, newerRun] { try run.insert(database) }
+            for entry in stale + currentItems + [failedItem] + newerItems { try entry.insert(database) }
+        }
+
+        let model = DashboardModel()
+        let observation = Task { await model.observe(db) }
+        defer { observation.cancel() }
+        try await waitUntil { model.openItems.count == 4 }
+        #expect(model.openItems.map(\.text) == ["Reciente 0", "Reciente 1", "Actual 0", "Actual 1"])
+
+        try await model.setCompleted(currentItems[1].id, completed: true, in: db)
+        try await waitUntil { model.openItems.count == 3 }
+        #expect(model.openItems.map(\.text) == ["Reciente 0", "Reciente 1", "Actual 1"])
+        #expect(!model.openItems.contains { stale.map(\.id).contains($0.id) })
+    }
+
+    @Test func ordersOpenItemsByMeetingDateThenOrderIndex() {
+        let early = Date(timeIntervalSince1970: 1_000)
+        let late = Date(timeIntervalSince1970: 2_000)
+        func item(_ meetingId: String, _ index: Int) -> AnalysisItem {
+            AnalysisItem(analysisId: "fixture", meetingId: meetingId, category: .commitment, nature: .fact,
+                         text: "\(meetingId)\(index)", evidenceStatus: .unconfirmed, orderIndex: index)
+        }
+        let items = [item("a", 1), item("b", 2), item("a", 0), item("b", 0), item("c", 0)]
+        let ordered = DashboardModel.orderedOpenItems(items, meetingDates: ["a": early, "b": late])
+        #expect(ordered.map(\.text) == ["b0", "b2", "a0", "a1", "c0"])
+    }
+
+    private func analysis(meetingId: String, startedAt: Date = Date()) -> AIAnalysis {
         AIAnalysis(meetingId: meetingId, provider: .ollama, model: "fixture", promptVersion: "fixture",
-                   sharedContentSummary: "FIXTURE", status: .succeeded)
+                   sharedContentSummary: "FIXTURE", status: .succeeded, startedAt: startedAt)
     }
 }

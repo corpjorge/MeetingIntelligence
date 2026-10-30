@@ -28,6 +28,11 @@ RELEASE_TOOL="$("$ROOT/scripts/swiftw" build -c release --show-bin-path)/mi-rele
   || { echo "La clave de firma del Llavero no corresponde a UPDATE_PUBLIC_KEY." >&2; exit 1; }
 
 "$ROOT/scripts/third-party-notices.sh"
+SOURCE_INDEX_DIR="$(mktemp -d)"
+cp "$(git rev-parse --git-path index)" "$SOURCE_INDEX_DIR/index" 2>/dev/null || true
+GIT_INDEX_FILE="$SOURCE_INDEX_DIR/index" git add -A
+SOURCE_TREE="$(GIT_INDEX_FILE="$SOURCE_INDEX_DIR/index" git write-tree)"
+rm -rf "$SOURCE_INDEX_DIR"
 APP_OUTPUT_ROOT="$ROOT/build" "$ROOT/scripts/build-app.sh" release
 
 # Finder metadata is written directly, without opening Finder or requesting Automation access.
@@ -39,6 +44,7 @@ APP="$ROOT/build/$APP_NAME.app"
 DIST="$ROOT/dist"
 NAME="${APP_NAME// /-}-$VERSION"
 rm -rf "$DIST" && mkdir -p "$DIST"
+print -r -- "$SOURCE_TREE" > "$DIST/SOURCE_TREE"
 
 echo "▸ ZIP"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$DIST/$NAME.zip"

@@ -6,8 +6,16 @@ import SwiftUI
 @main
 struct MeetingIntelligenceApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var environment = AppEnvironment()
-    @State private var router = AppRouter()
+    @State private var environment: AppEnvironment
+    @State private var router: AppRouter
+
+    init() {
+        let environment = AppEnvironment()
+        let router = AppRouter()
+        router.importBlockedReason = environment.libraryBlockedReason
+        _environment = State(initialValue: environment)
+        _router = State(initialValue: router)
+    }
 
     var body: some Scene {
         WindowGroup(AppIdentity.displayName, id: "main") {
@@ -80,7 +88,20 @@ final class AppRouter {
     var meetingPath: [String] = []
     /// App proposed as source when the user accepts a "call detected" suggestion.
     var preselectedRecordingApp: AudioAppSelector?
-    var isImporting = false
+    var importBlockedReason: String?
+    var blockedNotice: String?
+    private var importRequested = false
+    var isImporting: Bool {
+        get { importRequested }
+        set {
+            if newValue, let importBlockedReason {
+                blockedNotice = importBlockedReason
+                importRequested = false
+            } else {
+                importRequested = newValue
+            }
+        }
+    }
     var pendingSearch: String?
 
     func openMeeting(_ id: String, tab: MeetingDetailTab? = nil) {
@@ -109,6 +130,7 @@ struct AppCommands: Commands {
                 .keyboardShortcut("r", modifiers: [.command, .shift])
             Button("Importar audio…") { router.section = .meetings; router.isImporting = true }
                 .keyboardShortcut("i", modifiers: .command)
+                .disabled(environment.libraryBlockedReason != nil)
         }
         CommandMenu("Grabación") {
             Button(environment.recording.microphonePaused ? "Reactivar mi micrófono" : "Pausar mi micrófono") {

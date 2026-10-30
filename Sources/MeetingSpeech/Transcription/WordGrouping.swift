@@ -10,6 +10,10 @@ enum WordGrouping {
         words(from: tokens.map { ($0.token, $0.startTime, $0.endTime, $0.confidence) })
     }
 
+    static func startsWord(_ piece: String) -> Bool {
+        piece.hasPrefix("▁") || piece.hasPrefix(" ")
+    }
+
     static func words(from tokens: [(piece: String, start: Double, end: Double, confidence: Float)]) -> [MeetingCore.WordTiming] {
         var words: [MeetingCore.WordTiming] = []
         var text = ""
@@ -26,8 +30,7 @@ enum WordGrouping {
         for token in tokens {
             let piece = token.piece
             if piece.isEmpty || piece == "<blank>" || piece == "<pad>" { continue }
-            let startsWord = piece.hasPrefix("▁") || piece.hasPrefix(" ")
-            if startsWord || text.isEmpty {
+            if startsWord(piece) || text.isEmpty {
                 flush()
                 text = String(piece.drop(while: { $0 == "▁" || $0 == " " }))
                 start = token.start

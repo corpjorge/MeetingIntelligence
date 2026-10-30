@@ -107,6 +107,26 @@ struct RecordingView: View {
         }
         .onChange(of: router.preselectedRecordingApp) { applyDefaultSource() }
         .onChange(of: env.calls.activeCalls.map(\.id)) { if source == nil { applyDefaultSource() } }
+        .onChange(of: recording.state) { old, new in
+            if Self.recordingEnded(from: old, to: new) { prepareNextRecording() }
+        }
+    }
+
+    static func recordingEnded(from old: RecordingController.State, to new: RecordingController.State) -> Bool {
+        guard old == .recording || old == .paused || old == .stopping else { return false }
+        switch new {
+        case .idle, .failed: return true
+        default: return false
+        }
+    }
+
+    private func prepareNextRecording() {
+        consentConfirmed = false
+        if case .app(let selector) = source {
+            title = defaultTitle(app: selector.name)
+        } else {
+            title = defaultTitle(app: nil)
+        }
     }
 
     private func defaultTitle(app: String?) -> String {

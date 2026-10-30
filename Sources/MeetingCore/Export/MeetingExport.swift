@@ -327,7 +327,14 @@ public struct MeetingExporter: Sendable {
 
     func srt(_ doc: MeetingExportDocument) -> String {
         textSegments(doc).enumerated().map { index, seg in
-            "\(index + 1)\n\(Timecode.srt(seg.start)) --> \(Timecode.srt(max(seg.end, seg.start + 0.3)))\n\(seg.speakerName): \(seg.text)\n"
+            "\(index + 1)\n\(Timecode.srt(seg.start)) --> \(Timecode.srt(max(seg.end, seg.start + 0.3)))\n\(Self.subtitleText("\(seg.speakerName): \(seg.text)"))\n"
         }.joined(separator: "\n")
+    }
+
+    static func subtitleText(_ text: String) -> String {
+        text.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
     }
 }

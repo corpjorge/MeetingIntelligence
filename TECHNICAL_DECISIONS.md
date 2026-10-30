@@ -51,6 +51,9 @@ FluidAudio ofrece `SlidingWindowAsrManager` compatible con modelos v3/Ultra (ven
 texto *volátil* vs *confirmado*). Se usa con los **mismos modelos ya cargados** (FluidAudio ya comparte instancias de
 modelo entre workers concurrentes en su ruta por lotes). El texto en vivo es solo provisional y nunca se guarda como
 transcripción; la definitiva es la pasada offline completa.
+`feed` encola de forma síncrona y ordenada (una cola por fuente con un solo consumidor). Antes cada bloque de 100 ms
+viajaba en un `Task` propio y podía llegar desordenado al actor (11–16 de 20 ejecuciones en un experimento), y `finish()`
+perdía el final. Ahora `finish()` cierra las entradas y espera a que se vacíen antes de `SlidingWindowAsrManager.finish()`.
 
 ## TD-09 · Diarización offline VBx con `stepRatio = 0.1`
 Ventanas de segmentación más densas recuperan turnos cortos ("sí", "ok") según FluidAudio #879. Configurable en
@@ -72,8 +75,19 @@ aparece en la transcripción → "Información no confirmada".
 
 ## TD-12 · Seguridad de los proveedores de IA (formatos comprobados)
 - Claude Code: `claude -p --output-format json --json-schema … --tools "" --strict-mcp-config --no-session-persistence
-  --permission-mode dontAsk --system-prompt …`; la salida estructurada llega en `structured_output` (documentación
-  oficial). En este entorno el CLI devolvió `OAuth session expired`, así que la ruta de éxito no se ejecutó aquí.
+  --permission-mode dontAsk --safe-mode --system-prompt …`; la salida estructurada llega en `structured_output`
+  (documentación oficial). En este entorno el CLI devolvió `OAuth session expired`, así que la ruta de éxito no se
+  ejecutó aquí. `--safe-mode` (2.1.301) no carga `CLAUDE.md`, hooks, plugins, skills ni servidores MCP del usuario, que
+  antes recibían la transcripción; mantiene OAuth, modelo y permisos. No se usa `--bare` porque exige API key. El
+  soporte se detecta en `claude --help` (en caché por ejecutable) y, si falta, no se envía nada.
+- Ejecución de las CLIs (`ProcessRunner`): una cancelación anterior al lanzamiento nunca lanza la CLI (antes, pulsar
+  «Cancelar» durante la detección enviaba igualmente la transcripción); cancelar en ejecución termina con
+  `CancellationError` y el análisis queda `cancelled`. Timeout y cancelación terminan todo el árbol de procesos
+  (`proc_listchildpids` + `killpg`), y tras la salida se espera EOF como máximo 2 s aunque un descendiente mantenga los
+  pipes. Los errores de Codex usan solo sus líneas `ERROR:`, nunca el eco del prompt.
+- Ollama Cloud (etiquetas `:cloud`/`-cloud`, p. ej. `gpt-oss:120b-cloud`) cuenta como nube y exige consentimiento; un
+  nombre sin la etiqueta para el que `/api/show` devuelve `remote_host` no se envía. `num_ctx` se estima a partir del
+  prompt con tope en `context_length`, se pide `truncate`/`shift` en false y se rechazan los resultados truncados.
 - Codex: `codex exec --ignore-user-config --ignore-rules --sandbox read-only --ephemeral -c web_search="disabled"
   --disable shell_tool --disable unified_exec [--disable …] --output-schema … -o … -C <dir vacío>`. Comprobado con
   Codex 0.160.1 (22-oct-2026) con una sonda inocua (un token aleatorio en un archivo temporal):
@@ -167,15 +181,27 @@ Acceso deshabilitado por defecto (`mcp-access.json`), solo lectura, validación 
 llamadas/s.
 
 ## TD-14 · Cifrado
-Embeddings biométricos sellados con AES-GCM (CryptoKit), clave de 256 bits en el Llavero de inicio de sesión
-(`AfterFirstUnlockThisDeviceOnly`). Transcripciones: protección en reposo de FileVault, permisos 0700/0600 y
-`secure_delete`. (No se usa SQLCipher para no reemplazar el SQLite del sistema.)
+Embeddings biométricos sellados con AES-GCM (CryptoKit), clave de 256 bits en el Llavero de inicio de sesión.
+Transcripciones: protección en reposo de FileVault, permisos 0700/0600 y `secure_delete`. (No se usa SQLCipher para no
+reemplazar el SQLite del sistema.)
+
+Limitación (TN3137): `SecItem` sin `kSecUseDataProtectionKeychain` usa el llavero basado en archivo, cifrado con la
+contraseña de la sesión pero sin las clases de `kSecAttrAccessible`. Por eso `AfterFirstUnlockThisDeviceOnly` no impide
+que la clave viaje con el Asistente de Migración o con una copia del llavero. El llavero de protección de datos exige
+grupos de acceso autorizados por un perfil de aprovisionamiento, que la firma ad hoc no tiene; queda pendiente de la
+firma estable.
+
+Si el Llavero no permite sellar una huella al procesar (p. ej. `errSecInteractionNotAllowed` por SSH, o «Denegar»), el
+hablante se guarda sin huella (nunca en claro), se registra el fallo sin datos de la reunión y el procesamiento sigue.
 
 ## TD-15 · Verificación visual sin permisos de pantalla
 `screencapture` está bloqueado para este proceso (sin permiso de Grabación de pantalla, que no se modifica).
 `SnapshotDriver` (activo solo con `MI_SNAPSHOT_DIR`) recorre las pantallas y renderiza la ventana con
 `cacheDisplay`. Limitación comprobada: el material de la barra lateral no se renderiza fuera de pantalla; su
 contenido se verifica estructuralmente (6 filas presentes en el `NSOutlineView`).
+Las capturas usan una suite de preferencias propia, también para la IA, y restauran la configuración de modelos. Deben
+ejecutarse sobre una copia de la biblioteca (`MEETING_INTELLIGENCE_HOME`): una segunda instancia sobre la biblioteca
+real queda en modo de solo consulta (TD-39).
 
 ## TD-16 · Identidades manuales al re-procesar
 Re-procesar reemplaza los clusters de diarización. Antes de reemplazarlos se capturan las identidades **manuales**
@@ -191,6 +217,18 @@ dividido que el usuario ya unificó) conservan el nombre en sus clusters nuevos.
 Las filas `merge`/`split` (contabilidad al fusionar o deshacer una fusión) no ocultan el origen manual: se ignoran al
 decidir si la identidad vigente es manual.
 
+**Correcciones de texto al re-procesar (30-oct-2026).** Antes, los segmentos nuevos no heredaban `editedText` y las
+correcciones desaparecían sin aviso. Antes de guardar cada pista se leen los segmentos editados vigentes
+(`editedSegments`). Una corrección pasa al segmento nuevo solo si la correspondencia es inequívoca: mismo `asrText`
+normalizado (`TextNormalization.comparable`), inicio a ≤ 0,5 s, intervalos solapados y correspondencia 1:1 mutua
+(`MeetingProcessor.matchEdits`). Se guarda en la misma transacción que la pista, con un `CorrectionEvent`
+(`transcriptSegment`, `editedText`). `asrText` nunca cambia. Las que no se pueden trasladar no se adivinan: quedan en
+el transcript reemplazado y la app avisa de cuántas son (`ProcessingSummary.droppedEdits`; las trasladadas, en
+`carriedEdits`). Las pistas se guardan todas al final: cancelar antes deja intacto el estado anterior. Si falta el
+audio (retención), `process` falla con `MeetingProcessingError.audioUnavailable` sin modificar la reunión. Las
+`SpeakerAssignment` de los hablantes reemplazados se copian a `speakerAssignmentArchive` (migración v6) en vez de
+perderse por la cascada.
+
 ## TD-17 · Cualquier app de videollamada, sin lista cerrada
 La fuente remota es una **app arbitraria**: sus procesos se agrupan por el `.app` más externo que contiene cada
 ejecutable (patrón comprobado con Teams/WebView2, Zoom/CptHost, Chrome y Edge). El catálogo
@@ -203,6 +241,10 @@ Señal: la misma app con `kAudioProcessPropertyIsRunningInput` **y** `…IsRunni
 liberado ≥ 25 s (los cambios a AirPods lo liberan brevemente) o app cerrada. No requiere permisos. No se usan títulos
 de ventana (exigirían Grabación de pantalla) ni Accessibility. Nunca se inicia ni se detiene una grabación
 automáticamente (requisito M); las notificaciones de macOS son opcionales.
+La sugerencia y la notificación de «la llamada terminó» pertenecen a una grabación: se retiran al detener o al
+iniciar otra, y una notificación antigua no detiene otra grabación (se comprueban la app y la reunión). Los métodos
+del delegado de notificaciones son `nonisolated`: con la aislación por defecto `MainActor`, macOS podía invocarlos
+fuera del hilo principal y la comprobación de ejecutor cerraba la app.
 
 ## TD-19 · "Pausar mi micrófono" sin manejador de silencio del sistema
 `AVAudioApplication.setInputMuteStateChangeHandler` es para "el proceso que hace la E/S de audio de la llamada"
@@ -427,6 +469,13 @@ Regresión reproducible: `es_context_reply` («¿Ya está?», voz Mónica), `Pip
 `ShortUtteranceContextTests`. Medición opcional: `CrossTrackContextExperiment` con `MI_CROSS_TRACK_DATA` apuntando
 a un directorio de pares `.wav`/`.txt` sintéticos; escribe `report.txt` en ese directorio.
 
+**Marcas de palabra de FluidAudio (comprobado, 30-oct-2026).** `TokenTiming.token` llega con «▁» ya convertido en
+espacio (`AsrManager.normalizedTimingToken`). `reattachSplitWords` y `ShortUtteranceContext` buscaban solo «▁»: el «.»
+se movía junto a la palabra siguiente tras cada pausa > 1 s («presupuesto.» se estiraba de 2,40 a 7,28 s con 4 s de
+silencio) y los límites de ≤ 6 / ≤ 16 palabras nunca se aplicaban. Ahora se aceptan ambos prefijos
+(`WordGrouping.startsWord`); con el modelo real el segmento acaba en 3,52 s. Las cifras anteriores de este TD se
+midieron sin esos límites y conviene repetirlas.
+
 ## TD-27 · Actualizar modelos desde la app y borrar los que no se usan (comprobado)
 FluidAudio 0.17.7 descarga Parakeet Ultra y CTC 110M desde la rama `main` de Hugging Face. Una vez en caché, no vuelve
 a mirar si hay cambios. La diarización está fijada al commit `df2625a`. swift-embeddings descarga e5-small una vez.
@@ -461,6 +510,17 @@ se descargaron 2 archivos (< 1 MB), se eliminó el sobrante y el modelo cargó. 
 alterado, la app mostró «1 archivo(s), 655 bytes» y `mi models update` lo restauró idéntico al publicado. Ultra carga
 con la marca nueva sin volver a descargar. El botón «Actualizar» de la app no se pulsó en esta verificación: el flujo
 se probó con la CLI y con pruebas, que usan el mismo `ModelInstaller`.
+
+**Exclusión y cancelación (30-oct-2026).** Cada actualización toma un `flock` no bloqueante sobre `.<modelo>.mi-lock`
+(`ModelUpdateLease`) desde antes de descargar hasta confirmar o deshacer; con otro proceso dentro se responde «No se
+puede actualizar mientras otro proceso está actualizando este modelo». `recoverInterrupted` respeta el lease y
+`mi models` solo lista (la recuperación es de `mi models update`). La app vuelve a comprobar justo antes del
+intercambio que no se graba ni se procesa (si no, descarta la descarga), la cola de procesamiento espera mientras se
+intercambia y verifica el modelo, y «Buscar actualizaciones» se desactiva durante una actualización.
+`ParakeetUltraProvider.unload()` espera a la `SerialGate`, así que no deja
+sin modelo una transcripción en curso. Quien espera una preparación compartida sale al cancelarse sin cancelarla
+(`CancellableWait`), y el stream de progreso solo se pide para audio de más de 240 000 muestras (15 s): antes, tras
+una pista corta, la siguiente no mostraba progreso.
 
 ## TD-28 · Borrar una reunión libera todo su espacio (comprobado)
 Antes ya se borraban en cascada las filas de la reunión y su carpeta de audio. Faltaba lo siguiente, y se añadió:
@@ -548,6 +608,10 @@ actualización real después de la 0.2.0. La 0.1.0 no tiene actualizador, así q
 una copia: `security find-generic-password -s dev.meetingintelligence.update-signing -a ed25519 -w`. Para cambiarla
 hay que publicar una versión, firmada con la clave antigua, que ya traiga la nueva clave pública.
 
+**Publicación ligada al código.** `package-release.sh` escribe en `dist/SOURCE_TREE` el árbol de fuentes empaquetado
+(calculado con un índice temporal, sin tocar el real) y `publish-release.sh` aborta si no coincide con
+`HEAD^{tree}`. Así no se puede etiquetar un commit con el ZIP de un código distinto.
+
 ## Limitaciones comprobadas
 - ASR monocanal pierde palabras en habla **superpuesta** (fixture: 2 de 16 palabras).
 - Frases muy cortas y aisladas pueden transcribirse en otro idioma; el idioma no se puede forzar. La
@@ -564,7 +628,12 @@ La confirmación antes de enviar a un proveedor en la nube tiene la casilla «No
 proveedor (`aiConsentSkipped` en UserDefaults), así que autorizar Codex no autoriza Claude ni Copilot. Cada tarjeta de
 Inteligencia › Proveedores tiene «Confirmar antes de enviar» para revertirlo. Sin la confirmación, el análisis y el
 chat se registran igualmente con consentimiento dado (`consentGiven`), porque el usuario lo concedió de forma
-explícita y duradera; el envío sigue empezando solo por una acción suya. Ollama (local) nunca pide confirmación.
+explícita y duradera; el envío sigue empezando solo por una acción suya. Ollama con modelos locales no pide
+confirmación; sus modelos *cloud* sí, y se rotulan como nube (TD-12).
+Las confirmaciones se encolan (FIFO) y cada una conserva su continuación: antes, dos preguntas seguidas (o una pregunta
+y un análisis) compartían un único hueco y la primera quedaba en «Buscando…» para siempre. «No volver a preguntar»
+también envía lo ya encolado de ese proveedor. Los errores de análisis se guardan por reunión, los del chat se muestran
+en su mensaje, y cancelar no cuenta como fallo.
 Verificado con una prueba del controlador (por proveedor, persiste al reabrir, se revierte) y con capturas de la hoja
 y de las tarjetas.
 
@@ -615,6 +684,9 @@ del remuestreo/alineación y antes del WAV/transcripción provisional, en una co
 Tramas de 20 ms, adelanto de referencia de 80 ms, filtro adaptativo de 300 ms con protección de doble habla de
 Speex. No se añade preprocesador/AGC: la salida conserva su posición temporal. El silencio digital de pausas y
 huecos sigue siendo cero. Espera máxima de referencia: 0,5 s; si falta, se conserva la voz sin filtrar y se avisa.
+El aviso solo se arma después de recibir la primera referencia (antes saltaba si el micrófono arrancaba antes que el
+tap o mientras se esperaba a la app) y se retira y rearma tras 1 s de referencia continua, así que un fallo posterior
+vuelve a avisarse.
 Referencia retenida: hasta 2 s. Al detener se drena la referencia antes del micrófono, incluida su trama parcial.
 Los últimos bloques sin los 80 ms futuros de referencia se conservan sin filtrar; no se inventa una referencia
 de silencio ni se emite un aviso por el final normal de ambas pistas. Regresión con trama final completa y parcial.
@@ -779,3 +851,52 @@ Una prueba corta no acredita la interoperabilidad de una llamada larga de Teams 
 Prueba física autorizada el 29-10-2026: micrófono integrado del MacBook Pro, arranque en 0,128 s, muestras de entrada
 a 48 kHz, duración registrada de 3,162 s, WAV finalizado y cero pistas remotas. Informe local en
 `/private/tmp/mi-startup-physical-check/results/microphone-verification.json`. No se transcribió ni envió el audio.
+
+## TD-39 · Una instancia por biblioteca y arranque seguro (pruebas comprobadas; dos copias reales pendiente)
+Antes, si `AppDatabase.open` fallaba (archivo dañado, sin permisos, disco lleno o una migración que fallara), la app
+usaba una base vacía en memoria y aun así ejecutaba la limpieza de huérfanos sobre la carpeta real: borraba **todas**
+las grabaciones (reproducido con una `Library.sqlite` corrupta). Tampoco había instancia única: una segunda copia
+marcaba como interrumpida la grabación en curso.
+- `AppEnvironment` toma un `flock` exclusivo sobre `<biblioteca>/.instance.lock` antes de abrir la base.
+- `LibraryStartupPolicy` decide: si la base no abrió o si otra copia tiene el bloqueo, no se ejecutan recuperación,
+  retención, limpieza de huérfanos y temporales, `VideoRecovery` ni recuperación de modelos; grabar, importar,
+  procesar e indexar quedan bloqueados y se muestra el motivo. Con otra copia activa tampoco se instalan ni se limpian
+  actualizaciones, ni se actualizan modelos, ni se vigilan llamadas.
+- Defensa en Core: `removeOrphanedRecordings` no borra nada si la base no tiene reuniones ni carpetas con cambios en
+  la última hora (una importación de `mi import` crea la carpeta antes de insertar la fila).
+- La recuperación avisa solo de grabaciones interrumpidas (no de procesamientos), se hace reunión por reunión, reintenta
+  las interrumpidas sin pistas y marca como fallidos los análisis de IA que quedaron en curso. Salir durante el inicio
+  de una grabación borra la reunión vacía.
+- Limitaciones: si el volumen no admite `flock`, se arranca como antes; la CLI y el servidor MCP no toman el bloqueo.
+
+## TD-40 · Captura y WAV resilientes a fallos transitorios (pruebas sintéticas; hardware pendiente)
+- Si falla la reconstrucción del tap (p. ej. al conectar AirPods), antes el objetivo se perdía y el audio remoto se
+  rellenaba con silencio hasta detener. `RemoteTapSupervisor` conserva el objetivo y reintenta (1, 2, 4… hasta 30 s)
+  desde un temporizador, `checkAudioDelivery` y el HAL; `tappedProcesses` solo cambia tras un éxito y al recuperarse se
+  emite `sourceRecovered` y la app retira los avisos de esa fuente. La pista remota tiene 5 s de gracia tras reiniciar
+  el tap. También se reconstruye si cambia `kAudioTapPropertyFormat` (A2DP → HFP).
+- WAV: escritura posicional (`pwrite`); un fallo (disco lleno) cuenta solo lo escrito y el déficit se rellena con
+  silencio al recuperarse, así que la pista no se adelanta respecto a la otra ni al video; la cabecera nunca sobrescribe
+  el audio.
+- «Pausar mi micrófono» toma el instante en el llamador y silencia por posición, aunque la cola de control esté ocupada.
+- Pendiente con hardware: AirPods durante una llamada de Teams, notificación real de `kAudioTapPropertyFormat`, disco
+  lleno real y ausencia de avisos falsos del AEC con Teams. La transcripción provisional no recibe el silencio de relleno.
+
+## TD-41 · Integridad de datos de la biblioteca (pruebas comprobadas)
+- Fusionar, separar o mover segmentos recalcula `totalSpeechSeconds` desde los segmentos activos (sin eco); el mínimo
+  de 8 s de una muestra validada usa la voz propia del clúster original (`diarizedSpeakerId`), de la que procede su huella.
+- Fusión de participantes: guarda y restaura los ids de asignaciones, no ofrece fusiones ya deshechas (deshacer dos
+  veces da error), nunca mueve muestras a un perfil revocado, transfiere la marca de usuario local y, al eliminar un
+  participante, purga los registros de fusión con sus datos.
+- Una respuesta del chat que cita una reunión borrada mientras se esperaba la IA no se guarda.
+- El contador de tareas abiertas de la lista y el tablero usan solo el último análisis correcto de cada reunión.
+- El filtro por hablante de la búsqueda se aplica antes del límite y por palabra o prefijo de palabra, sin tildes
+  («ana» ya no coincide con «Diana»).
+- Un segmento que queda vacío pierde su vector semántico. El SRT no admite líneas en blanco dentro de un subtítulo.
+- No se puede eliminar la reunión que se está grabando (`deleteMeeting(…, allowRecording:)`).
+- El registro de voz guarda perfil y muestra en una sola transacción (`enrollSample`) tras la última comprobación de
+  cancelación: cancelar antes no escribe nada, ni siquiera reactiva un perfil revocado; si la cancelación llega después,
+  el registro queda completo y se informa. La hoja de registro detiene el micrófono al cerrarse por cualquier vía.
+- Limitaciones: no se recuperan asignaciones borradas por reprocesos anteriores a v6, ni se purgan registros de fusión
+  de participantes eliminados antes de este cambio; los vectores de segmentos vaciados antes solo se ignoran; la
+  exportación JSON no incluye el archivo de asignaciones.

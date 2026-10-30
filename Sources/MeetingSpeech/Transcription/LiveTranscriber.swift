@@ -2,6 +2,7 @@
 @preconcurrency import FluidAudio
 public import Foundation
 public import MeetingCore
+import os
 import OSLog
 
 /// Provisional live transcription text for one source.
@@ -24,7 +25,7 @@ public actor LiveTranscriber {
     public nonisolated let updates: AsyncStream<LiveTranscriptUpdate>
     private let continuation: AsyncStream<LiveTranscriptUpdate>.Continuation
     private var managers: [MeetingCore.AudioSource: SlidingWindowAsrManager] = [:]
-    private var feeds: [MeetingCore.AudioSource: AsyncStream<[Float]>.Continuation] = [:]
+    private nonisolated let inputs = LiveAudioInputs()
     private var tasks: [Task<Void, Never>] = []
     private var state: [MeetingCore.AudioSource: (confirmed: String, volatile: String)] = [:]
     private let logger = Logger(subsystem: "dev.meetingintelligence", category: "live-asr")
@@ -54,34 +55,31 @@ public actor LiveTranscriber {
                 }
             })
 
-            let (feed, feedContinuation) = AsyncStream.makeStream(of: [Float].self, bufferingPolicy: .bufferingNewest(400))
-            feeds[source] = feedContinuation
-            tasks.append(Task {
-                guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000,
-                                                 channels: 1, interleaved: false) else { return }
-                for await samples in feed {
-                    guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count))
-                    else { continue }
-                    buffer.frameLength = AVAudioFrameCount(samples.count)
-                    samples.withUnsafeBufferPointer { src in
-                        buffer.floatChannelData![0].update(from: src.baseAddress!, count: samples.count)
-                    }
-                    await manager.streamAudio(buffer)
-                }
-            })
+            inputs.open(source) { samples in
+                guard let buffer = Self.pcmBuffer(samples) else { return }
+                await manager.streamAudio(buffer)
+            }
         } } catch {
             await stop()
             throw error
         }
     }
 
-    /// Thread-safe entry point for 16 kHz mono samples from the recorder.
-    public nonisolated func feed(_ samples: [Float], source: MeetingCore.AudioSource) {
-        Task { await self.enqueue(samples, source: source) }
+    static func pcmBuffer(_ samples: [Float]) -> AVAudioPCMBuffer? {
+        guard !samples.isEmpty,
+              let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count))
+        else { return nil }
+        buffer.frameLength = AVAudioFrameCount(samples.count)
+        samples.withUnsafeBufferPointer { src in
+            buffer.floatChannelData![0].update(from: src.baseAddress!, count: samples.count)
+        }
+        return buffer
     }
 
-    private func enqueue(_ samples: [Float], source: MeetingCore.AudioSource) {
-        feeds[source]?.yield(samples)
+    /// Thread-safe entry point for 16 kHz mono samples from the recorder.
+    public nonisolated func feed(_ samples: [Float], source: MeetingCore.AudioSource) {
+        inputs.send(samples, to: source)
     }
 
     private func apply(_ update: SlidingWindowTranscriptionUpdate, source: MeetingCore.AudioSource) async {
@@ -96,10 +94,7 @@ public actor LiveTranscriber {
     /// Ends input and returns the final live text per source (used by tests;
     /// the app discards live text in favour of the offline pass).
     public func finish() async -> [MeetingCore.AudioSource: String] {
-        for feed in feeds.values { feed.finish() }
-        feeds.removeAll()
-        // Let queued buffers reach the managers before finishing them.
-        try? await Task.sleep(for: .milliseconds(300))
+        await inputs.close()
         var result: [MeetingCore.AudioSource: String] = [:]
         for (source, manager) in managers {
             result[source] = (try? await manager.finish()) ?? ""
@@ -109,8 +104,7 @@ public actor LiveTranscriber {
 
     /// Stops all live streams and discards their state.
     public func stop() async {
-        for feed in feeds.values { feed.finish() }
-        feeds.removeAll()
+        inputs.cancel()
         for task in tasks { task.cancel() }
         tasks.removeAll()
         for manager in managers.values { await manager.cancel() }
@@ -128,5 +122,57 @@ extension ParakeetUltraProvider {
         let transcriber = LiveTranscriber()
         try await transcriber.start(models: models, sources: sources, language: Self.fluidLanguage(for: languageHint))
         return transcriber
+    }
+}
+
+final class LiveAudioInputs: Sendable {
+    private struct Input: Sendable {
+        var continuation: AsyncStream<[Float]>.Continuation
+        var consumer: Task<Void, Never>
+    }
+
+    private let inputs = OSAllocatedUnfairLock<[MeetingCore.AudioSource: Input]>(initialState: [:])
+    private let bufferLimit: Int
+
+    init(bufferLimit: Int = 400) {
+        self.bufferLimit = bufferLimit
+    }
+
+    func open(_ source: MeetingCore.AudioSource, consumer: @escaping @Sendable ([Float]) async -> Void) {
+        let (stream, continuation) = AsyncStream.makeStream(of: [Float].self,
+                                                            bufferingPolicy: .bufferingNewest(bufferLimit))
+        let task = Task {
+            for await samples in stream { await consumer(samples) }
+        }
+        let replaced = inputs.withLock { current in
+            let previous = current[source]
+            current[source] = Input(continuation: continuation, consumer: task)
+            return previous
+        }
+        replaced?.continuation.finish()
+    }
+
+    func send(_ samples: [Float], to source: MeetingCore.AudioSource) {
+        inputs.withLock { current in _ = current[source]?.continuation.yield(samples) }
+    }
+
+    func close() async {
+        let closed = removeAll()
+        for input in closed { input.continuation.finish() }
+        for input in closed { await input.consumer.value }
+    }
+
+    func cancel() {
+        for input in removeAll() {
+            input.continuation.finish()
+            input.consumer.cancel()
+        }
+    }
+
+    private func removeAll() -> [Input] {
+        inputs.withLock { current in
+            defer { current.removeAll() }
+            return Array(current.values)
+        }
     }
 }
