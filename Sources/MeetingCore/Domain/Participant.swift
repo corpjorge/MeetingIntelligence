@@ -96,11 +96,30 @@ public enum VoiceSampleOrigin: String, Codable, Sendable {
     case validatedMeetingSegment
 }
 
+public enum EnrollmentError: LocalizedError, Sendable {
+    case noSpeech
+    case multipleSpeakers(Int)
+    case tooShort(Double)
+    case consentRequired
+
+    public var errorDescription: String? {
+        switch self {
+        case .noSpeech: "No se detectó voz en la muestra."
+        case .multipleSpeakers(let n):
+            "La muestra contiene \(n) voces. Usa una grabación donde hable solo la persona que se registra."
+        case .tooShort(let s):
+            "La muestra tiene \(String(format: "%.1f", s)) s de voz; se necesitan al menos 8 s."
+        case .consentRequired: "Se requiere el consentimiento explícito de la persona."
+        }
+    }
+}
+
 public struct VoiceSample: Codable, Sendable, Identifiable, Hashable {
     public var id: String
     public var profileId: String
     public var origin: VoiceSampleOrigin
     public var meetingId: String?
+    public var meetingSpeakerId: String?
     public var startTime: Double?
     public var endTime: Double?
     public var durationSeconds: Double
@@ -116,6 +135,7 @@ public struct VoiceSample: Codable, Sendable, Identifiable, Hashable {
         profileId: String,
         origin: VoiceSampleOrigin,
         meetingId: String? = nil,
+        meetingSpeakerId: String? = nil,
         startTime: Double? = nil,
         endTime: Double? = nil,
         durationSeconds: Double,
@@ -128,6 +148,7 @@ public struct VoiceSample: Codable, Sendable, Identifiable, Hashable {
         self.profileId = profileId
         self.origin = origin
         self.meetingId = meetingId
+        self.meetingSpeakerId = meetingSpeakerId
         self.startTime = startTime
         self.endTime = endTime
         self.durationSeconds = durationSeconds

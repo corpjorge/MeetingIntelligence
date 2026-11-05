@@ -134,6 +134,15 @@ extension AppDatabase {
                 throw AppDatabaseError.notFound("hablante \(meetingSpeakerId)")
             }
             let previous = speaker.participantId
+            if previous != participantId {
+                try db.execute(sql: """
+                    DELETE FROM voiceSample
+                    WHERE meetingSpeakerId = ?
+                       OR (meetingId = ? AND profileId IN (SELECT id FROM speakerProfile WHERE participantId = ?)
+                           AND meetingSpeakerId IS NOT NULL
+                           AND NOT EXISTS (SELECT 1 FROM meetingSpeaker WHERE id = voiceSample.meetingSpeakerId))
+                    """, arguments: [meetingSpeakerId, speaker.meetingId, previous])
+            }
             try db.execute(sql: "UPDATE speakerAssignment SET supersededAt = ? WHERE meetingSpeakerId = ? AND supersededAt IS NULL",
                            arguments: [Date(), meetingSpeakerId])
             try SpeakerAssignment(meetingId: speaker.meetingId, meetingSpeakerId: meetingSpeakerId, participantId: participantId,
@@ -166,6 +175,10 @@ extension AppDatabase {
                 throw AppDatabaseError.invalidOperation("El segmento y el hablante deben pertenecer a la misma reunión.")
             }
             let previous = segment.meetingSpeakerId
+            if let original = segment.diarizedSpeakerId, original == previous, original != targetId,
+               segment.attribution != .probableEcho {
+                try db.execute(sql: "DELETE FROM voiceSample WHERE meetingSpeakerId = ?", arguments: [original])
+            }
             segment.meetingSpeakerId = targetId
             segment.participantId = target.participantId
             segment.attribution = target.participantId == nil ? .diarized : .manual
@@ -409,6 +422,86 @@ extension AppDatabase {
 
     // MARK: Voice profiles (biometric)
 
+    public enum MeetingVoiceAuthorization: Sendable {
+        case activeProfile
+        case recordingConsent
+        case participantConfirmation(String)
+    }
+
+    /// Saves the cluster already processed for this meeting. Consent, identity
+    /// and duplicate checks run in the same transaction as the profile write.
+    public func saveMeetingVoiceSample(meetingSpeakerId: String, participantId: String,
+                                       authorization: MeetingVoiceAuthorization,
+                                       minimumSpeechSeconds: Double) throws -> VoiceSample? {
+        try writer.write { db in
+            guard let speaker = try MeetingSpeaker.fetchOne(db, key: meetingSpeakerId) else {
+                throw AppDatabaseError.notFound("hablante \(meetingSpeakerId)")
+            }
+            let existing = try SpeakerProfile.filter(Column("participantId") == participantId).fetchOne(db)
+            let consent: (statement: String, recordedAt: Date)?
+            switch authorization {
+            case .activeProfile:
+                guard existing?.status == .active else { throw EnrollmentError.consentRequired }
+                guard speaker.participantId == participantId else {
+                    throw AppDatabaseError.invalidOperation("La identidad del hablante cambió. Vuelve a seleccionarlo.")
+                }
+                consent = nil
+            case .recordingConsent:
+                guard existing?.status != .revoked, speaker.participantId == participantId,
+                      let row = try Row.fetchOne(db, sql: "SELECT statement, recordedAt FROM meetingVoiceConsent WHERE meetingId = ?",
+                                                 arguments: [speaker.meetingId]) else { return nil }
+                consent = (row["statement"], row["recordedAt"])
+            case .participantConfirmation(let statement):
+                guard speaker.participantId == participantId else {
+                    throw AppDatabaseError.invalidOperation("La identidad del hablante cambió. Vuelve a seleccionarlo.")
+                }
+                let text = statement.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { throw EnrollmentError.consentRequired }
+                consent = (text, Date())
+            }
+
+            guard let cipher = speaker.embeddingCiphertext, let model = speaker.embeddingModel else {
+                throw AppDatabaseError.invalidOperation("Este hablante no tiene una huella de voz disponible.")
+            }
+            if let existing, existing.status == .active {
+                // Repeated assignments and reprocessing cannot count the same meeting twice.
+                let samples = VoiceSample.filter(Column("profileId") == existing.id && Column("embeddingModel") == model
+                                                 && Column("meetingId") == speaker.meetingId)
+                if let sample = try samples.fetchOne(db) { return sample }
+            }
+
+            let speech = try Row.fetchOne(db, sql: """
+                SELECT COALESCE(SUM(MAX(0, s.endTime - s.startTime)), 0) AS seconds,
+                       MAX(s.meetingSpeakerId IS NOT s.diarizedSpeakerId) AS moved
+                FROM transcriptSegment s
+                JOIN transcript t ON t.id = s.transcriptId AND t.supersededAt IS NULL
+                WHERE s.diarizedSpeakerId = ? AND s.attribution != 'probableEcho'
+                """, arguments: [speaker.id])
+            let ownSpeech: Double = speech?["seconds"] ?? 0
+            guard ownSpeech >= minimumSpeechSeconds else { throw EnrollmentError.tooShort(ownSpeech) }
+            let hasMovedSegments: Bool = speech?["moved"] ?? false
+            guard !hasMovedSegments else {
+                throw AppDatabaseError.invalidOperation("La huella corresponde al hablante original y algunas de sus intervenciones fueron reasignadas.")
+            }
+
+            var profile: SpeakerProfile
+            if let existing, existing.status == .active {
+                profile = existing
+                profile.updatedAt = Date()
+                try profile.update(db)
+            } else {
+                guard let consent else { throw EnrollmentError.consentRequired }
+                profile = try Self.upsertProfile(db, participantId: participantId, consentStatement: consent.statement,
+                                                 retentionDays: existing?.retentionDays, consentRecordedAt: consent.recordedAt)
+            }
+            let sample = VoiceSample(profileId: profile.id, origin: .validatedMeetingSegment, meetingId: speaker.meetingId,
+                                     meetingSpeakerId: speaker.id, durationSeconds: ownSpeech,
+                                     embeddingCiphertext: cipher, embeddingModel: model)
+            try sample.insert(db)
+            return sample
+        }
+    }
+
     public func profile(participantId: String) throws -> SpeakerProfile? {
         try reader.read { db in try SpeakerProfile.filter(Column("participantId") == participantId).fetchOne(db) }
     }
@@ -438,18 +531,18 @@ extension AppDatabase {
     }
 
     static func upsertProfile(_ db: Database, participantId: String, consentStatement: String,
-                              retentionDays: Int?) throws -> SpeakerProfile {
+                              retentionDays: Int?, consentRecordedAt: Date = Date()) throws -> SpeakerProfile {
         if var existing = try SpeakerProfile.filter(Column("participantId") == participantId).fetchOne(db) {
             existing.status = .active
             existing.consentStatement = consentStatement
-            existing.consentRecordedAt = Date()
+            existing.consentRecordedAt = consentRecordedAt
             existing.retentionDays = retentionDays
             existing.updatedAt = Date()
             try existing.update(db)
             return existing
         }
         let profile = SpeakerProfile(participantId: participantId, consentStatement: consentStatement,
-                                     retentionDays: retentionDays)
+                                     consentRecordedAt: consentRecordedAt, retentionDays: retentionDays)
         try profile.insert(db)
         return profile
     }
@@ -493,11 +586,16 @@ extension AppDatabase {
     }
 
     /// Active profiles with samples of the given embedding model.
-    public func activeVoiceSamples(embeddingModel: String) throws -> [(profile: SpeakerProfile, samples: [VoiceSample])] {
+    public func activeVoiceSamples(embeddingModel: String, excludingMeetingId: String? = nil)
+        throws -> [(profile: SpeakerProfile, samples: [VoiceSample])] {
         try reader.read { db in
             let profiles = try SpeakerProfile.filter(Column("status") == ProfileStatus.active.rawValue).fetchAll(db)
             return try profiles.map { p in
-                (p, try VoiceSample.filter(Column("profileId") == p.id && Column("embeddingModel") == embeddingModel).fetchAll(db))
+                var samples = VoiceSample.filter(Column("profileId") == p.id && Column("embeddingModel") == embeddingModel)
+                if let excludingMeetingId {
+                    samples = samples.filter(Column("meetingId") == nil || Column("meetingId") != excludingMeetingId)
+                }
+                return (p, try samples.fetchAll(db))
             }.filter { !$0.1.isEmpty }
         }
     }

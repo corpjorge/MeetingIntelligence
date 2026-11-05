@@ -72,7 +72,6 @@ struct RecordingView: View {
     @State private var source: Source?
     @State private var captureMicrophone = true
     @State private var includeVideo = false
-    @State private var consentConfirmed = false
     @State private var showAllApps = false
     @State private var output: AudioDeviceInfo?
     @State private var input: AudioDeviceInfo?
@@ -82,6 +81,13 @@ struct RecordingView: View {
     init(includeVideo: Bool = false) { _includeVideo = State(initialValue: includeVideo) }
 
     private var recording: RecordingController { env.recording }
+    private let voiceConsentStatement = "Todos los participantes autorizaron expresamente usar su voz de esta grabación para identificarlos en futuras reuniones."
+
+    private var canStart: Bool {
+        source != nil && recording.state != .starting
+            && (!(captureMicrophone || source == .microphoneOnly) || selectedMicrophone != nil)
+            && (!includeVideo || recording.videoSelection.canRecord)
+    }
 
     private var options: [SourceAppOption] {
         SourceAppOption.options(audioApps: env.calls.audioApps, activeCalls: env.calls.activeCalls)
@@ -121,7 +127,6 @@ struct RecordingView: View {
     }
 
     private func prepareNextRecording() {
-        consentConfirmed = false
         if case .app(let selector) = source {
             title = defaultTitle(app: selector.name)
         } else {
@@ -226,21 +231,17 @@ struct RecordingView: View {
             }
             deviceWarnings
             if env.settings.requireConsentConfirmation {
-                Toggle(isOn: $consentConfirmed) {
-                    Text("Confirmo que informé a los participantes y que la grabación cumple las políticas aplicables de consentimiento.")
-                        .font(DS.Font.callout)
-                }
-                .toggleStyle(.checkbox)
+                Text("Al iniciar, confirmas que informaste a los participantes y que la grabación cumple las políticas aplicables de consentimiento.")
+                    .font(DS.Font.callout)
             }
+            Text("Con «Aceptar e iniciar grabación» confirmas que todos autorizaron expresamente usar su voz para identificarlos en futuras reuniones. Al asignar un hablante, su huella se guardará cifrada en este Mac.")
+                .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
             HStack {
                 Button { start() } label: {
-                    Label("Iniciar grabación", systemImage: "record.circle.fill")
+                    Label("Aceptar e iniciar grabación", systemImage: "record.circle.fill")
                 }
                 .buttonStyle(.ds(.recording, size: .large))
-                .disabled(source == nil || (env.settings.requireConsentConfirmation && !consentConfirmed)
-                          || recording.state == .starting
-                          || ((captureMicrophone || source == .microphoneOnly) && selectedMicrophone == nil)
-                          || (includeVideo && !recording.videoSelection.canRecord))
+                .disabled(!canStart)
                 if recording.state == .starting { ProgressView().controlSize(.small) }
                 Spacer()
                 Button { refreshDevices() } label: { Label("Actualizar dispositivos", systemImage: "arrow.clockwise") }
@@ -253,7 +254,7 @@ struct RecordingView: View {
     }
 
     private func start() {
-        guard let source else { return }
+        guard canStart, let source else { return }
         let target: RemoteCaptureTarget = switch source {
         case .app(let selector): .application(selector)
         case .systemWide: .systemWide
@@ -262,7 +263,7 @@ struct RecordingView: View {
         Task {
             await recording.start(title: title.isEmpty ? defaultTitle(app: nil) : title, target: target,
                                   captureMicrophone: source == .microphoneOnly ? true : captureMicrophone, includeVideo: includeVideo,
-                                  microphoneDeviceUID: selectedMicrophone?.uid)
+                                  microphoneDeviceUID: selectedMicrophone?.uid, voiceEnrollmentConsent: voiceConsentStatement)
         }
     }
 

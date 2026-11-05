@@ -350,6 +350,19 @@ extension AppDatabase {
             }
         }
 
+        migrator.registerMigration("v7-voice-from-meeting") { db in
+            try db.create(table: "meetingVoiceConsent") { t in
+                t.belongsTo("meeting", onDelete: .cascade).notNull()
+                t.primaryKey(["meetingId"])
+                t.column("statement", .text).notNull()
+                t.column("recordedAt", .datetime).notNull()
+            }
+            try db.alter(table: "voiceSample") { t in
+                // Keep the origin even when reprocessing replaces the meeting speakers.
+                t.add(column: "meetingSpeakerId", .text).indexed()
+            }
+        }
+
         return migrator
     }
 }

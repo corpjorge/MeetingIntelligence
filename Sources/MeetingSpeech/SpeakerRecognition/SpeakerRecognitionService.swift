@@ -14,24 +14,6 @@ public struct RecognitionReport: Sendable {
     }
 }
 
-public enum EnrollmentError: LocalizedError, Sendable {
-    case noSpeech
-    case multipleSpeakers(Int)
-    case tooShort(Double)
-    case consentRequired
-
-    public var errorDescription: String? {
-        switch self {
-        case .noSpeech: "No se detectó voz en la muestra."
-        case .multipleSpeakers(let n):
-            "La muestra contiene \(n) voces. Usa una grabación donde hable solo la persona que se registra."
-        case .tooShort(let s):
-            "La muestra tiene \(String(format: "%.1f", s)) s de voz; se necesitan al menos 8 s."
-        case .consentRequired: "Se requiere el consentimiento explícito de la persona."
-        }
-    }
-}
-
 /// Persistent identification of consented participants by voice.
 ///
 /// Embeddings are WeSpeaker vectors produced by the *same* offline diarization
@@ -88,48 +70,26 @@ public actor SpeakerRecognitionService {
     /// user has validated the identity. The profile must already exist with consent.
     @discardableResult
     public func addValidatedSample(meetingSpeakerId: String, participantId: String) throws -> VoiceSample {
-        guard let profile = try database.profile(participantId: participantId), profile.status == .active else {
+        guard let sample = try saveMeetingSample(meetingSpeakerId: meetingSpeakerId, participantId: participantId,
+                                                 authorization: .activeProfile) else {
             throw EnrollmentError.consentRequired
         }
-        guard let speaker = try database.meetingSpeakers(meetingId: try meetingId(of: meetingSpeakerId))
-                .first(where: { $0.id == meetingSpeakerId }),
-              let cipher = speaker.embeddingCiphertext, let model = speaker.embeddingModel else {
-            throw AppDatabaseError.invalidOperation("Este hablante no tiene una huella de voz disponible.")
-        }
-        let ownSpeech = try clusterSpeechSeconds(speakerId: speaker.id)
-        guard ownSpeech >= minimumEnrollmentSpeechSeconds else {
-            throw EnrollmentError.tooShort(ownSpeech)
-        }
-        let sample = VoiceSample(profileId: profile.id, origin: .validatedMeetingSegment, meetingId: speaker.meetingId,
-                                 durationSeconds: ownSpeech, embeddingCiphertext: cipher,
-                                 embeddingModel: model)
-        try database.add(sample: sample)
         return sample
     }
 
-    private func clusterSpeechSeconds(speakerId: String) throws -> Double {
-        try database.reader.read { db in
-            try Double.fetchOne(db, sql: """
-                SELECT COALESCE(SUM(MAX(0, s.endTime - s.startTime)), 0) FROM transcriptSegment s
-                JOIN transcript t ON t.id = s.transcriptId AND t.supersededAt IS NULL
-                WHERE s.diarizedSpeakerId = ? AND s.attribution != 'probableEcho'
-                """, arguments: [speakerId]) ?? 0
-        }
-    }
-
-    private func meetingId(of speakerId: String) throws -> String {
-        try database.reader.read { db in
-            guard let id = try String.fetchOne(db, sql: "SELECT meetingId FROM meetingSpeaker WHERE id = ?", arguments: [speakerId]) else {
-                throw AppDatabaseError.notFound("hablante \(speakerId)")
-            }
-            return id
-        }
+    @discardableResult
+    public func saveMeetingSample(meetingSpeakerId: String, participantId: String,
+                                  authorization: AppDatabase.MeetingVoiceAuthorization) throws -> VoiceSample? {
+        try database.enforceProfileRetention()
+        return try database.saveMeetingVoiceSample(meetingSpeakerId: meetingSpeakerId, participantId: participantId,
+                                                   authorization: authorization, minimumSpeechSeconds: minimumEnrollmentSpeechSeconds)
     }
 
     // MARK: Calibration & recognition
 
-    public func enrolledVoices(model: String = DiarizationService.modelIdentifier) throws -> [EnrolledVoice] {
-        try database.activeVoiceSamples(embeddingModel: model).map { entry in
+    public func enrolledVoices(model: String = DiarizationService.modelIdentifier,
+                               excludingMeetingId: String? = nil) throws -> [EnrolledVoice] {
+        try database.activeVoiceSamples(embeddingModel: model, excludingMeetingId: excludingMeetingId).map { entry in
             EnrolledVoice(participantId: entry.profile.participantId,
                           samples: entry.samples.compactMap { try? vault.open($0.embeddingCiphertext) })
         }.filter { !$0.samples.isEmpty }
@@ -143,7 +103,7 @@ public actor SpeakerRecognitionService {
     /// records the decision (with scores) for each one.
     public func recognize(meetingId: String) async throws -> RecognitionReport {
         try database.enforceProfileRetention()
-        let voices = try enrolledVoices()
+        let voices = try enrolledVoices(excludingMeetingId: meetingId)
         let calibration = SpeakerCalibration.derive(from: voices)
         let matcher = SpeakerMatcher(calibration: calibration)
         var report = RecognitionReport(accepted: 0, suggested: 0, unknown: 0, calibration: calibration)

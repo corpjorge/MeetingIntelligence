@@ -10,6 +10,14 @@ struct SpeakersTab: View {
     @Environment(AppEnvironment.self) private var env
     @State private var newParticipantFor: MeetingSpeaker?
     @State private var message: (tone: Tone, text: String)?
+    @State private var showVoiceConsent = false
+    @State private var voiceConsentRequest: VoiceConsentRequest?
+
+    private struct VoiceConsentRequest {
+        let speakerId: String
+        let participantId: String
+        let statement: String
+    }
 
     var body: some View {
         ScrollView {
@@ -38,9 +46,22 @@ struct SpeakersTab: View {
         .sheet(item: $newParticipantFor) { speaker in
             NewParticipantSheet { name in
                 let participant = Participant(displayName: name)
-                try? env.database.save(participant: participant)
-                try? env.database.assignSpeaker(meetingSpeakerId: speaker.id, participantId: participant.id)
+                do {
+                    try env.database.save(participant: participant)
+                    assign(speaker, participantId: participant.id)
+                } catch {
+                    message = (.danger, error.localizedDescription)
+                }
             }
+        }
+        .alert("Guardar voz de esta reunión", isPresented: $showVoiceConsent, presenting: voiceConsentRequest) { request in
+            Button("Confirmar y guardar") {
+                saveSample(speakerId: request.speakerId, participantId: request.participantId,
+                           authorization: .participantConfirmation(request.statement))
+            }
+            Button("Cancelar", role: .cancel) {}
+        } message: { request in
+            Text("Confirma solo si cuentas con esta autorización.\n\n\(request.statement)\n\nLa huella se guarda cifrada en este Mac. Puedes revocarla en Participantes.")
         }
     }
 
@@ -104,10 +125,10 @@ struct SpeakersTab: View {
                          message: scoreText(entry)) {
                 HStack {
                     Button("Confirmar") {
-                        if let pid = entry.participantId { try? env.database.assignSpeaker(meetingSpeakerId: speaker.id, participantId: pid) }
+                        if let pid = entry.participantId { assign(speaker, participantId: pid) }
                     }
                     .buttonStyle(.ds(.primary, size: .small))
-                    Button("No es") { try? env.database.assignSpeaker(meetingSpeakerId: speaker.id, participantId: nil) }
+                    Button("No es") { assign(speaker, participantId: nil) }
                         .buttonStyle(.ds(.secondary, size: .small))
                 }
             }
@@ -130,13 +151,13 @@ struct SpeakersTab: View {
             Section("Asignar a") {
                 ForEach(model.allParticipants) { p in
                     Button(p.displayName + (p.isLocalUser ? " (yo)" : "")) {
-                        try? env.database.assignSpeaker(meetingSpeakerId: speaker.id, participantId: p.id)
+                        assign(speaker, participantId: p.id)
                     }
                 }
                 Button("Nuevo participante…") { newParticipantFor = speaker }
             }
             if speaker.participantId != nil {
-                Button("Marcar como desconocido") { try? env.database.assignSpeaker(meetingSpeakerId: speaker.id, participantId: nil) }
+                Button("Marcar como desconocido") { assign(speaker, participantId: nil) }
             }
             if !others.isEmpty {
                 Section("Es la misma persona que") {
@@ -148,7 +169,9 @@ struct SpeakersTab: View {
             Button("Separar (restaurar intervenciones originales)") { try? env.database.splitSpeaker(speaker.id) }
             if let pid = speaker.participantId, speaker.embeddingCiphertext != nil {
                 Divider()
-                Button("Usar como muestra de voz validada") { addSample(speaker, participantId: pid) }
+                Button("Guardar voz de esta reunión…") {
+                    saveSample(speakerId: speaker.id, participantId: pid, authorization: .activeProfile)
+                }
             }
         } label: {
             Label("Identidad", systemImage: "person.crop.circle.badge.checkmark")
@@ -161,15 +184,42 @@ struct SpeakersTab: View {
         speaker.participantId.flatMap { pid in model.allParticipants.first { $0.id == pid }?.displayName } ?? speaker.defaultLabel
     }
 
-    private func addSample(_ speaker: MeetingSpeaker, participantId: String) {
+    private func assign(_ speaker: MeetingSpeaker, participantId: String?) {
+        message = nil
+        do {
+            try env.database.assignSpeaker(meetingSpeakerId: speaker.id, participantId: participantId)
+            if let participantId {
+                saveSample(speakerId: speaker.id, participantId: participantId, authorization: .recordingConsent)
+            }
+        } catch {
+            message = (.danger, error.localizedDescription)
+        }
+    }
+
+    private func saveSample(speakerId: String, participantId: String, authorization: AppDatabase.MeetingVoiceAuthorization) {
+        message = nil
         Task {
             do {
-                try await env.recognizer.addValidatedSample(meetingSpeakerId: speaker.id, participantId: participantId)
-                message = (.success, "Muestra de voz añadida al perfil.")
+                if try await env.recognizer.saveMeetingSample(meetingSpeakerId: speakerId, participantId: participantId,
+                                                             authorization: authorization) != nil {
+                    message = (.success, "Voz guardada para futuras reuniones.")
+                }
             } catch EnrollmentError.consentRequired {
-                message = (.warning, "Esta persona no tiene un perfil de voz con consentimiento. Créalo en Participantes antes de añadir muestras.")
+                guard case .activeProfile = authorization,
+                      let person = model.allParticipants.first(where: { $0.id == participantId }) else {
+                    message = (.warning, EnrollmentError.consentRequired.localizedDescription)
+                    return
+                }
+                voiceConsentRequest = VoiceConsentRequest(
+                    speakerId: speakerId, participantId: participantId,
+                    statement: "\(person.displayName) autorizó expresamente usar su voz de esta grabación para identificarle en futuras reuniones.")
+                showVoiceConsent = true
             } catch {
-                message = (.danger, error.localizedDescription)
+                if case .recordingConsent = authorization {
+                    message = (.warning, "Se asignó el nombre. No se pudo guardar la voz. \(error.localizedDescription)")
+                } else {
+                    message = (.danger, error.localizedDescription)
+                }
             }
         }
     }
@@ -214,7 +264,7 @@ struct NewParticipantSheet: View {
         VStack(alignment: .leading, spacing: DS.Space.l) {
             Text("Nuevo participante").font(DS.Font.title)
             TextField("Nombre", text: $name).textFieldStyle(.roundedBorder)
-            Text("Asignar un nombre no crea un perfil biométrico. Los perfiles de voz requieren consentimiento explícito.")
+            Text("Si la reunión tiene autorización para identificar por voz, se guardará una muestra al asignar el nombre.")
                 .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
             HStack {
                 Spacer()

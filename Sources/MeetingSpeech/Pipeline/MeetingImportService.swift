@@ -33,11 +33,11 @@ public struct MeetingImportService: Sendable {
 
     /// Inserts the meeting row at recording start so a crash leaves a recoverable entry.
     public func beginRecording(title: String, scope: CaptureScope, sourceApp: AudioAppSelector? = nil,
-                               language: String = "es-CO") throws -> Meeting {
+                               language: String = "es-CO", voiceEnrollmentConsent: String? = nil) throws -> Meeting {
         let meeting = Meeting(title: title, startedAt: Date(), origin: .recording, captureScope: scope,
                               status: .recording, language: language,
                               sourceAppBundleID: sourceApp?.bundleIdentifier, sourceAppName: sourceApp?.name)
-        try database.insert(meeting: meeting, tracks: [])
+        try database.insert(meeting: meeting, tracks: [], voiceEnrollmentConsent: voiceEnrollmentConsent)
         try paths.prepareMeetingDirectory(meeting.id)
         return meeting
     }

@@ -51,10 +51,14 @@ public struct InterruptedMeetings: Sendable, Equatable {
 extension AppDatabase {
     // MARK: Meetings
 
-    public func insert(meeting: Meeting, tracks: [AudioTrack]) throws {
+    public func insert(meeting: Meeting, tracks: [AudioTrack], voiceEnrollmentConsent: String? = nil) throws {
         try writer.write { db in
             try meeting.insert(db)
             for track in tracks { try track.insert(db) }
+            if meeting.origin == .recording, let statement = voiceEnrollmentConsent, !statement.isEmpty {
+                try db.execute(sql: "INSERT INTO meetingVoiceConsent (meetingId, statement, recordedAt) VALUES (?, ?, ?)",
+                               arguments: [meeting.id, statement, meeting.startedAt ?? meeting.createdAt])
+            }
         }
     }
 

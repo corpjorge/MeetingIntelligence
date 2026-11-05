@@ -5,6 +5,62 @@ import Testing
 
 @Suite("Muestras de voz validadas en una reunión")
 struct ValidatedSampleTests {
+    @Test(arguments: [true, false])
+    func meetingVoiceEnrollmentRequiresConsentAndFollowsCorrections(recordingConsent: Bool) async throws {
+        let db = try AppDatabase.inMemory()
+        let vault = BiometricVault(keyProvider: EphemeralBiometricKeyProvider())
+        let service = SpeakerRecognitionService(database: db, vault: vault, diarizer: DiarizationService())
+        let startedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let statement = "Autorización para identificar por voz en futuras reuniones"
+        let meeting = Meeting(title: "FIXTURE", startedAt: startedAt, origin: .recording,
+                              captureScope: .applicationProcesses, status: .ready)
+        let track = AudioTrack(meetingId: meeting.id, source: .remoteSystemAudio, relativePath: "fixture.wav",
+                               sampleRate: 16_000, channelCount: 1, durationSeconds: 12)
+        try db.insert(meeting: meeting, tracks: [track], voiceEnrollmentConsent: recordingConsent ? statement : nil)
+        let transcript = Transcript(meetingId: meeting.id, trackId: track.id, engine: "test", modelIdentifier: "test",
+                                    language: "es-CO", isFinal: true, audioDurationSeconds: 12, processingSeconds: 1,
+                                    meanConfidence: nil)
+        let speaker = MeetingSpeaker(meetingId: meeting.id, source: track.source, clusterKey: "S1", ordinal: 1,
+                                     totalSpeechSeconds: 10, embeddingCiphertext: try vault.seal([0.6, 0.8]),
+                                     embeddingModel: DiarizationService.modelIdentifier)
+        let segment = TranscriptSegment(transcriptId: transcript.id, meetingId: meeting.id, trackId: track.id,
+                                        source: track.source, orderIndex: 0, startTime: 0, endTime: 10, asrText: "texto",
+                                        meetingSpeakerId: speaker.id, attribution: .diarized)
+        try db.storeProcessedTrack(transcript: transcript, segments: [segment], speakers: [speaker], assignments: [])
+        let participant = Participant(displayName: "Ana")
+        try db.save(participant: participant)
+
+        let unassigned = try await service.saveMeetingSample(meetingSpeakerId: speaker.id, participantId: participant.id,
+                                                              authorization: .recordingConsent)
+        #expect(unassigned == nil)
+        try db.assignSpeaker(meetingSpeakerId: speaker.id, participantId: participant.id)
+        let automatic = try await service.saveMeetingSample(meetingSpeakerId: speaker.id, participantId: participant.id,
+                                                             authorization: .recordingConsent)
+        if recordingConsent {
+            #expect(automatic != nil)
+            #expect(try db.profile(participantId: participant.id)?.consentRecordedAt == startedAt)
+        } else {
+            #expect(automatic == nil)
+            #expect(try db.profile(participantId: participant.id) == nil)
+        }
+
+        let explicit = try await service.saveMeetingSample(meetingSpeakerId: speaker.id, participantId: participant.id,
+                                                            authorization: .participantConfirmation(statement))
+        let sample = try #require(explicit)
+        #expect(try db.samples(profileId: sample.profileId).map(\.id) == [sample.id])
+        #expect(try await service.enrolledVoices().map(\.participantId) == [participant.id])
+        #expect(try await service.enrolledVoices(excludingMeetingId: meeting.id).isEmpty)
+
+        try db.assignSpeaker(meetingSpeakerId: speaker.id, participantId: nil)
+        #expect(try db.samples(profileId: sample.profileId).isEmpty)
+        try db.revokeProfile(participantId: participant.id)
+        try db.assignSpeaker(meetingSpeakerId: speaker.id, participantId: participant.id)
+        let afterRevocation = try await service.saveMeetingSample(meetingSpeakerId: speaker.id, participantId: participant.id,
+                                                                   authorization: .recordingConsent)
+        #expect(afterRevocation == nil)
+        #expect(try db.profile(participantId: participant.id)?.status == .revoked)
+    }
+
     @Test func minimumSpeechCountsOnlyTheClusterOwnVoice() async throws {
         let db = try AppDatabase.inMemory()
         let vault = BiometricVault(keyProvider: EphemeralBiometricKeyProvider())
@@ -35,6 +91,8 @@ struct ValidatedSampleTests {
         let participant = Participant(displayName: "FIXTURE Ana")
         try db.save(participant: participant)
         try db.createProfile(participantId: participant.id, consentStatement: "Consiento", retentionDays: nil)
+        try db.assignSpeaker(meetingSpeakerId: a.id, participantId: participant.id)
+        try db.assignSpeaker(meetingSpeakerId: c.id, participantId: participant.id)
         try db.mergeSpeakers(b.id, into: a.id)
         let merged = try #require(try db.meetingSpeakers(meetingId: meeting.id).first { $0.id == a.id })
         #expect(merged.totalSpeechSeconds >= 8)

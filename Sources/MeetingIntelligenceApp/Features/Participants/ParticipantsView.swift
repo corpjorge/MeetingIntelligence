@@ -442,6 +442,8 @@ struct EnrollmentSheet: View {
             Divider()
             switch phase {
             case .idle, .failed:
+                Text("Si ya tienes una reunión procesada, puedes ir a Hablantes, asignar el nombre y elegir «Guardar voz de esta reunión…».")
+                    .font(DS.Font.caption).foregroundStyle(DS.Color.textSecondary)
                 Text("Pide a la persona que lea en voz alta (solo ella debe hablar, ~25 s):").font(DS.Font.callout)
                 Text(Self.readingText).font(DS.Font.reading).padding(DS.Space.m)
                     .background(DS.Color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.Radius.m))

@@ -32,6 +32,9 @@ No se registran tokens, credenciales ni texto de transcripciones en los logs del
 ## Datos biométricos (perfiles de voz)
 
 - Se crean **solo** con consentimiento registrado (texto de consentimiento + fecha) y muestras autorizadas.
+- Al iniciar una grabación confirmas que todos autorizaron el uso de su voz para futuras identificaciones. Al asignar
+  un hablante, se aprovecha su voz de esa reunión. También puedes guardar la voz de un hablante desde una reunión anterior
+  con su autorización expresa.
 - Se actualizan únicamente con muestras **validadas** por ti.
 - Revocar el consentimiento (también por caducidad) borra todas las huellas: las muestras del perfil y las de sus
   hablantes en las reuniones. Eliminar el perfil lo borra por completo.

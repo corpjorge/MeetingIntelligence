@@ -94,7 +94,8 @@ final class RecordingController {
         }
     }
 
-    func start(title: String, target: RemoteCaptureTarget, captureMicrophone: Bool, includeVideo: Bool = false, microphoneDeviceUID: String? = nil) async {
+    func start(title: String, target: RemoteCaptureTarget, captureMicrophone: Bool, includeVideo: Bool = false,
+               microphoneDeviceUID: String? = nil, voiceEnrollmentConsent: String? = nil) async {
         guard !isActive else { return }
         if let blockedReason {
             state = .failed(blockedReason)
@@ -142,7 +143,7 @@ final class RecordingController {
         }
         do {
             let meeting = try importer.beginRecording(title: title, scope: scope, sourceApp: recordingApp,
-                                                      language: settings.language)
+                                                      language: settings.language, voiceEnrollmentConsent: voiceEnrollmentConsent)
             let config = RecordingConfiguration(
                 directory: paths.meetingDirectory(meeting.id), remoteTarget: target,
                 captureMicrophone: captureMicrophone, microphoneEchoCancellation: settings.microphoneEchoCancellation,
