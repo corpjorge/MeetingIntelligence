@@ -119,6 +119,13 @@ struct SpeakersTab: View {
     private func decisionView(_ entry: SpeakerAssignment, speaker: MeetingSpeaker) -> some View {
         let candidate = entry.participantId.flatMap { pid in model.allParticipants.first { $0.id == pid } }
         switch entry.decision {
+        case _ where entry.method == .automaticRecognition && entry.threshold == nil:
+            // Older recognition runs stored candidates even when there was no calibrated threshold.
+            Label(entry.participantId == nil
+                  ? (entry.note ?? "Identidad sin verificar.")
+                  : "Faltan muestras para calibrar el reconocimiento. Puedes asignar la identidad manualmente.",
+                  systemImage: "person.fill.questionmark")
+                .font(DS.Font.caption).foregroundStyle(DS.Color.textTertiary)
         case .suggested:
             InlineBanner(tone: .warning, systemImage: "questionmark.circle",
                          title: "¿Es \(candidate?.displayName ?? "esta persona")? (sugerencia, no aplicada)",

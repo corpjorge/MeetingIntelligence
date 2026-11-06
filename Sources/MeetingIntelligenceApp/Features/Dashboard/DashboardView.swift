@@ -108,7 +108,7 @@ struct DashboardView: View {
                     Button("Ver") { router.openMeeting(env.recoveredMeetings[0]) }.buttonStyle(.ds(.secondary, size: .small))
                 }
             }
-            metrics
+            openCommitmentsTile
             recentMeetings
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: DS.Space.xl) {
@@ -144,20 +144,14 @@ struct DashboardView: View {
         return pending > 0 ? "\(pending) reunión(es) pendientes de procesar" : "Todo procesado localmente en este Mac"
     }
 
-    private var metrics: some View {
-        let ready = model.rows.filter { $0.meeting.status == .ready }
-        let totalSeconds = model.rows.reduce(0) { $0 + $1.meeting.durationSeconds }
-        return HStack(spacing: DS.Space.m) {
-            MetricTile(title: "Reuniones", value: "\(model.rows.count)", caption: "\(ready.count) transcritas", systemImage: "rectangle.stack")
-            MetricTile(title: "Tiempo grabado", value: Timecode.humanDuration(totalSeconds), caption: "audio local", systemImage: "waveform")
-            Button { showsOpenCommitments = true } label: {
-                MetricTile(title: "Compromisos abiertos", value: "\(model.openItems.count)",
-                           caption: "Ver todos con su reunión", systemImage: "checklist")
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Ver todos los compromisos abiertos")
+    private var openCommitmentsTile: some View {
+        Button { showsOpenCommitments = true } label: {
+            MetricTile(title: "Compromisos abiertos", value: "\(model.openItems.count)",
+                       caption: "Ver todos con su reunión", systemImage: "checklist")
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .help("Ver todos los compromisos abiertos")
     }
 
     private var recentMeetings: some View {

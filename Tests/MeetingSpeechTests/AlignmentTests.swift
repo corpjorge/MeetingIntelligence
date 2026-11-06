@@ -87,12 +87,17 @@ struct SpeakerMatcherTests {
         return EmbeddingMath.normalized(v)
     }
 
-    @Test func uncalibratedNeverAutoAccepts() {
-        let voices = [voice("katty", base: 0, samples: 1, seed: 1)]
-        var rng = SeededGenerator(seed: 9)
-        let decision = SpeakerMatcher(calibration: SpeakerCalibration.derive(from: voices))
-            .decide(query: embedding(base: 0, noise: 0.08, rng: &rng), speechSeconds: 30, voices: voices)
-        #expect(decision.outcome == .suggested)
+    @Test func uncalibratedLeavesBothMeetingSpeakersUnknown() {
+        let voices = [EnrolledVoice(participantId: "yonathan", samples: [[1, 0]])]
+        let matcher = SpeakerMatcher(calibration: SpeakerCalibration.derive(from: voices))
+        let local = matcher.decide(query: [0.38, 0.925], speechSeconds: 21, voices: voices)
+        let remote = matcher.decide(query: [0.30, 0.954], speechSeconds: 360, voices: voices)
+
+        for decision in [local, remote] {
+            #expect(decision.outcome == .unknown)
+            #expect(decision.best == nil)
+            #expect(decision.margin == nil)
+        }
     }
 
     @Test func calibratedAcceptsGenuineRejectsStranger() throws {

@@ -138,9 +138,9 @@ struct ParticipantsView: View {
                 }
             } else {
                 VStack(alignment: .leading, spacing: DS.Space.xxs) {
-                    Label("Sin calibrar: solo sugerencias", systemImage: "shield").font(DS.Font.captionEmphasis)
+                    Label("Sin calibrar", systemImage: "shield").font(DS.Font.captionEmphasis)
                         .foregroundStyle(DS.Color.textSecondary)
-                    Text("Se necesitan al menos 2 personas con 2 muestras autorizadas cada una para asignar identidades automáticamente.")
+                    Text("El reconocimiento por voz necesita al menos 2 personas con 2 muestras autorizadas cada una. Mientras tanto, puedes asignar identidades manualmente.")
                         .font(DS.Font.caption).foregroundStyle(DS.Color.textTertiary)
                 }
             }

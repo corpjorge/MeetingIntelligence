@@ -9,7 +9,7 @@ public struct RecognitionReport: Sendable {
     public var calibration: SpeakerCalibration?
 
     public var summary: String {
-        let mode = calibration == nil ? "sin calibrar (solo sugerencias)" : "calibrado"
+        let mode = calibration == nil ? "sin calibrar" : "calibrado"
         return "\(accepted) reconocidos, \(suggested) sugeridos, \(unknown) desconocidos — \(mode)"
     }
 }
@@ -112,34 +112,9 @@ public actor SpeakerRecognitionService {
         let speakers = try database.meetingSpeakers(meetingId: meetingId).filter {
             $0.embeddingModel == DiarizationService.modelIdentifier && $0.embeddingCiphertext != nil
         }
-        var queries: [(MeetingSpeaker, [Float])] = []
-        for speaker in speakers {
-            if let cipher = speaker.embeddingCiphertext, let embedding = try? vault.open(cipher) {
-                queries.append((speaker, embedding))
-            }
-        }
-        var decisions = queries.map { matcher.decide(query: $0.1, speechSeconds: $0.0.totalSpeechSeconds, voices: voices) }
-
-        // Without calibration, keep a suggestion only when cluster and profile are
-        // each other's best match in this meeting (relative, data-driven filter).
-        if calibration == nil {
-            for i in decisions.indices {
-                guard let best = decisions[i].best else { continue }
-                let bestClusterForProfile = decisions.indices.max {
-                    (decisions[$0].best?.participantId == best.participantId ? decisions[$0].best!.similarity : -2)
-                        < (decisions[$1].best?.participantId == best.participantId ? decisions[$1].best!.similarity : -2)
-                }
-                if bestClusterForProfile != i {
-                    decisions[i].outcome = .unknown
-                    decisions[i].reason = "Otro hablante de la reunión se parece más a este perfil."
-                }
-            }
-        }
-
-        for ((speaker, _), decision) in zip(queries, decisions) {
-            // Never override a manual decision already made for this speaker.
-            if speaker.participantId != nil, speaker.source != .localMicrophone { continue }
-            if speaker.source == .localMicrophone, speaker.participantId != nil { continue }
+        for speaker in speakers where speaker.participantId == nil {
+            guard let cipher = speaker.embeddingCiphertext, let embedding = try? vault.open(cipher) else { continue }
+            let decision = matcher.decide(query: embedding, speechSeconds: speaker.totalSpeechSeconds, voices: voices)
             try database.applyRecognition(meetingSpeakerId: speaker.id, decision: decision)
             switch decision.outcome {
             case .accepted: report.accepted += 1

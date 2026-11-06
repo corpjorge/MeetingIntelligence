@@ -55,7 +55,7 @@ public struct EnrolledVoice: Sendable {
 ///   candidate must beat the runner-up by more than normal within-person variation.
 ///
 /// Without enough data (≥ 2 people with ≥ 2 samples each) the calibration is
-/// `nil` and the system only *suggests* identities; it never auto-assigns.
+/// `nil` and the system leaves identities unresolved.
 public struct SpeakerCalibration: Sendable, Equatable, Codable {
     public var acceptThreshold: Double
     public var requiredMargin: Double
@@ -108,7 +108,7 @@ public struct MatchDecision: Sendable, Equatable {
         case accepted
         /// Best candidate shown to the user for confirmation; not applied.
         case suggested
-        /// No enrolled voice is close: "Participante desconocido".
+        /// No enrolled voice qualified: "Participante desconocido".
         case unknown
     }
 
@@ -117,8 +117,8 @@ public struct MatchDecision: Sendable, Equatable {
     public var runnerUp: MatchCandidate?
     public var threshold: Double?
     public var margin: Double? {
-        guard let best else { return nil }
-        return best.similarity - (runnerUp?.similarity ?? -1)
+        guard let best, let runnerUp else { return nil }
+        return best.similarity - runnerUp.similarity
     }
     public var reason: String
 }
@@ -143,14 +143,11 @@ public struct SpeakerMatcher: Sendable {
             return MatchDecision(outcome: .unknown, best: nil, runnerUp: nil, threshold: nil,
                                  reason: "No hay perfiles de voz registrados.")
         }
-        let runnerUp = ranked.dropFirst().first
         guard let calibration else {
-            // Uncalibrated: only a suggestion, and only if the best candidate is
-            // at least as close as people are to themselves would require — unknown.
-            return MatchDecision(outcome: .suggested, best: best, runnerUp: runnerUp, threshold: nil,
-                                 reason: "Calibración insuficiente (se requieren ≥2 personas con ≥2 muestras). Solo sugerencia.")
+            return MatchDecision(outcome: .unknown, best: nil, runnerUp: nil, threshold: nil,
+                                 reason: "Faltan muestras para calibrar el reconocimiento (2 personas con al menos 2 muestras cada una).")
         }
-        let margin = best.similarity - (runnerUp?.similarity ?? -1)
+        let runnerUp = ranked.dropFirst().first
         if best.similarity < calibration.acceptThreshold {
             let nearMiss = best.similarity >= calibration.acceptThreshold - calibration.requiredMargin
             return MatchDecision(outcome: nearMiss ? .suggested : .unknown, best: best, runnerUp: runnerUp,
@@ -158,7 +155,7 @@ public struct SpeakerMatcher: Sendable {
                                  reason: nearMiss ? "Similitud cercana pero inferior al umbral calibrado."
                                                   : "Ningún perfil supera el umbral calibrado.")
         }
-        if margin < calibration.requiredMargin {
+        if let runnerUp, best.similarity - runnerUp.similarity < calibration.requiredMargin {
             return MatchDecision(outcome: .suggested, best: best, runnerUp: runnerUp,
                                  threshold: calibration.acceptThreshold,
                                  reason: "Ambiguo: dos perfiles con similitud parecida.")
