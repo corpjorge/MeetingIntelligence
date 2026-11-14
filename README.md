@@ -1,5 +1,7 @@
 # Meeting Intelligence
 
+> Proyecto en desarrollo activo: consulta `ROADMAP.md` para ver las próximas tareas.
+
 Aplicación **nativa de macOS** (Swift 6 + SwiftUI) para grabar, transcribir, identificar participantes y analizar
 conversaciones de **cualquier app de videollamada** (Teams, Zoom, Meet, Slack, Webex…) — sin bots, sin modificar las
 apps y **local por defecto**.

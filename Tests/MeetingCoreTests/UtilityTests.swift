@@ -12,6 +12,12 @@ struct UtilityTests {
         #expect(Timecode.humanDuration(3900) == "1 h 05 min")
     }
 
+    @Test func timecodesAtZero() {
+        #expect(Timecode.hms(0) == "00:00:00")
+        #expect(Timecode.compact(0) == "0:00")
+        #expect(Timecode.srt(0) == "00:00:00,000")
+    }
+
     @Test func comparableNormalization() {
         #expect(TextNormalization.comparable("¡Validación  del RESPONSE!") == "validacion del response")
         #expect(TextNormalization.searchTerms(from: "¿Qué dijo Katty sobre viabilidad inicial?") == ["katty", "viabilidad", "inicial"])
